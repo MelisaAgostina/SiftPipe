@@ -29,3 +29,4 @@ Gemini:
 - guardar en un .txt
 
 - importar en otro chat: This is the context from our previous session. Let's continue working on..."
+ss
