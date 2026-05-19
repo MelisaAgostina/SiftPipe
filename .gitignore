@@ -1,0 +1,16 @@
+# Docker
+volumes/
+backups/
+
+# Entorno de Python
+__pycache__/
+*.pyc
+.venv/
+env/
+
+# Configuración y seguridad
+.env
+.vscode/
+
+# Logs y resultados (opcional, si los generas automáticamente)
+results/
