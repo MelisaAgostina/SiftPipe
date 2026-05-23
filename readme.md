@@ -4,7 +4,20 @@ blocks/ (Tus scripts funcionales para B3 a B9)
 
 results/ (Donde se guardan los JSONs generados) 
 
-ui/ (Tu código de Streamlit) 
+ui/ (Tu código de react) 
+Deja exactamente como están los siguientes archivos y carpetas, ya que son el motor que hace funcionar a React:
+
+    node_modules/
+
+    public/
+
+    main.jsx
+
+    package.json y package-lock.json
+
+    vite.config.js
+
+    eslint.config.js e index.html
 
 main.py (Tu orquestador principal) 
 
@@ -29,4 +42,5 @@ Gemini:
 - guardar en un .txt
 
 - importar en otro chat: This is the context from our previous session. Let's continue working on..."
-ss
+levantar back: .venv\Scripts\uvicorn.exe api:app --reload --port 8000
+levantar front: bun run dev

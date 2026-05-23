@@ -14,3 +14,13 @@ env/
 
 # Logs y resultados (opcional, si los generas automáticamente)
 results/
+
+# Node
+ui/node_modules/
+ui/.next/
+ui/dist/
+ui/.tanstack/
+
+# Playwright
+playwright-report/
+test-results/
