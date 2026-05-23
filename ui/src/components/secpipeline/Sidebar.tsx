@@ -1,7 +1,18 @@
 import { Check, Circle, Square, PlayCircle } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { prerequisites, phases } from "./data";
 
 export function Sidebar() {
+  const { data: status } = useQuery({
+    queryKey: ["pipeline-status"],
+    queryFn: () => fetch("http://localhost:8000/api/status").then((r) => r.json()),
+    refetchInterval: 2000,
+  });
+
+  const handleRun = async () => {
+    await fetch("http://localhost:8000/api/run", { method: "POST" });
+  };
+
   return (
     <aside className="flex w-72 shrink-0 flex-col justify-between border-r border-border bg-card p-5">
       <div className="space-y-8">
@@ -46,7 +57,10 @@ export function Sidebar() {
         </section>
       </div>
 
-      <button className="mt-6 flex items-center justify-center gap-2 rounded-md border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-accent">
+      <button
+        onClick={handleRun}
+        className="mt-6 flex items-center justify-center gap-2 rounded-md border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+      >
         <PlayCircle className="h-4 w-4" />
         Ejecutar análisis
       </button>

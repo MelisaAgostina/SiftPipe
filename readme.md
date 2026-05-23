@@ -42,4 +42,5 @@ Gemini:
 - guardar en un .txt
 
 - importar en otro chat: This is the context from our previous session. Let's continue working on..."
-ss
+levantar back: .venv\Scripts\uvicorn.exe api:app --reload --port 8000
+levantar front: bun run dev

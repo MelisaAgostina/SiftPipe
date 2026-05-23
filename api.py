@@ -1,7 +1,7 @@
 import json
-import os
 import threading
 from pathlib import Path
+from typing import List
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
