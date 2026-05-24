@@ -12,6 +12,7 @@ from main import (
     correlate_results,
     execute_attacks,
     generate_payloads,
+    pipeline_results,
     run_dynamic_discovery,
     run_static_analysis,
 )
@@ -61,17 +62,17 @@ def run_pipeline_until_b6():
     try:
         pipeline_state["current_block"] = "B3"
         log("▶ B3 — Análisis estático iniciado")
-        run_static_analysis()
+        run_static_analysis(pipeline_results)
         log("✓ B3 completado")
 
         pipeline_state["current_block"] = "B4"
         log("▶ B4 — Discovery dinámico iniciado")
-        run_dynamic_discovery()
+        run_dynamic_discovery(pipeline_results)
         log("✓ B4 completado")
 
         pipeline_state["current_block"] = "B5"
         log("▶ B5 — Generación de payloads")
-        generate_payloads()
+        generate_payloads(client=client)
         log("✓ B5 completado")
 
         # Pausa aquí — la UI muestra los payloads para revisión humana

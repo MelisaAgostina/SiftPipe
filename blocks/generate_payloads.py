@@ -4,7 +4,6 @@ import re
 import anthropic
 
 RESULTS_DIR = "results"
-CLIENT = anthropic.Anthropic()
 
 
 def ensure_results_dir():
@@ -162,9 +161,9 @@ def build_prompt(dynamic_target, related_findings, static_findings):
     return "\n".join(context_lines)
 
 
-def ask_llm(prompt):
+def ask_llm(prompt, client):
     try:
-        response = CLIENT.messages.create(
+        response = client.messages.create(
             model="claude-3-haiku-20240307",
             max_tokens=1000,
             temperature=0.2,
@@ -180,8 +179,13 @@ def ask_llm(prompt):
         return {"error": "LLM request failed", "message": str(e)}
 
 
-def generate_payloads():
+def generate_payloads(client=None):
     print("Ejecutando B5: Generación de payloads...")
+    if client is None:
+        from dotenv import load_dotenv
+        load_dotenv()
+        client = anthropic.Anthropic()
+
     static_data = load_json_file(os.path.join(RESULTS_DIR, "B3_static.json"))
     attack_surface = load_json_file(os.path.join(RESULTS_DIR, "attack_surface.json"))
 
@@ -200,7 +204,7 @@ def generate_payloads():
     for dynamic_target in dynamic_targets[:20]:
         related_findings = find_related_static_findings(dynamic_target, static_findings)
         prompt = build_prompt(dynamic_target, related_findings, static_findings)
-        llm_result = ask_llm(prompt)
+        llm_result = ask_llm(prompt, client)
 
         if isinstance(llm_result, list):
             for item in llm_result:

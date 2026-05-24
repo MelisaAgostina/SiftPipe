@@ -156,7 +156,7 @@ def main():
     # Ejecución de bloques
     run_static_analysis(pipeline_results)
     run_dynamic_discovery(pipeline_results)
-    generate_payloads()
+    generate_payloads(client=client)
     run_human_review()
     execute_attacks()
     analyze_results()
