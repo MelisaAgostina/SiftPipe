@@ -1,6 +1,6 @@
 import os
 import json
-
+#block 3 static code analysis with LLM
 # Definición del alcance técnico basado en el estándar OWASP para el Bloque 3
 OWASP_SCOPE = {
     "A05": "Injection: Buscar concatenación directa de inputs en consultas SQL o comandos de sistema (e.g., exec(), SELECT, etc.)",

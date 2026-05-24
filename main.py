@@ -19,6 +19,7 @@ def save_result(block_name, data):
 
 # BLOQUE 3> Análisis estático con LLM
 from blocks.static_scanner import scan_and_save_files, load_files_list, get_analysis_prompt
+from blocks.dynamic_analysis import discover_attack_surface
 
 # Inicializa cliente (Asegúrate de tener la variable de entorno ANTHROPIC_API_KEY seteada)
 client = anthropic.Anthropic()
@@ -91,9 +92,25 @@ def run_static_analysis(pipeline_results):
 
 
 
-def run_dynamic_discovery():
+def run_dynamic_discovery(pipeline_results):
     print("Ejecutando B4: Descubrimiento dinámico...")
-    save_result("B4_dynamic", {"endpoints": ["/login", "/search"], "status": "done"})
+
+    attack_surface = discover_attack_surface()
+    summary = {
+        "status": "complete",
+        "forms_found": len(attack_surface.get("forms", [])),
+        "inputs_found": len(attack_surface.get("inputs", [])),
+        "endpoints_found": len(attack_surface.get("endpoints", []))
+    }
+
+    save_result("B4_dynamic", summary)
+
+    os.makedirs("results", exist_ok=True)
+    with open("results/attack_surface.json", "w", encoding="utf-8") as f:
+        json.dump(attack_surface, f, indent=4)
+
+    print("B4 dinámico completado y guardado en results/attack_surface.json")
+
 
 def generate_payloads():
     print("Ejecutando B5: Generación de payloads...")
@@ -133,8 +150,8 @@ def main():
         # Y luego: subprocess.run(["python", "seed.py"])
     
     # Ejecución de bloques
-    run_static_analysis()
-    run_dynamic_discovery()
+    run_static_analysis(pipeline_results)
+    run_dynamic_discovery(pipeline_results)
     generate_payloads()
     run_human_review()
     execute_attacks()
