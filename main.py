@@ -20,6 +20,7 @@ def save_result(block_name, data):
 # BLOQUE 3> Análisis estático con LLM
 from blocks.static_scanner import scan_and_save_files, load_files_list, get_analysis_prompt
 from blocks.dynamic_analysis import discover_attack_surface
+from blocks.generate_payloads import generate_payloads
 
 # Inicializa cliente (Asegúrate de tener la variable de entorno ANTHROPIC_API_KEY seteada)
 client = anthropic.Anthropic()
@@ -91,7 +92,7 @@ def run_static_analysis(pipeline_results):
 
 
 
-
+#block 4 dynamic discovery
 def run_dynamic_discovery(pipeline_results):
     print("Ejecutando B4: Descubrimiento dinámico...")
 
@@ -112,10 +113,6 @@ def run_dynamic_discovery(pipeline_results):
     print("B4 dinámico completado y guardado en results/attack_surface.json")
 
 
-def generate_payloads():
-    print("Ejecutando B5: Generación de payloads...")
-    save_result("B5_payloads", {"payloads_count": 12, "status": "done"})
-
 def run_human_review():
     print("Ejecutando B6: Revisión humana...")
     save_result("B6_human", {"approved": 10, "status": "done"})
@@ -133,6 +130,13 @@ def correlate_results():
     # Aquí accedes a la data centralizada
     correlation = {"confirmed": 2, "possible": 1, "method": "hybrid"}
     save_result("B9_correlation", correlation)
+
+
+
+
+
+
+
 
 # --- Orquestador Principal ---
 
