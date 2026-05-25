@@ -1,5 +1,6 @@
 import os
 import json
+from pathlib import Path
 #block 3 static code analysis with LLM
 # Definición del alcance técnico basado en el estándar OWASP para el Bloque 3
 OWASP_SCOPE = {
@@ -12,6 +13,7 @@ OWASP_SCOPE = {
 def scan_and_save_files(source_dir, output_file="results/files_list.txt"):
     extensions = ('.go', '.ts', '.tsx')
     exclude_dirs = {'node_modules', 'vendor', 'tests', '.git'}
+    RELEVANT_DIRS = {'api', 'app', 'handlers', 'store', 'services', 'auth', 'model', 'server'}
     source_files = []
 
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -20,7 +22,9 @@ def scan_and_save_files(source_dir, output_file="results/files_list.txt"):
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
         for file in files:
             if file.endswith(extensions):
-                source_files.append(os.path.join(root, file))
+                # Only include files located under relevant application directories
+                if any(part in RELEVANT_DIRS for part in Path(root).parts):
+                    source_files.append(os.path.join(root, file))
 
     with open(output_file, 'w', encoding='utf-8') as f:
         for path in source_files:

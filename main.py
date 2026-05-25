@@ -1,7 +1,13 @@
+from dotenv import load_dotenv
+
+
 import json
 import os
 import argparse
-import anthropic
+import google.generativeai as genai
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+client = genai.GenerativeModel("gemini-1.5-flash")
 
 # Repositorio central de resultados
 pipeline_results = {}
@@ -22,20 +28,26 @@ from blocks.static_scanner import scan_and_save_files, load_files_list, get_anal
 from blocks.dynamic_analysis import discover_attack_surface
 from blocks.generate_payloads import generate_payloads
 
-# Inicializa cliente (Asegúrate de tener la variable de entorno ANTHROPIC_API_KEY seteada)
-client = anthropic.Anthropic()
+# def ask_llm(prompt):
+#     """Llama a la API y fuerza un parseo JSON de la respuesta."""
+#     try:
+#         response = client.messages.create(
+#             model="claude-3-haiku-20240307", # Modelo rápido y económico ideal para B3
+#             max_tokens=1000,
+#             temperature=0.1, # Muy bajo para evitar alucinaciones y mantener formato JSON
+#             messages=[{"role": "user", "content": prompt}]
+#         )
+#         # Extraer solo texto y convertir a diccionario
+#         return json.loads(response.content[0].text)
+#     except json.JSONDecodeError:
+#         return {"vulnerability": "Error de Parseo JSON", "evidence": "El LLM no devolvió un JSON válido"}
+#     except Exception as e:
+#         return {"vulnerability": "API Error", "evidence": str(e)}
 
 def ask_llm(prompt):
-    """Llama a la API y fuerza un parseo JSON de la respuesta."""
     try:
-        response = client.messages.create(
-            model="claude-3-haiku-20240307", # Modelo rápido y económico ideal para B3
-            max_tokens=1000,
-            temperature=0.1, # Muy bajo para evitar alucinaciones y mantener formato JSON
-            messages=[{"role": "user", "content": prompt}]
-        )
-        # Extraer solo texto y convertir a diccionario
-        return json.loads(response.content[0].text)
+        response = client.generate_content(prompt)
+        return json.loads(response.text)
     except json.JSONDecodeError:
         return {"vulnerability": "Error de Parseo JSON", "evidence": "El LLM no devolvió un JSON válido"}
     except Exception as e:

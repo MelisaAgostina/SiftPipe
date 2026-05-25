@@ -1,7 +1,8 @@
 import json
+import google.generativeai as genai
 import os
 import re
-import anthropic
+
 
 RESULTS_DIR = "results"
 
@@ -161,19 +162,31 @@ def build_prompt(dynamic_target, related_findings, static_findings):
     return "\n".join(context_lines)
 
 
+# def ask_llm(prompt, client):
+#     try:
+#         response = client.messages.create(
+#             model="claude-3-haiku-20240307",
+#             max_tokens=1000,
+#             temperature=0.2,
+#             messages=[{"role": "user", "content": prompt}],
+#         )
+#         return json.loads(response.content[0].text)
+#     except json.JSONDecodeError:
+#         return {
+#             "error": "LLM response could not be parsed as JSON",
+#             "response_text": response.content[0].text if hasattr(response, 'content') else str(response)
+#         }
+#     except Exception as e:
+#         return {"error": "LLM request failed", "message": str(e)}
+
 def ask_llm(prompt, client):
     try:
-        response = client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=1000,
-            temperature=0.2,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return json.loads(response.content[0].text)
+        response = client.generate_content(prompt)
+        return json.loads(response.text)
     except json.JSONDecodeError:
         return {
             "error": "LLM response could not be parsed as JSON",
-            "response_text": response.content[0].text if hasattr(response, 'content') else str(response)
+            "response_text": response.text
         }
     except Exception as e:
         return {"error": "LLM request failed", "message": str(e)}
@@ -182,9 +195,11 @@ def ask_llm(prompt, client):
 def generate_payloads(client=None):
     print("Ejecutando B5: Generación de payloads...")
     if client is None:
-        from dotenv import load_dotenv
+        if client is None:
+            from dotenv import load_dotenv
         load_dotenv()
-        client = anthropic.Anthropic()
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        client = genai.GenerativeModel("gemini-1.5-flash")
 
     static_data = load_json_file(os.path.join(RESULTS_DIR, "B3_static.json"))
     attack_surface = load_json_file(os.path.join(RESULTS_DIR, "attack_surface.json"))
