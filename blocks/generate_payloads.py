@@ -162,23 +162,6 @@ def build_prompt(dynamic_target, related_findings, static_findings):
     return "\n".join(context_lines)
 
 
-# def ask_llm(prompt, client):
-#     try:
-#         response = client.messages.create(
-#             model="claude-3-haiku-20240307",
-#             max_tokens=1000,
-#             temperature=0.2,
-#             messages=[{"role": "user", "content": prompt}],
-#         )
-#         return json.loads(response.content[0].text)
-#     except json.JSONDecodeError:
-#         return {
-#             "error": "LLM response could not be parsed as JSON",
-#             "response_text": response.content[0].text if hasattr(response, 'content') else str(response)
-#         }
-#     except Exception as e:
-#         return {"error": "LLM request failed", "message": str(e)}
-
 def ask_llm(prompt, client=None):
     if client is None:
         from dotenv import load_dotenv
@@ -250,7 +233,7 @@ def generate_payloads(client=None):
         "payloads": payload_outputs,
     }
 
-    save_json_file(os.path.join(RESULTS_DIR, "payloads.json"), output)
+    #save_json_file(os.path.join(RESULTS_DIR, "payloads.json"), output)
     save_json_file(os.path.join(RESULTS_DIR, "B5_payloads.json"), output)
 
     print(f"B5 finalizado. Payloads generados: {len(payload_outputs)}")
