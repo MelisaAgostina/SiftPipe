@@ -28,22 +28,6 @@ from blocks.static_scanner import scan_and_save_files, load_files_list, get_anal
 from blocks.dynamic_analysis import discover_attack_surface
 from blocks.generate_payloads import generate_payloads
 
-# def ask_llm(prompt):
-#     """Llama a la API y fuerza un parseo JSON de la respuesta."""
-#     try:
-#         response = client.messages.create(
-#             model="claude-3-haiku-20240307", # Modelo rápido y económico ideal para B3
-#             max_tokens=1000,
-#             temperature=0.1, # Muy bajo para evitar alucinaciones y mantener formato JSON
-#             messages=[{"role": "user", "content": prompt}]
-#         )
-#         # Extraer solo texto y convertir a diccionario
-#         return json.loads(response.content[0].text)
-#     except json.JSONDecodeError:
-#         return {"vulnerability": "Error de Parseo JSON", "evidence": "El LLM no devolvió un JSON válido"}
-#     except Exception as e:
-#         return {"vulnerability": "API Error", "evidence": str(e)}
-
 def ask_llm(prompt):
     try:
         response = client.chat.completions.create(
@@ -52,7 +36,8 @@ def ask_llm(prompt):
                 {"role": "system", "content": "You are a security analysis tool. You respond ONLY with valid JSON. No prose, no explanations, no markdown. Only JSON."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1
+            temperature=0.0 #Higher temperatures can cause the AI to invent fake CVEs (Common Vulnerabilities and Exposures) or imagine security flaws that do not actually exist in your codebase.
+                            #The model makes the "safest" and most expected choices, making the output highly focused and deterministic.
         )
         text = response.choices[0].message.content.strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
@@ -69,9 +54,8 @@ def run_static_analysis(pipeline_results):
     print(f"Archivos totales listados: {len(files)}")
     
     results = []
-    
-    # ⚠️ LIMITADO A 5 ARCHIVOS PARA PRUEBAS (quitar el slicing `[:5]` para corrida real)
-    files_to_scan = files[:5]
+
+    files_to_scan = files[:20] # Limitar a 100 archivos para esta demo, ajustar según necesidades
     total_files = len(files_to_scan)
     for index, file_path in enumerate(files_to_scan, start=1):
         try:

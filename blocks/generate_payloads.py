@@ -188,7 +188,7 @@ def ask_llm(prompt, client=None):
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.1
+            temperature=0.0
         )
         text = response.choices[0].message.content.strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
