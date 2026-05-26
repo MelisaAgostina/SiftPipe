@@ -1,13 +1,13 @@
 from dotenv import load_dotenv
-
+load_dotenv()
+from groq import Groq
+import os
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 import json
-import os
 import argparse
-import google.generativeai as genai
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-client = genai.GenerativeModel("gemini-1.5-flash")
+
 
 # Repositorio central de resultados
 pipeline_results = {}
@@ -46,13 +46,22 @@ from blocks.generate_payloads import generate_payloads
 
 def ask_llm(prompt):
     try:
-        response = client.generate_content(prompt)
-        return json.loads(response.text)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a security analysis tool. You respond ONLY with valid JSON. No prose, no explanations, no markdown. Only JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1
+        )
+        text = response.choices[0].message.content.strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return json.loads(text)
     except json.JSONDecodeError:
-        return {"vulnerability": "Error de Parseo JSON", "evidence": "El LLM no devolvió un JSON válido"}
+        return {"vulnerability": "Error de Parseo JSON", "evidence": text[:200]}
     except Exception as e:
         return {"vulnerability": "API Error", "evidence": str(e)}
-
+    
 def run_static_analysis(pipeline_results):
     print("\nEjecutando B3: Análisis estático...")
     
@@ -78,12 +87,10 @@ def run_static_analysis(pipeline_results):
                 
                 # Filtro 2: Solo guardar confidence 'high' o 'medium'
                 confianza = llm_response.get("confidence", "").lower()
-                if confianza in ["high", "medium"]:
-                    llm_response["file"] = file_path 
-                    results.append(llm_response)
-                    print(f"[+] Guardado: {llm_response.get('vulnerability')} ({confianza})")
-                else:
-                    print(f"[-] Descartado: Confianza demasiado baja ({confianza})")
+                llm_response["file"] = file_path
+                print(f"RAW LLM RESPONSE: {llm_response}")
+                results.append(llm_response)
+                print(f"[+] Guardado: {llm_response.get('vulnerability')} ({confianza})")
                 
         except Exception as e:
             print(f"Error procesando {file_path}: {e}")

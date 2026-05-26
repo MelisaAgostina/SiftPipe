@@ -43,18 +43,21 @@ def load_files_list(file_path):
 
 
 def get_analysis_prompt(file_content):
-    """Genera el prompt contextualizado para el LLM."""
-    prompt = f"""
-    Eres un auditor de seguridad senior. Analiza el siguiente código de Mattermost buscando 
-    vulnerabilidades bajo el estándar OWASP. Enfócate exclusivamente en:
-    {json.dumps(OWASP_SCOPE, indent=2)}
+    prompt = f"""You are a security auditor. Analyze the following code for OWASP vulnerabilities.
 
-    Si encuentras un patrón inseguro, retorna un JSON con este formato:
-    {{"vulnerability": "Nombre", "category": "AXX", "line": X, "evidence": "codigo", "confidence": "high/medium/low"}}
-    
-    Si no encuentras nada, retorna {{"vulnerability": "None"}}.
+FOCUS ONLY ON:
+{json.dumps(OWASP_SCOPE, indent=2)}
 
-    Código a analizar:
-    {file_content}
-    """
+CRITICAL INSTRUCTIONS:
+- You MUST respond with ONLY a valid JSON object, nothing else
+- No explanations, no prose, no markdown, no code blocks
+- If you find a vulnerability, respond with EXACTLY this format:
+{{"vulnerability": "Name", "category": "AXX", "line": 1, "evidence": "code snippet", "confidence": "high"}}
+- If you find nothing, respond with EXACTLY this:
+{{"vulnerability": "None"}}
+
+Code to analyze:
+{file_content}
+
+Respond with JSON only:"""
     return prompt

@@ -1,9 +1,11 @@
 import requests
+from dotenv import load_dotenv
+load_dotenv()
+import os
 
-# Configuración base
 BASE_URL = "http://localhost:8065/api/v4"
-ADMIN_EMAIL = "test@mail.com" # user TestUser
-ADMIN_PASS = "tommy290310"          # Cambiar por tu contraseña admin
+ADMIN_EMAIL = os.getenv("MM_ADMIN_EMAIL", "test@mail.com")
+ADMIN_PASS = os.getenv("MM_ADMIN_PASS")  # never hardcode this      # Cambiar por tu contraseña admin
 
 # Datos ficticios a inyectar
 NEW_USER = {

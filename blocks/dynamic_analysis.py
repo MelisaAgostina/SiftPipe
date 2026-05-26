@@ -154,6 +154,7 @@ def discover_attack_surface(base_url="http://localhost:8065", login_id="victima@
                 raise Exception("Login button not found or clickable — saved results/login_error.png and results/login_page.html for inspection")
 
             page.wait_for_url("**/channels/**", timeout=15000)
+            page.wait_for_selector(".channel-header, #channelHeaderTitle", timeout=10000)
             print("Login exitoso.")
 
             # If Mattermost has no team context, the app redirects to an error page.
@@ -222,21 +223,50 @@ def discover_attack_surface(base_url="http://localhost:8065", login_id="victima@
                 {"label": "new_post",   "path": "/equipo-tesina/channels/off-topic"}
             ]
 
+            # for route in page_routes:
+            #     try:
+            #         page.goto(f"{base_url}{route['path']}", wait_until="networkidle")
+            #         page.wait_for_timeout(2000)  # dejá que cargue el JS
+            #         print(f"Analizando página: {route['label']} ({page.url})")
+            #         attack_surface["forms"].extend(extract_forms(page, route["label"]))
+                    
+            #         # Capturá inputs visibles aunque no estén en forms
+            #         for field in page.query_selector_all("input:visible, textarea:visible"):
+            #             attack_surface["inputs"].append({
+            #                 "id": field.get_attribute("id") or "unknown",
+            #                 "name": field.get_attribute("name") or "unknown", 
+            #                 "type": field.get_attribute("type") or "text",
+            #                 "page_url": page.url
+            #             })
+            #     except Exception as page_error:
+            #         print(f"Advertencia: no se pudo revisar {route['label']} -> {page_error}")
+            
             for route in page_routes:
                 try:
                     page.goto(f"{base_url}{route['path']}", wait_until="networkidle")
-                    page.wait_for_timeout(2000)  # dejá que cargue el JS
+
+                    # Wait for the SPA router to resolve to the correct URL
+                    try:
+                        page.wait_for_url(f"**{route['path']}**", timeout=8000)
+                    except Exception:
+                        # If URL didn't resolve, force a second goto and wait for any channel
+                        page.goto(f"{base_url}{route['path']}", wait_until="networkidle")
+                        page.wait_for_url("**/channels/**", timeout=8000)
+
+                    # Wait for the channel view to actually render
+                    page.wait_for_selector(".channel-header, #channelHeaderTitle", timeout=8000)
+
                     print(f"Analizando página: {route['label']} ({page.url})")
                     attack_surface["forms"].extend(extract_forms(page, route["label"]))
-                    
-                    # Capturá inputs visibles aunque no estén en forms
+
                     for field in page.query_selector_all("input:visible, textarea:visible"):
                         attack_surface["inputs"].append({
                             "id": field.get_attribute("id") or "unknown",
-                            "name": field.get_attribute("name") or "unknown", 
+                            "name": field.get_attribute("name") or "unknown",
                             "type": field.get_attribute("type") or "text",
                             "page_url": page.url
                         })
+
                 except Exception as page_error:
                     print(f"Advertencia: no se pudo revisar {route['label']} -> {page_error}")
         

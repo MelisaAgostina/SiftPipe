@@ -1,5 +1,5 @@
 import json
-import google.generativeai as genai
+from groq import Groq
 import os
 import re
 
@@ -179,27 +179,31 @@ def build_prompt(dynamic_target, related_findings, static_findings):
 #     except Exception as e:
 #         return {"error": "LLM request failed", "message": str(e)}
 
-def ask_llm(prompt, client):
+def ask_llm(prompt, client=None):
+    if client is None:
+        from dotenv import load_dotenv
+        load_dotenv()
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     try:
-        response = client.generate_content(prompt)
-        return json.loads(response.text)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1
+        )
+        text = response.choices[0].message.content.strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return json.loads(text)
     except json.JSONDecodeError:
-        return {
-            "error": "LLM response could not be parsed as JSON",
-            "response_text": response.text
-        }
+        return {"error": "LLM response could not be parsed as JSON", "response_text": text[:200]}
     except Exception as e:
         return {"error": "LLM request failed", "message": str(e)}
 
 
 def generate_payloads(client=None):
-    print("Ejecutando B5: Generación de payloads...")
     if client is None:
-        if client is None:
-            from dotenv import load_dotenv
+        from dotenv import load_dotenv
         load_dotenv()
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        client = genai.GenerativeModel("gemini-1.5-flash")
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
     static_data = load_json_file(os.path.join(RESULTS_DIR, "B3_static.json"))
     attack_surface = load_json_file(os.path.join(RESULTS_DIR, "attack_surface.json"))
