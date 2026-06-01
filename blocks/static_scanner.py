@@ -64,7 +64,7 @@ def load_files_list(file_path):
 
 import json
 
-def get_analysis_prompt(file_content, OWASP_SCOPE):
+def get_analysis_prompt(file_content):
     prompt = f"""You are a security auditor. Analyze the provided code for OWASP vulnerabilities.
 
 FOCUS ONLY ON:

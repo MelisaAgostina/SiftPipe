@@ -3,7 +3,7 @@ load_dotenv()
 from groq import Groq
 import os
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
+import time
 import json
 import argparse
 
@@ -55,7 +55,9 @@ def run_static_analysis(pipeline_results):
     
     results = []
 
-    files_to_scan = files[:20] # Limitar a 100 archivos para esta demo, ajustar según necesidades
+    MAX_FILES = 20 #could scan more but it would consume a lot of tokens during development, so we limit it for now. In production, you might want to remove this limit or set it higher.
+
+    files_to_scan = files[:MAX_FILES] 
     total_files = len(files_to_scan)
     for index, file_path in enumerate(files_to_scan, start=1):
         try:
@@ -82,9 +84,11 @@ def run_static_analysis(pipeline_results):
     # Guardar en diccionario central
     pipeline_results["B3"] = {
         "status": "complete",
-        "total_scanned": len(files[:5]), # Ajustar en prod
+        "total_scanned": total_files, 
         "findings": results
     }
+
+    time.sleep(15) #timer so it doesnt waste too many tokens in case of re-runs during development
     
     # Persistir output JSON en /results para la UI (Streamlit)
     os.makedirs("results", exist_ok=True)
