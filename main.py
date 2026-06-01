@@ -27,6 +27,7 @@ def save_result(block_name, data):
 from blocks.static_scanner import scan_and_save_files, load_files_list, get_analysis_prompt
 from blocks.dynamic_analysis import discover_attack_surface
 from blocks.generate_payloads import generate_payloads
+from blocks.human_review import run_human_review
 
 def ask_llm(prompt):
     try:
@@ -67,16 +68,22 @@ def run_static_analysis(pipeline_results):
             print(f"Analizando ({index}/{total_files}): {os.path.basename(file_path)}...")
             prompt = get_analysis_prompt(content)
             llm_response = ask_llm(prompt)
+            print(f"RAW LLM RESPONSE: {llm_response}")
             
-            # Filtro 1: Que haya detectado una vulnerabilidad válida
-            if llm_response.get("vulnerability") not in ["None", "None/Detected", None]:
-                
-                # Filtro 2: Solo guardar confidence 'high' o 'medium'
-                confianza = llm_response.get("confidence", "").lower()
-                llm_response["file"] = file_path
-                print(f"RAW LLM RESPONSE: {llm_response}")
-                results.append(llm_response)
-                print(f"[+] Guardado: {llm_response.get('vulnerability')} ({confianza})")
+            # Validamos que sea una lista (array) como pedimos en el prompt
+            if isinstance(llm_response, list):
+                for finding in llm_response:
+                    # Filtro 1: Que haya detectado una vulnerabilidad válida
+                    if finding.get("vulnerability") not in ["None", "None/Detected", None]:
+                        
+                        # Filtro 2: Solo guardar confidence 'high' o 'medium'
+                        confianza = finding.get("confidence", "").lower()
+                        if confianza in ["high", "medium"]:
+                            finding["file"] = file_path
+                            results.append(finding)
+                            print(f"[+] Guardado: {finding.get('vulnerability')} ({confianza})")
+            else:
+                print(f"[-] Formato inesperado del LLM para {file_path}")
                 
         except Exception as e:
             print(f"Error procesando {file_path}: {e}")
@@ -119,11 +126,6 @@ def run_dynamic_discovery(pipeline_results):
 
     print("B4 dinámico completado y guardado en results/attack_surface.json")
 
-
-def run_human_review():
-    print("Ejecutando B6: Revisión humana...")
-    save_result("B6_human", {"approved": 10, "status": "done"})
-
 def execute_attacks():
     print("Ejecutando B7: Ejecución de ataques...")
     save_result("B7_attacks", {"success_rate": "80%", "status": "done"})
@@ -137,11 +139,6 @@ def correlate_results():
     # Aquí accedes a la data centralizada
     correlation = {"confirmed": 2, "possible": 1, "method": "hybrid"}
     save_result("B9_correlation", correlation)
-
-
-
-
-
 
 
 
@@ -164,7 +161,7 @@ def main():
     run_static_analysis(pipeline_results)
     run_dynamic_discovery(pipeline_results)
     generate_payloads(client=client)
-    run_human_review()
+    run_human_review(pipeline_results)
     execute_attacks()
     analyze_results()
     correlate_results()
