@@ -1,3 +1,4 @@
+#Ajustar los indicadores y palabras clave a las respuestas reales de Mattermost si observas falsos positivos/negativos.
 from dotenv import load_dotenv
 load_dotenv()
 from groq import Groq
@@ -28,6 +29,9 @@ from blocks.static_scanner import scan_and_save_files, load_files_list, get_anal
 from blocks.dynamic_analysis import discover_attack_surface
 from blocks.generate_payloads import generate_payloads
 from blocks.human_review import run_human_review
+from blocks.dynamic_injector import run_payloads
+from blocks.analyze_results import analyze_results
+from blocks.correlate_results import correlate_results
 
 def ask_llm(prompt):
     try:
@@ -56,7 +60,7 @@ def run_static_analysis(pipeline_results):
     
     results = []
 
-    MAX_FILES = 20 #could scan more but it would consume a lot of tokens during development, so we limit it for now. In production, you might want to remove this limit or set it higher.
+    MAX_FILES = 10 #could scan more but it would consume a lot of tokens during development, so we limit it for now. In production, you might want to remove this limit or set it higher.
 
     files_to_scan = files[:MAX_FILES] 
     total_files = len(files_to_scan)
@@ -128,18 +132,18 @@ def run_dynamic_discovery(pipeline_results):
 
 def execute_attacks():
     print("Ejecutando B7: Ejecución de ataques...")
-    save_result("B7_attacks", {"success_rate": "80%", "status": "done"})
-
-def analyze_results():
-    print("Ejecutando B8: Análisis inteligente...")
-    save_result("B8_analysis", {"findings": ["SQLi", "XSS"], "status": "done"})
-
-def correlate_results():
-    print("Ejecutando B9: Correlación...")
-    # Aquí accedes a la data centralizada
-    correlation = {"confirmed": 2, "possible": 1, "method": "hybrid"}
-    save_result("B9_correlation", correlation)
-
+    # Cargar los payloads validados por B6 y ejecutar las inyecciones dinámicas
+    validated_path = "results/validated_payloads.json"
+    try:
+        b7 = run_payloads(validated_path, pipeline_results)
+        # Guardar el objeto completo retornado por run_payloads para que B9 pueda correlacionar
+        save_result("B7_dynamic", b7)
+    except FileNotFoundError as e:
+        print(f"[-] B7 cancelado: {e}")
+        save_result("B7_dynamic", {"status": "skipped", "reason": str(e)})
+    except Exception as e:
+        print(f"[-] Error ejecutando B7: {e}")
+        save_result("B7_dynamic", {"status": "error", "reason": str(e)})
 
 
 # --- Orquestador Principal ---
@@ -163,8 +167,8 @@ def main():
     generate_payloads(client=client)
     run_human_review(pipeline_results)
     execute_attacks()
-    analyze_results()
-    correlate_results()
+    analyze_results(pipeline_results, ask_llm)
+    correlate_results(pipeline_results)
     
     print("\nPipeline completado. Resultados disponibles en /results.")
 

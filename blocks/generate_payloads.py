@@ -211,11 +211,23 @@ def generate_payloads(client=None):
         if isinstance(llm_result, list):
             for item in llm_result:
                 item.setdefault("target", dynamic_target["target"])
+                # ensure downstream blocks have navigation metadata
+                item.setdefault("target_desc", dynamic_target["target"])
+                item.setdefault("page_url", dynamic_target.get("page_url"))
+                item.setdefault("action", dynamic_target.get("action"))
+                item.setdefault("field_id", dynamic_target.get("field_id"))
+                item.setdefault("field_name", dynamic_target.get("field_name"))
                 item.setdefault("payloads", [])
                 item.setdefault("rationale", "No rationale returned by LLM.")
                 payload_outputs.append(item)
         elif isinstance(llm_result, dict) and llm_result.get("target"):
             llm_result.setdefault("target", dynamic_target["target"])
+            # inject navigation metadata so B7 can navigate/select correctly
+            llm_result["target_desc"] = dynamic_target["target"]
+            llm_result["page_url"] = dynamic_target.get("page_url")
+            llm_result["action"] = dynamic_target.get("action")
+            llm_result["field_id"] = dynamic_target.get("field_id")
+            llm_result["field_name"] = dynamic_target.get("field_name")
             llm_result.setdefault("payloads", [])
             llm_result.setdefault("rationale", "No rationale returned by LLM.")
             payload_outputs.append(llm_result)

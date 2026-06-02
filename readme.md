@@ -44,3 +44,5 @@ Gemini:
 - importar en otro chat: This is the context from our previous session. Let's continue working on..."
 levantar back: .venv\Scripts\uvicorn.exe api:app --reload --port 8000
 levantar front: bun run dev
+
+Nota sobre el Bloque 6 (Revisión Humana): La pausa en el pipeline durante esta etapa es estrictamente intencional y no un proceso automatizado. Constituye el núcleo del argumento académico del enfoque híbrido : la IA se encarga de reducir el espacio de búsqueda y generar los payloads contextualizados, pero es el criterio técnico humano quien decide el riesgo real y prioriza la ejecución, eliminando los falsos positivos antes del análisis dinámico
