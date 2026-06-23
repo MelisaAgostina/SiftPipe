@@ -66,8 +66,18 @@ def run_payloads(validated_payloads_path, pipeline_results):
     if not os.path.exists(validated_payloads_path):
         raise FileNotFoundError(f"No se encontró: {validated_payloads_path}")
 
+    # with open(validated_payloads_path, "r", encoding="utf-8") as f:
+    #     validated = json.load(f)
+
+
     with open(validated_payloads_path, "r", encoding="utf-8") as f:
-        validated = json.load(f)
+        raw = json.load(f)
+
+    # Soporta tanto lista directa como el dict envuelto que genera B5/B6
+    if isinstance(raw, dict):
+        validated = raw.get("payloads", [])
+    else:
+        validated = raw  # por si algún día se guarda como lista directa
 
     os.makedirs("results/dynamic", exist_ok=True)
 
@@ -223,7 +233,7 @@ def run_payloads(validated_payloads_path, pipeline_results):
     pipeline_results["B7"] = final
 
     # Persistir el JSON final para la UI
-    with open("results/B7_dynamic.json", "w", encoding="utf-8") as f:
+    with open("results/B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
         json.dump(final, f, indent=4)
 
     print(f"B7 finalizado. Tests realizados: {total_tested}. Detecciones: {detected}")

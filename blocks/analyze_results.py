@@ -7,7 +7,7 @@ def analyze_results(pipeline_results, ask_llm):
     # 1. Leer los logs y respuestas de B7
     b7_results = pipeline_results.get("B7", {})
     if not b7_results:
-        b7_path = "results/B7_dynamic.json"
+        b7_path = "results/B7_dynamic_attacks.json"
         if os.path.exists(b7_path):
             with open(b7_path, "r", encoding="utf-8") as f:
                 b7_results = json.load(f)
