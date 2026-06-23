@@ -1,0 +1,248 @@
+{
+    "forms": [
+        {
+            "page": "dashboard",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "form_id": "create_post",
+            "form_name": "unknown",
+            "action": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "method": "get",
+            "submit_buttons": [],
+            "fields": [
+                {
+                    "tag": "textarea",
+                    "id": "post_textbox",
+                    "name": "unknown",
+                    "type": "textarea",
+                    "placeholder": "Write to Town Square"
+                },
+                {
+                    "tag": "input",
+                    "id": "fileUploadInput",
+                    "name": "unknown",
+                    "type": "file",
+                    "placeholder": ""
+                }
+            ]
+        },
+        {
+            "page": "home",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "form_id": "create_post",
+            "form_name": "unknown",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "method": "get",
+            "submit_buttons": [],
+            "fields": [
+                {
+                    "tag": "textarea",
+                    "id": "post_textbox",
+                    "name": "unknown",
+                    "type": "textarea",
+                    "placeholder": "Write to Canal de An\u00e1lisis"
+                },
+                {
+                    "tag": "input",
+                    "id": "fileUploadInput",
+                    "name": "unknown",
+                    "type": "file",
+                    "placeholder": ""
+                }
+            ]
+        },
+        {
+            "page": "profile",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "form_id": "create_post",
+            "form_name": "unknown",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "method": "get",
+            "submit_buttons": [],
+            "fields": [
+                {
+                    "tag": "textarea",
+                    "id": "post_textbox",
+                    "name": "unknown",
+                    "type": "textarea",
+                    "placeholder": "Write to usuario_test"
+                },
+                {
+                    "tag": "input",
+                    "id": "fileUploadInput",
+                    "name": "unknown",
+                    "type": "file",
+                    "placeholder": ""
+                }
+            ]
+        },
+        {
+            "page": "search",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "form_id": "create_post",
+            "form_name": "unknown",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "method": "get",
+            "submit_buttons": [],
+            "fields": [
+                {
+                    "tag": "textarea",
+                    "id": "post_textbox",
+                    "name": "unknown",
+                    "type": "textarea",
+                    "placeholder": "Write to Canal de An\u00e1lisis"
+                },
+                {
+                    "tag": "input",
+                    "id": "fileUploadInput",
+                    "name": "unknown",
+                    "type": "file",
+                    "placeholder": ""
+                }
+            ]
+        },
+        {
+            "page": "new_post",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "form_id": "create_post",
+            "form_name": "unknown",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "method": "get",
+            "submit_buttons": [],
+            "fields": [
+                {
+                    "tag": "textarea",
+                    "id": "post_textbox",
+                    "name": "unknown",
+                    "type": "textarea",
+                    "placeholder": "Write to Off-Topic"
+                },
+                {
+                    "tag": "input",
+                    "id": "fileUploadInput",
+                    "name": "unknown",
+                    "type": "file",
+                    "placeholder": ""
+                }
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "post_textbox",
+            "name": "unknown",
+            "type": "text",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis"
+        },
+        {
+            "id": "fileUploadInput",
+            "name": "unknown",
+            "type": "file",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis"
+        },
+        {
+            "id": "post_textbox",
+            "name": "unknown",
+            "type": "text",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test"
+        },
+        {
+            "id": "fileUploadInput",
+            "name": "unknown",
+            "type": "file",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test"
+        },
+        {
+            "id": "post_textbox",
+            "name": "unknown",
+            "type": "text",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search"
+        },
+        {
+            "id": "fileUploadInput",
+            "name": "unknown",
+            "type": "file",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search"
+        },
+        {
+            "id": "post_textbox",
+            "name": "unknown",
+            "type": "text",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic"
+        },
+        {
+            "id": "fileUploadInput",
+            "name": "unknown",
+            "type": "file",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic"
+        },
+        {
+            "id": "post_textbox",
+            "name": "unknown",
+            "type": "textarea",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic"
+        },
+        {
+            "id": "fileUploadInput",
+            "name": "unknown",
+            "type": "file",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic"
+        }
+    ],
+    "endpoints": [
+        "http://localhost:8065/api/v4/agents",
+        "http://localhost:8065/api/v4/agents/status",
+        "http://localhost:8065/api/v4/channels/3k48gob3yj8o3fo4mi3q65y1yy/bookmarks",
+        "http://localhost:8065/api/v4/channels/3k48gob3yj8o3fo4mi3q65y1yy/members/thd1sctegfrupjaqu85kye4x5h",
+        "http://localhost:8065/api/v4/channels/3k48gob3yj8o3fo4mi3q65y1yy/stats?exclude_files_count=true",
+        "http://localhost:8065/api/v4/channels/gx1kbuf8ftrnmpd69sqno7gjjh/bookmarks",
+        "http://localhost:8065/api/v4/channels/gx1kbuf8ftrnmpd69sqno7gjjh/stats?exclude_files_count=true",
+        "http://localhost:8065/api/v4/channels/hma1i7o67pf13con6we6cckkhw/bookmarks",
+        "http://localhost:8065/api/v4/channels/hma1i7o67pf13con6we6cckkhw/stats?exclude_files_count=true",
+        "http://localhost:8065/api/v4/channels/members/me/view",
+        "http://localhost:8065/api/v4/channels/urqg8n5wmby1dyf5xeyezntbro/bookmarks",
+        "http://localhost:8065/api/v4/channels/urqg8n5wmby1dyf5xeyezntbro/stats?exclude_files_count=true",
+        "http://localhost:8065/api/v4/client_perf",
+        "http://localhost:8065/api/v4/cloud/check-cws-connection",
+        "http://localhost:8065/api/v4/config/client?format=old",
+        "http://localhost:8065/api/v4/custom_profile_attributes/fields",
+        "http://localhost:8065/api/v4/groups?filter_allow_reference=false&page=0&per_page=60&include_member_count=true&include_member_ids=true&include_archived=false",
+        "http://localhost:8065/api/v4/groups?filter_allow_reference=false&page=0&per_page=60&include_member_count=true&include_member_ids=true&include_archived=false&filter_has_member=thd1sctegfrupjaqu85kye4x5h",
+        "http://localhost:8065/api/v4/license/client?format=old",
+        "http://localhost:8065/api/v4/limits/server",
+        "http://localhost:8065/api/v4/plugins/webapp",
+        "http://localhost:8065/api/v4/posts/scheduled/team/zfpwg3j6r3y4fqj49cf87rknny?includeDirectChannels=true",
+        "http://localhost:8065/api/v4/roles/names",
+        "http://localhost:8065/api/v4/system/notices/zfpwg3j6r3y4fqj49cf87rknny?client=web&clientVersion=11.7.0",
+        "http://localhost:8065/api/v4/teams/zfpwg3j6r3y4fqj49cf87rknny/groups_by_channels?paginate=false&filter_allow_reference=true",
+        "http://localhost:8065/api/v4/teams?page=0&per_page=200&include_total_count=false&exclude_policy_constrained=false",
+        "http://localhost:8065/api/v4/trial-license/prev",
+        "http://localhost:8065/api/v4/users/3h7sc4ng138b5ftwiong61etur/image?_=0",
+        "http://localhost:8065/api/v4/users/login",
+        "http://localhost:8065/api/v4/users/me",
+        "http://localhost:8065/api/v4/users/me/channels",
+        "http://localhost:8065/api/v4/users/me/channels/gx1kbuf8ftrnmpd69sqno7gjjh/drafts",
+        "http://localhost:8065/api/v4/users/me/channels/hma1i7o67pf13con6we6cckkhw/drafts",
+        "http://localhost:8065/api/v4/users/me/channels/urqg8n5wmby1dyf5xeyezntbro/drafts",
+        "http://localhost:8065/api/v4/users/me/preferences",
+        "http://localhost:8065/api/v4/users/me/teams",
+        "http://localhost:8065/api/v4/users/me/teams/members",
+        "http://localhost:8065/api/v4/users/me/teams/unread?include_collapsed_threads=true",
+        "http://localhost:8065/api/v4/users/me/teams/zfpwg3j6r3y4fqj49cf87rknny/channels/members",
+        "http://localhost:8065/api/v4/users/me/teams/zfpwg3j6r3y4fqj49cf87rknny/channels?include_deleted=false",
+        "http://localhost:8065/api/v4/users/me/teams/zfpwg3j6r3y4fqj49cf87rknny/drafts",
+        "http://localhost:8065/api/v4/users/stats",
+        "http://localhost:8065/api/v4/users/status/ids",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/channel_members?page=-1&per_page=60",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/channels/3k48gob3yj8o3fo4mi3q65y1yy/posts/unread?limit_after=30&limit_before=30&skipFetchThreads=false&collapsedThreads=true&collapsedThreadsExtended=false",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/channels/gx1kbuf8ftrnmpd69sqno7gjjh/posts/unread?limit_after=30&limit_before=30&skipFetchThreads=false&collapsedThreads=true&collapsedThreadsExtended=false",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/channels/hma1i7o67pf13con6we6cckkhw/posts/unread?limit_after=30&limit_before=30&skipFetchThreads=false&collapsedThreads=true&collapsedThreadsExtended=false",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/channels/urqg8n5wmby1dyf5xeyezntbro/posts/unread?limit_after=30&limit_before=30&skipFetchThreads=false&collapsedThreads=true&collapsedThreadsExtended=false",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/image",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/image?_=0",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/preferences",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/teams/zfpwg3j6r3y4fqj49cf87rknny/channels/categories",
+        "http://localhost:8065/api/v4/users/thd1sctegfrupjaqu85kye4x5h/teams/zfpwg3j6r3y4fqj49cf87rknny/threads?before=&after=&per_page=20&extended=false&deleted=false&unread=false&since=0&totalsOnly=true&threadsOnly=false",
+        "http://localhost:8065/api/v4/users?page=0&per_page=100",
+        "https://mm.example.com/api/v4/users/username/ai"
+    ]
+}
