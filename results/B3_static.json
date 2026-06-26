@@ -1,0 +1,198 @@
+{
+    "status": "complete",
+    "total_scanned": 10,
+    "findings": [
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 24,
+            "evidence": "fetch('https://raw.githubusercontent.com/mattermost/mattermost-plugin-playbooks/master/server/api/api.yaml')",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\extract.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 31,
+            "evidence": "fs.writeFileSync(filename, stringified)",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\extract.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 5,
+            "evidence": "const fs = require('fs');",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 24,
+            "evidence": "console.log(\"read file \" + filename);",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 31,
+            "evidence": "console.log(\"wrote file \" + filename);",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 5,
+            "evidence": "const fs = require('fs');",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js"
+        },
+        {
+            "vulnerability": "Injection",
+            "category": "A05",
+            "line": 15,
+            "evidence": "return YAML.parse(rawYaml.toString());",
+            "confidence": "high",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 23,
+            "evidence": "const parsed = this.readFile(args[2]);",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 30,
+            "evidence": "fs.writeFileSync(\"merged-tags.yaml\", yamlString);",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js"
+        },
+        {
+            "vulnerability": "Insecure File Permissions",
+            "category": "A02",
+            "line": 83,
+            "evidence": "err = os.WriteFile(filename, newDocument, 0644)",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\server\\main.go"
+        },
+        {
+            "vulnerability": "Insecure Error Handling",
+            "category": "A02",
+            "line": 34,
+            "evidence": "log.Fatalf(\"Failed to parse OpenAPI spec: %s\", err)",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\server\\main.go"
+        },
+        {
+            "vulnerability": "Broken Access Control",
+            "category": "A01",
+            "line": 23,
+            "evidence": "const user = await client.createUser({ email: `${username}@example.com`, username: username, password: newTestPassword(), }, '', '', );",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\abac_helpers.ts"
+        },
+        {
+            "vulnerability": "Identification and Authentication Failures",
+            "category": "A07",
+            "line": 67,
+            "evidence": "await page.goto('/admin_console/system_attributes/attribute_based_access_control');",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\abac_helpers.ts"
+        },
+        {
+            "vulnerability": "Injection",
+            "category": "A05",
+            "line": 123,
+            "evidence": "await celEditor.fill(options.celExpression);",
+            "confidence": "high",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\abac_helpers.ts"
+        },
+        {
+            "vulnerability": "Broken Access Control",
+            "category": "A01",
+            "line": 123,
+            "evidence": "await adminClient.patchConfig({ ServiceSettings: { EnableTesting: true } });",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\ai_bridge.ts"
+        },
+        {
+            "vulnerability": "Identification and Authentication Failures",
+            "category": "A07",
+            "line": 187,
+            "evidence": "const agent: AIBridgeMockAgent = { id: overrides.agent?.id ?? `mock-agent-${randomId}`,",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\ai_bridge.ts"
+        },
+        {
+            "vulnerability": "Hardcoded Secrets",
+            "category": "A02",
+            "line": 5,
+            "evidence": "import {testConfig} from '@/test_config';",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\client.ts"
+        },
+        {
+            "vulnerability": "Insecure Password Storage",
+            "category": "A07",
+            "line": 24,
+            "evidence": "const cacheKey = userRequest.username + userRequest.password;",
+            "confidence": "high",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\client.ts"
+        },
+        {
+            "vulnerability": "Insecure Password Storage",
+            "category": "A07",
+            "line": 30,
+            "evidence": "const user = {...userProfile, password: userRequest.password};",
+            "confidence": "high",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\client.ts"
+        },
+        {
+            "vulnerability": "Error Handling Information Disclosure",
+            "category": "A02",
+            "line": 41,
+            "evidence": "console.log('makeClient', err);",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\client.ts"
+        },
+        {
+            "vulnerability": "Hardcoded Secret",
+            "category": "A02",
+            "line": 123,
+            "evidence": "GiphySdkKey: 's0glxvzVg9azvPipKxcPLpXV0q1x1fVP'",
+            "confidence": "high",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts"
+        },
+        {
+            "vulnerability": "Insecure Database Connection",
+            "category": "A02",
+            "line": 234,
+            "evidence": "DataSource: 'postgres://mmuser:mostest@localhost/mattermost_test?sslmode=disable'",
+            "confidence": "high",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts"
+        },
+        {
+            "vulnerability": "Missing Authorization Check",
+            "category": "A01",
+            "line": 456,
+            "evidence": "EnableUserCreation: true",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts"
+        },
+        {
+            "vulnerability": "Insecure Password Settings",
+            "category": "A07",
+            "line": 567,
+            "evidence": "MinimumLength: 14, Lowercase: false, Number: false, Uppercase: false, Symbol: false",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts"
+        }
+    ]
+}

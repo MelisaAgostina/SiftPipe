@@ -15,9 +15,7 @@ def load_json_file(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except FileNotFoundError:
-        return None
-    except json.JSONDecodeError:
+    except (FileNotFoundError, json.JSONDecodeError):
         return None
 
 
@@ -35,48 +33,48 @@ def build_dynamic_targets(attack_surface):
     targets = []
 
     for form in attack_surface.get("forms", []):
-        page = form.get("page", "unknown")
+        page   = form.get("page", "unknown")
         action = form.get("action", form.get("page_url", "unknown"))
         method = form.get("method", "get")
 
         for field in form.get("fields", []):
             targets.append({
-                "type": "form_field",
-                "target": f"form field '{field.get('name') or field.get('id') or 'unknown'}' on page '{page}'",
-                "page": page,
-                "action": action,
-                "method": method,
-                "field_id": field.get("id"),
+                "type":       "form_field",
+                "target":     f"form field '{field.get('name') or field.get('id') or 'unknown'}' on page '{page}'",
+                "page":       page,
+                "action":     action,
+                "method":     method,
+                "field_id":   field.get("id"),
                 "field_name": field.get("name"),
                 "field_type": field.get("type"),
-                "page_url": form.get("page_url", "unknown"),
+                "page_url":   form.get("page_url", "unknown"),
             })
 
     for input_field in attack_surface.get("inputs", []):
         targets.append({
-            "type": "input",
-            "target": f"input '{input_field.get('name') or input_field.get('id') or 'unknown'}' on page '{input_field.get('page_url', 'unknown')}'",
-            "page": input_field.get("page_url", "unknown"),
-            "action": input_field.get("page_url", "unknown"),
-            "method": "unknown",
-            "field_id": input_field.get("id"),
+            "type":       "input",
+            "target":     f"input '{input_field.get('name') or input_field.get('id') or 'unknown'}' on page '{input_field.get('page_url', 'unknown')}'",
+            "page":       input_field.get("page_url", "unknown"),
+            "action":     input_field.get("page_url", "unknown"),
+            "method":     "unknown",
+            "field_id":   input_field.get("id"),
             "field_name": input_field.get("name"),
             "field_type": input_field.get("type"),
-            "page_url": input_field.get("page_url", "unknown"),
+            "page_url":   input_field.get("page_url", "unknown"),
         })
 
     if not targets:
         for endpoint in attack_surface.get("endpoints", []):
             targets.append({
-                "type": "endpoint",
-                "target": f"endpoint '{endpoint}'",
-                "page": endpoint,
-                "action": endpoint,
-                "method": "unknown",
-                "field_id": None,
+                "type":       "endpoint",
+                "target":     f"endpoint '{endpoint}'",
+                "page":       endpoint,
+                "action":     endpoint,
+                "method":     "unknown",
+                "field_id":   None,
                 "field_name": None,
                 "field_type": None,
-                "page_url": endpoint,
+                "page_url":   endpoint,
             })
 
     return targets
@@ -97,69 +95,79 @@ def find_related_static_findings(dynamic_target, static_findings):
         if value:
             keywords.update(normalize_text(value).split())
 
-    if not keywords:
-        return []
-
     matches = []
     for finding in static_findings:
         file_text = normalize_text(finding.get("file", ""))
         vuln_text = normalize_text(finding.get("vulnerability", ""))
-        confidence = normalize_text(finding.get("confidence", ""))
-
-        if any(keyword in file_text or keyword in vuln_text or keyword in confidence for keyword in keywords):
+        if any(kw in file_text or kw in vuln_text for kw in keywords):
             matches.append(finding)
 
     return matches
 
 
 def build_prompt(dynamic_target, related_findings, static_findings):
+    """
+    Constrained prompt: asks for exactly 5 payloads in a compact JSON structure.
+    Keeping the output small prevents truncation.
+    """
     context_lines = [
-        f"Dynamic input detected: {dynamic_target['target']}",
+        f"Target input: {dynamic_target['target']}",
         f"Page URL: {dynamic_target['page_url']}",
-        f"Form action / endpoint: {dynamic_target['action']}",
-        f"Input type: {dynamic_target.get('field_type')}",
-        f"Field name: {dynamic_target.get('field_name')}",
         f"Field id: {dynamic_target.get('field_id')}",
+        f"Field type: {dynamic_target.get('field_type')}",
         "",
     ]
 
     if related_findings:
-        context_lines.append("Static analysis found the following closely related risk(s):")
-        for finding in related_findings:
-            context_lines.append(
-                f"- {finding.get('vulnerability')} in {finding.get('file')} (confidence: {finding.get('confidence', 'unknown')})"
-            )
-    else:
-        context_lines.append("No directly related static finding was found for this dynamic input.")
-        if static_findings:
-            context_lines.append("Use the main static findings as general context:")
-            for finding in static_findings[:3]:
-                context_lines.append(
-                    f"- {finding.get('vulnerability')} in {finding.get('file')} (confidence: {finding.get('confidence', 'unknown')})"
-                )
+        context_lines.append("Related static findings:")
+        for f in related_findings[:2]:   # limit to 2 to keep prompt short
+            context_lines.append(f"  - {f.get('vulnerability')} ({f.get('confidence')})")
+    elif static_findings:
+        context_lines.append("General static context:")
+        for f in static_findings[:2]:
+            context_lines.append(f"  - {f.get('vulnerability')} ({f.get('confidence')})")
 
     context_lines.extend([
         "",
-        "Generate a JSON response with the following schema:",
-        "[",
-        "  {",
-        "    \"target\": \"...\",",
-        "    \"payloads\": [\"...\", \"...\"],",
-        "    \"rationale\": \"...\"",
-        "  }",
-        "]",
+        "Return ONLY this JSON, no extra text, no markdown:",
+        "{",
+        '  "target": "<same as Target input above>",',
+        '  "payloads": ["payload1", "payload2", "payload3", "payload4", "payload5"],',
+        '  "rationale": "<one sentence>"',
+        "}",
         "",
-        "Create payloads for the main vulnerability classes:",
-        "- Injection (SQL, command, script, template, LDAP, noSQL)",
-        "- Access control or authorization bypass (IDOR, privilege escalation, horizontal/vertical access control)",
-        "- Broken authentication or session abuse (login, password reset, token/session manipulation)",
-        "- Boundary cases (long strings, special characters, empty values, encoding, unexpected types)",
-        "",
-        "Prefer specific payloads for the dynamic target and static risk context.",
-        "Do not add any extra prose outside the JSON structure.",
+        "Rules:",
+        "- Exactly 5 short attack strings in the payloads array.",
+        "- Cover: XSS, SQLi, command injection, path traversal, auth bypass.",
+        "- Strings only — no nested objects.",
+        "- No explanation outside the JSON.",
     ])
 
     return "\n".join(context_lines)
+
+
+def _try_extract_partial_json(text):
+    """
+    Fallback: if the response is truncated, try to extract the payloads array
+    from whatever JSON was returned before the cut-off.
+    """
+    # Try to find a payloads array even in truncated JSON
+    match = re.search(r'"payloads"\s*:\s*(\[.*?\])', text, re.DOTALL)
+    if match:
+        try:
+            payloads = json.loads(match.group(1))
+            if isinstance(payloads, list):
+                # Filter to strings only
+                return [p for p in payloads if isinstance(p, str)]
+        except json.JSONDecodeError:
+            pass
+
+    # Try to extract individual quoted strings from the payloads section
+    after_key = text.split('"payloads"', 1)[-1] if '"payloads"' in text else ""
+    strings = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', after_key)
+    # Filter out metadata keys
+    meta = {"target", "payloads", "rationale", "debug"}
+    return [s for s in strings if s and s not in meta][:10]
 
 
 def ask_llm(prompt, client=None):
@@ -170,14 +178,31 @@ def ask_llm(prompt, client=None):
     try:
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a security testing assistant. "
+                        "You respond ONLY with valid, complete JSON. "
+                        "No prose, no markdown, no truncation."
+                    )
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.0,
+            max_tokens=512,   # compact response — prompt asks for exactly 5 payloads
         )
         text = response.choices[0].message.content.strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return json.loads(text)
+
     except json.JSONDecodeError:
+        # Try to salvage partial JSON before giving up
+        recovered = _try_extract_partial_json(text)
+        if recovered:
+            return {"payloads": recovered, "rationale": "Recovered from partial LLM response."}
         return {"error": "LLM response could not be parsed as JSON", "response_text": text[:200]}
+
     except Exception as e:
         return {"error": "LLM request failed", "message": str(e)}
 
@@ -188,7 +213,7 @@ def generate_payloads(client=None):
         load_dotenv()
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-    static_data = load_json_file(os.path.join(RESULTS_DIR, "B3_static.json"))
+    static_data    = load_json_file(os.path.join(RESULTS_DIR, "B3_static.json"))
     attack_surface = load_json_file(os.path.join(RESULTS_DIR, "attack_surface.json"))
 
     static_findings = []
@@ -205,49 +230,47 @@ def generate_payloads(client=None):
     payload_outputs = []
     for dynamic_target in dynamic_targets[:20]:
         related_findings = find_related_static_findings(dynamic_target, static_findings)
-        prompt = build_prompt(dynamic_target, related_findings, static_findings)
-        llm_result = ask_llm(prompt, client)
+        prompt           = build_prompt(dynamic_target, related_findings, static_findings)
+        llm_result       = ask_llm(prompt, client)
+
+        # Inject navigation metadata regardless of response shape
+        def _enrich(item):
+            item.setdefault("target",      dynamic_target["target"])
+            item.setdefault("target_desc", dynamic_target["target"])
+            item.setdefault("page_url",    dynamic_target.get("page_url"))
+            item.setdefault("action",      dynamic_target.get("action"))
+            item.setdefault("field_id",    dynamic_target.get("field_id"))
+            item.setdefault("field_name",  dynamic_target.get("field_name"))
+            item.setdefault("payloads",    [])
+            item.setdefault("rationale",   "No rationale returned by LLM.")
+            return item
 
         if isinstance(llm_result, list):
             for item in llm_result:
-                item.setdefault("target", dynamic_target["target"])
-                # ensure downstream blocks have navigation metadata
-                item.setdefault("target_desc", dynamic_target["target"])
-                item.setdefault("page_url", dynamic_target.get("page_url"))
-                item.setdefault("action", dynamic_target.get("action"))
-                item.setdefault("field_id", dynamic_target.get("field_id"))
-                item.setdefault("field_name", dynamic_target.get("field_name"))
-                item.setdefault("payloads", [])
-                item.setdefault("rationale", "No rationale returned by LLM.")
-                payload_outputs.append(item)
-        elif isinstance(llm_result, dict) and llm_result.get("target"):
-            llm_result.setdefault("target", dynamic_target["target"])
-            # inject navigation metadata so B7 can navigate/select correctly
-            llm_result["target_desc"] = dynamic_target["target"]
-            llm_result["page_url"] = dynamic_target.get("page_url")
-            llm_result["action"] = dynamic_target.get("action")
-            llm_result["field_id"] = dynamic_target.get("field_id")
-            llm_result["field_name"] = dynamic_target.get("field_name")
-            llm_result.setdefault("payloads", [])
-            llm_result.setdefault("rationale", "No rationale returned by LLM.")
-            payload_outputs.append(llm_result)
+                payload_outputs.append(_enrich(item))
+
+        elif isinstance(llm_result, dict):
+            if llm_result.get("error"):
+                payload_outputs.append(_enrich({
+                    "payloads": [],
+                    "rationale": "No JSON-valid payloads could be generated for this target.",
+                    "debug": llm_result,
+                }))
+            else:
+                payload_outputs.append(_enrich(llm_result))
         else:
-            payload_outputs.append({
-                "target": dynamic_target["target"],
+            payload_outputs.append(_enrich({
                 "payloads": [],
-                "rationale": "No JSON-valid payloads could be generated for this target.",
-                "debug": llm_result,
-            })
+                "rationale": "Unexpected LLM output type.",
+            }))
 
     output = {
-        "status": "complete",
+        "status":            "complete",
         "generated_targets": len(payload_outputs),
-        "payloads": payload_outputs,
+        "payloads":          payload_outputs,
     }
 
-    #save_json_file(os.path.join(RESULTS_DIR, "payloads.json"), output)
     save_json_file(os.path.join(RESULTS_DIR, "B5_payloads.json"), output)
-
     print(f"B5 finalizado. Payloads generados: {len(payload_outputs)}")
     return output
 
