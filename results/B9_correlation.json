@@ -1,6 +1,6 @@
 {
     "status": "complete",
-    "total_correlated": 23,
+    "total_correlated": 24,
     "results": [
         {
             "vulnerability": "Security Misconfiguration",
@@ -12,11 +12,11 @@
         },
         {
             "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js",
+            "target": "mattermost-src/mattermost\\api\\playbooks\\extract.js",
             "classification": "POSIBLE",
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
-            "evidence": "fs.writeFileSync(filename, YAML.stringify(data, { lineWidth: 0 }).trimEnd());"
+            "evidence": "fs.writeFileSync(filename, stringified)"
         },
         {
             "vulnerability": "Security Misconfiguration",
@@ -24,7 +24,23 @@
             "classification": "POSIBLE",
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
-            "evidence": "const rawYaml = fs.readFileSync(filename);"
+            "evidence": "const fs = require('fs');"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Est\u00e1tico",
+            "evidence": "console.log(\"read file \" + filename);"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Est\u00e1tico",
+            "evidence": "console.log(\"wrote file \" + filename);"
         },
         {
             "vulnerability": "Security Misconfiguration",
@@ -35,44 +51,28 @@
             "evidence": "const fs = require('fs');"
         },
         {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "console.log(\"read file \" + filename);"
-        },
-        {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "console.error(\"please specify an input file\");"
-        },
-        {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "console.error(\"input file not specified\");"
-        },
-        {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "console.log(\"wrote file merged-tags.yaml\");"
-        },
-        {
             "vulnerability": "Injection",
             "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
             "classification": "POSIBLE",
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
+            "evidence": "return YAML.parse(rawYaml.toString());"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Est\u00e1tico",
             "evidence": "const parsed = this.readFile(args[2]);"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Est\u00e1tico",
+            "evidence": "fs.writeFileSync(\"merged-tags.yaml\", yamlString);"
         },
         {
             "vulnerability": "Insecure File Permissions",
@@ -104,7 +104,7 @@
             "classification": "POSIBLE",
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
-            "evidence": "if (options.autoSync) { const autoSyncToggle = page.locator('input[type=\"checkbox\"]').filter({hasText: /auto|sync/i}).first();"
+            "evidence": "await page.goto('/admin_console/system_attributes/attribute_based_access_control');"
         },
         {
             "vulnerability": "Injection",
@@ -115,12 +115,20 @@
             "evidence": "await celEditor.fill(options.celExpression);"
         },
         {
-            "vulnerability": "Security Misconfiguration",
+            "vulnerability": "Broken Access Control",
             "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\ai_bridge.ts",
             "classification": "POSIBLE",
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
             "evidence": "await adminClient.patchConfig({ ServiceSettings: { EnableTesting: true } });"
+        },
+        {
+            "vulnerability": "Identification and Authentication Failures",
+            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\ai_bridge.ts",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Est\u00e1tico",
+            "evidence": "const agent: AIBridgeMockAgent = { id: overrides.agent?.id ?? `mock-agent-${randomId}`,"
         },
         {
             "vulnerability": "Hardcoded Secrets",
@@ -171,7 +179,7 @@
             "evidence": "DataSource: 'postgres://mmuser:mostest@localhost/mattermost_test?sslmode=disable'"
         },
         {
-            "vulnerability": "Missing Authorization Checks",
+            "vulnerability": "Missing Authorization Check",
             "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts",
             "classification": "POSIBLE",
             "confidence": "MEDIA",

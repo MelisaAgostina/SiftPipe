@@ -13,7 +13,7 @@ env/
 .vscode/
 
 # Logs y resultados (opcional, si los generas automáticamente)
-
+results/
 
 # Node
 ui/node_modules/

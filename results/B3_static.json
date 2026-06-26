@@ -19,10 +19,26 @@
             "file": "mattermost-src/mattermost\\api\\playbooks\\extract.js"
         },
         {
-            "vulnerability": "Injection",
-            "category": "A05",
-            "line": 41,
-            "evidence": "const parsed = this.readFile(args[2]);",
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 5,
+            "evidence": "const fs = require('fs');",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 24,
+            "evidence": "console.log(\"read file \" + filename);",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 31,
+            "evidence": "console.log(\"wrote file \" + filename);",
             "confidence": "medium",
             "file": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js"
         },
@@ -38,22 +54,30 @@
             "vulnerability": "Injection",
             "category": "A05",
             "line": 15,
-            "evidence": "const rawYaml = fs.readFileSync(filename);",
+            "evidence": "return YAML.parse(rawYaml.toString());",
             "confidence": "high",
             "file": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js"
         },
         {
-            "vulnerability": "Identification and Authentication Failures",
-            "category": "A07",
-            "line": 1,
-            "evidence": "No authentication or authorization mechanism found",
-            "confidence": "high",
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 23,
+            "evidence": "const parsed = this.readFile(args[2]);",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js"
+        },
+        {
+            "vulnerability": "Security Misconfiguration",
+            "category": "A02",
+            "line": 30,
+            "evidence": "fs.writeFileSync(\"merged-tags.yaml\", yamlString);",
+            "confidence": "medium",
             "file": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js"
         },
         {
             "vulnerability": "Insecure File Permissions",
             "category": "A02",
-            "line": 93,
+            "line": 83,
             "evidence": "err = os.WriteFile(filename, newDocument, 0644)",
             "confidence": "medium",
             "file": "mattermost-src/mattermost\\api\\server\\main.go"
@@ -61,7 +85,7 @@
         {
             "vulnerability": "Insecure Error Handling",
             "category": "A02",
-            "line": 31,
+            "line": 34,
             "evidence": "log.Fatalf(\"Failed to parse OpenAPI spec: %s\", err)",
             "confidence": "medium",
             "file": "mattermost-src/mattermost\\api\\server\\main.go"
@@ -69,7 +93,7 @@
         {
             "vulnerability": "Broken Access Control",
             "category": "A01",
-            "line": 13,
+            "line": 23,
             "evidence": "const user = await client.createUser({ email: `${username}@example.com`, username: username, password: newTestPassword(), }, '', '', );",
             "confidence": "medium",
             "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\abac_helpers.ts"
@@ -85,16 +109,24 @@
         {
             "vulnerability": "Injection",
             "category": "A05",
-            "line": 141,
+            "line": 123,
             "evidence": "await celEditor.fill(options.celExpression);",
             "confidence": "high",
             "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\abac_helpers.ts"
         },
         {
-            "vulnerability": "Security Misconfiguration",
-            "category": "A02",
+            "vulnerability": "Broken Access Control",
+            "category": "A01",
             "line": 123,
             "evidence": "await adminClient.patchConfig({ ServiceSettings: { EnableTesting: true } });",
+            "confidence": "medium",
+            "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\ai_bridge.ts"
+        },
+        {
+            "vulnerability": "Identification and Authentication Failures",
+            "category": "A07",
+            "line": 187,
+            "evidence": "const agent: AIBridgeMockAgent = { id: overrides.agent?.id ?? `mock-agent-${randomId}`,",
             "confidence": "medium",
             "file": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\ai_bridge.ts"
         },
