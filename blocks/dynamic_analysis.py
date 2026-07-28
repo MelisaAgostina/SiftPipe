@@ -103,8 +103,8 @@ def discover_attack_surface(base_url="http://localhost:8065", login_id="victima@
 
             # Mattermost v9 selectors: be robust when button is rendered/different
             # Wait for the input fields to appear first
-            page.wait_for_selector("input[id='input_loginId']", timeout=10000)
-            page.wait_for_selector("input[id='input_password-input']", timeout=10000)
+            page.wait_for_selector("input[id='input_loginId']", timeout=20000)
+            page.wait_for_selector("input[id='input_password-input']", timeout=20000)
 
             page.fill("input[id='input_loginId']", login_id)
             page.fill("input[id='input_password-input']", password)

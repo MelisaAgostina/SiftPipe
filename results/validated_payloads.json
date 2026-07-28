@@ -1,86 +1,39 @@
 {
     "status": "complete",
-    "generated_targets": 5,
+    "generated_targets": 20,
     "payloads": [
         {
-            "target": "form field 'unknown' on page 'dashboard'",
+            "target": "form field 'unknown' on page 'dashboard' with URL http://localhost:8065/equipo-tesina/channels/town-square and field id 'post_textbox' of type textarea",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l; echo 'Command Injection'",
+                "../../../etc/passwd",
+                "admin' OR 1=1 --"
+            ],
+            "rationale": "Testing for various web vulnerabilities including XSS, SQLi, command injection, path traversal, and auth bypass with short attack strings.",
             "target_desc": "form field 'unknown' on page 'dashboard'",
             "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
             "action": "http://localhost:8065/equipo-tesina/channels/town-square",
             "field_id": "post_textbox",
-            "field_name": "unknown",
-            "rationale": "Testing XSS, SQLi, command injection, path traversal, and auth bypass on the Town Square post field.",
-            "payloads": [
-                "<script>alert('XSS')</script>",
-                "SELECT * FROM users WHERE id = 1",
-                "ls -l; echo 'Command Injection'",
-                "../../../etc/passwd",
-                "admin' OR 1=1 --"
-            ]
+            "field_name": "unknown"
         },
         {
-            "target": "form field 'unknown' on page 'home'",
-            "target_desc": "form field 'unknown' on page 'home'",
-            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
-            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
-            "field_id": "post_textbox",
-            "field_name": "unknown",
-            "rationale": "Testing XSS, SQLi, command injection, path traversal, and auth bypass on the Canal de Análisis post field.",
+            "target": "form field 'unknown' on page 'dashboard'",
             "payloads": [
                 "<script>alert('XSS')</script>",
-                "SELECT * FROM users WHERE id = 1",
-                "ls -l; echo 'Command Injection'",
-                "../../../etc/passwd",
-                "admin' OR 1=1 --"
-            ]
-        },
-        {
-            "target": "form field 'unknown' on page 'profile'",
-            "target_desc": "form field 'unknown' on page 'profile'",
-            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
-            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
-            "field_id": "post_textbox",
-            "field_name": "unknown",
-            "rationale": "Testing XSS, SQLi, command injection, path traversal, and auth bypass on the DM post field.",
-            "payloads": [
-                "<script>alert('XSS')</script>",
-                "SELECT * FROM users WHERE id = 1",
-                "ls -l",
-                "../../../../etc/passwd",
+                "Robert'); DROP TABLE Students; --",
+                "$(rm /etc/passwd)",
+                "../../../../../../../../etc/passwd",
                 "username=admin&password=123"
-            ]
-        },
-        {
-            "target": "form field 'unknown' on page 'search'",
-            "target_desc": "form field 'unknown' on page 'search'",
-            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
-            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
-            "field_id": "post_textbox",
-            "field_name": "unknown",
-            "rationale": "Testing XSS, SQLi, command injection, path traversal, and auth bypass on the search post field.",
-            "payloads": [
-                "<script>alert('XSS')</script>",
-                "SELECT * FROM users WHERE id = 1",
-                "ls -l; echo 'Command Injection'",
-                "../../../etc/passwd",
-                "username=admin&password=123"
-            ]
-        },
-        {
-            "target": "form field 'unknown' on page 'new_post'",
-            "target_desc": "form field 'unknown' on page 'new_post'",
-            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
-            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
-            "field_id": "post_textbox",
-            "field_name": "unknown",
-            "rationale": "Testing XSS, SQLi, command injection, path traversal, and auth bypass on the Off-Topic post field.",
-            "payloads": [
-                "<script>alert('XSS')</script>",
-                "SELECT * FROM users WHERE id = 1",
-                "ls -l; echo 'Command Injection'",
-                "../../../etc/passwd",
-                "admin' OR 1=1 --"
-            ]
+            ],
+            "rationale": "The insecure file permissions and lack of input validation on the file upload field make it vulnerable to various attacks.",
+            "target_desc": "form field 'unknown' on page 'dashboard'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "action": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
         }
-    ]
-}
+      ]  
+
+ }
