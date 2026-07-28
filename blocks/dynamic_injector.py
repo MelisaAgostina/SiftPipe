@@ -5,42 +5,44 @@ from playwright.sync_api import sync_playwright
 # --- Config (set these in your .env or environment) ---
 MM_URL      = os.getenv("MM_URL",      "http://localhost:8065")
 MM_TEAM     = os.getenv("MM_TEAM",     "equipo-tesina")
-MM_USERNAME = os.getenv("MM_USERNAME", "test@mail.com")
-MM_PASSWORD = os.getenv("MM_PASSWORD", "tommy290310")
+MM_USERNAME = os.getenv("MM_USERNAME", "victima@test.com")
+MM_PASSWORD = os.getenv("MM_PASSWORD", "Password123!")
 
 
 def _login(page):
-    """Authenticate once into Mattermost and wait for the channel view."""
-    page.goto(f"{MM_URL}/login", wait_until="load", timeout=20000)
+    """
+    Authenticate into Mattermost using the same selectors as B4 (dynamic_analysis.py).
+    """
+    page.goto(f"{MM_URL}/login", wait_until="networkidle")
 
-    # Try multiple selectors — Mattermost versions differ
-    login_selectors = [
-        "#loginId",
-        "input[name='loginId']",
-        "input[placeholder*='Email']",
-        "input[placeholder*='Username']",
-        "input[type='email']",
-    ]
-    login_field = None
-    for sel in login_selectors:
+    page.wait_for_selector("input[id='input_loginId']", timeout=30000)
+    page.wait_for_selector("input[id='input_password-input']", timeout=10000)
+
+    page.fill("input[id='input_loginId']", MM_USERNAME)
+    page.fill("input[id='input_password-input']", MM_PASSWORD)
+
+    login_clicked = False
+
+    try:
+        btn = page.locator("button#loginButton")
+        btn.wait_for(state="visible", timeout=5000)
+        if not btn.get_attribute("disabled"):
+            btn.click()
+            login_clicked = True
+    except Exception:
+        pass
+
+    if not login_clicked:
         try:
-            page.wait_for_selector(sel, timeout=5000)
-            login_field = sel
-            break
+            page.click("button[type='submit']", timeout=5000)
+            login_clicked = True
         except Exception:
-            continue
+            pass
 
-    if not login_field:
-        # Last resort: dump what's on the page to help debug
-        raise Exception(
-            f"No se encontró el campo de login. URL actual: {page.url}. "
-            "Verifica que Mattermost esté corriendo en localhost:8065."
-        )
+    if not login_clicked:
+        page.press("input[id='input_password-input']", "Enter")
 
-    page.fill(login_field, MM_USERNAME)
-    page.fill("#loginPassword", MM_PASSWORD)
-    page.keyboard.press("Enter")
-    page.wait_for_url(f"**/{MM_TEAM}/**", timeout=20000)
+    page.wait_for_url("**/channels/**", timeout=15000)
     print("[B7] Login exitoso.")
 
 
@@ -106,7 +108,7 @@ def run_payloads(validated_payloads_path, pipeline_results):
     anomalies = 0
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page    = context.new_page()
 

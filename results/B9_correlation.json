@@ -1,7 +1,17 @@
 {
     "status": "complete",
-    "total_correlated": 24,
+    "total_correlated": 17,
     "results": [
+        {
+            "vulnerability": "XSS",
+            "target": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "payload_id": "1_1",
+            "screenshot_path": "results/dynamic/screenshot_1_1.png",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Din\u00e1mico",
+            "evidence": "HTTP Status Code 201 and presence of injected payload in HTTP/HTML Response snippet, but no clear error leakage or reflection"
+        },
         {
             "vulnerability": "Security Misconfiguration",
             "target": "mattermost-src/mattermost\\api\\playbooks\\extract.js",
@@ -19,55 +29,31 @@
             "evidence": "fs.writeFileSync(filename, stringified)"
         },
         {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "const fs = require('fs');"
-        },
-        {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "console.log(\"read file \" + filename);"
-        },
-        {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "console.log(\"wrote file \" + filename);"
-        },
-        {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "const fs = require('fs');"
-        },
-        {
             "vulnerability": "Injection",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "return YAML.parse(rawYaml.toString());"
-        },
-        {
-            "vulnerability": "Security Misconfiguration",
-            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
+            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-definitions.js",
             "classification": "POSIBLE",
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
             "evidence": "const parsed = this.readFile(args[2]);"
         },
         {
-            "vulnerability": "Security Misconfiguration",
+            "vulnerability": "Path Traversal",
+            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Est\u00e1tico",
+            "evidence": "fs.readFileSync(filename)"
+        },
+        {
+            "vulnerability": "Insecure File Read",
+            "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Est\u00e1tico",
+            "evidence": "const rawYaml = fs.readFileSync(filename);"
+        },
+        {
+            "vulnerability": "Insecure File Write",
             "target": "mattermost-src/mattermost\\api\\playbooks\\merge-tags.js",
             "classification": "POSIBLE",
             "confidence": "MEDIA",
@@ -91,31 +77,15 @@
             "evidence": "log.Fatalf(\"Failed to parse OpenAPI spec: %s\", err)"
         },
         {
-            "vulnerability": "Broken Access Control",
+            "vulnerability": "Security Misconfiguration",
             "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\abac_helpers.ts",
             "classification": "POSIBLE",
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
-            "evidence": "const user = await client.createUser({ email: `${username}@example.com`, username: username, password: newTestPassword(), }, '', '', );"
+            "evidence": "newTestPassword()"
         },
         {
-            "vulnerability": "Identification and Authentication Failures",
-            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\abac_helpers.ts",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "await page.goto('/admin_console/system_attributes/attribute_based_access_control');"
-        },
-        {
-            "vulnerability": "Injection",
-            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\abac_helpers.ts",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "await celEditor.fill(options.celExpression);"
-        },
-        {
-            "vulnerability": "Broken Access Control",
+            "vulnerability": "Security Misconfiguration",
             "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\ai_bridge.ts",
             "classification": "POSIBLE",
             "confidence": "MEDIA",
@@ -123,12 +93,20 @@
             "evidence": "await adminClient.patchConfig({ ServiceSettings: { EnableTesting: true } });"
         },
         {
-            "vulnerability": "Identification and Authentication Failures",
-            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\ai_bridge.ts",
+            "vulnerability": "Missing Input Validation",
+            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\channel.ts",
             "classification": "POSIBLE",
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
-            "evidence": "const agent: AIBridgeMockAgent = { id: overrides.agent?.id ?? `mock-agent-${randomId}`,"
+            "evidence": "channelInput.name"
+        },
+        {
+            "vulnerability": "Missing Authorization Check",
+            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\channel.ts",
+            "classification": "POSIBLE",
+            "confidence": "MEDIA",
+            "source": "Est\u00e1tico",
+            "evidence": "export function createRandomChannel"
         },
         {
             "vulnerability": "Hardcoded Secrets",
@@ -161,38 +139,6 @@
             "confidence": "MEDIA",
             "source": "Est\u00e1tico",
             "evidence": "console.log('makeClient', err);"
-        },
-        {
-            "vulnerability": "Hardcoded Secret",
-            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "GiphySdkKey: 's0glxvzVg9azvPipKxcPLpXV0q1x1fVP'"
-        },
-        {
-            "vulnerability": "Insecure Database Connection",
-            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "DataSource: 'postgres://mmuser:mostest@localhost/mattermost_test?sslmode=disable'"
-        },
-        {
-            "vulnerability": "Missing Authorization Check",
-            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "EnableUserCreation: true"
-        },
-        {
-            "vulnerability": "Insecure Password Settings",
-            "target": "mattermost-src/mattermost\\e2e-tests\\playwright\\lib\\src\\server\\default_config.ts",
-            "classification": "POSIBLE",
-            "confidence": "MEDIA",
-            "source": "Est\u00e1tico",
-            "evidence": "MinimumLength: 14, Lowercase: false, Number: false, Uppercase: false, Symbol: false"
         }
     ]
 }
