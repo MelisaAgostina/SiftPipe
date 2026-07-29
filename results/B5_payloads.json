@@ -1,0 +1,288 @@
+{
+    "status": "complete",
+    "generated_targets": 20,
+    "payloads": [
+        {
+            "target": "form field 'unknown' on page 'dashboard' with URL http://localhost:8065/equipo-tesina/channels/town-square and field id 'post_textbox' of type textarea",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l; echo 'Command Injection'",
+                "../../../etc/passwd",
+                "admin' OR 1=1 --"
+            ],
+            "rationale": "Testing for various web vulnerabilities including XSS, SQLi, command injection, path traversal, and auth bypass with short attack strings.",
+            "target_desc": "form field 'unknown' on page 'dashboard'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "action": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 746. Please try again in 5m14.496s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'dashboard'",
+            "target_desc": "form field 'unknown' on page 'dashboard'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "action": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 552. Please try again in 2m26.88s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'home'",
+            "target_desc": "form field 'unknown' on page 'home'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 554. Please try again in 2m28.608s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'home'",
+            "target_desc": "form field 'unknown' on page 'home'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 495. Please try again in 1m37.631999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'profile'",
+            "target_desc": "form field 'unknown' on page 'profile'",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 497. Please try again in 1m39.36s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'profile'",
+            "target_desc": "form field 'unknown' on page 'profile'",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 499. Please try again in 1m41.088s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'search'",
+            "target_desc": "form field 'unknown' on page 'search'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 555. Please try again in 2m29.472s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'search'",
+            "target_desc": "form field 'unknown' on page 'search'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 550. Please try again in 2m25.152s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'new_post'",
+            "target_desc": "form field 'unknown' on page 'new_post'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 498. Please try again in 1m40.224s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "form field 'unknown' on page 'new_post'",
+            "target_desc": "form field 'unknown' on page 'new_post'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 515. Please try again in 1m54.912s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99618, Requested 571. Please try again in 2m43.296s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99617, Requested 563. Please try again in 2m35.519999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/messages/@usuario_test'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/messages/@usuario_test'",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99617, Requested 759. Please try again in 5m24.864s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/messages/@usuario_test'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/messages/@usuario_test'",
+            "page_url": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "action": "http://localhost:8065/equipo-tesina/messages/@usuario_test",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99617, Requested 571. Please try again in 2m42.432s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis/search'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis/search'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99617, Requested 767. Please try again in 5m31.776s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis/search'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/canal-analisis/search'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "action": "http://localhost:8065/equipo-tesina/channels/canal-analisis/search",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99617, Requested 509. Please try again in 1m48.864s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99617, Requested 759. Please try again in 5m24.864s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99617, Requested 509. Please try again in 1m48.864s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "payloads": [],
+            "rationale": "No JSON-valid payloads could be generated for this target.",
+            "debug": {
+                "error": "LLM request failed",
+                "message": "Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01ksgrfwjces58k7xs1ga8ksps` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99617, Requested 565. Please try again in 2m37.248s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+            },
+            "target": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "target_desc": "input 'unknown' on page 'http://localhost:8065/equipo-tesina/channels/off-topic'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "action": "http://localhost:8065/equipo-tesina/channels/off-topic",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        }
+    ]
+}

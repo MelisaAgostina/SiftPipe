@@ -138,13 +138,13 @@ def execute_attacks():
     try:
         b7 = run_payloads(validated_path, pipeline_results)
         # Guardar el objeto completo retornado por run_payloads para que B9 pueda correlacionar
-        save_result("B7_dynamic", b7)
+        save_result("B7_dynamic_attacks", b7)
     except FileNotFoundError as e:
         print(f"[-] B7 cancelado: {e}")
-        save_result("B7_dynamic", {"status": "skipped", "reason": str(e)})
+        save_result("B7_dynamic_attacks", {"status": "skipped", "reason": str(e)})
     except Exception as e:
         print(f"[-] Error ejecutando B7: {e}")
-        save_result("B7_dynamic", {"status": "error", "reason": str(e)})
+        save_result("B7_dynamic_attacks", {"status": "error", "reason": str(e)})
 
 
 # --- Orquestador Principal ---
