@@ -204,7 +204,7 @@ def discover_attack_surface(base_url="http://localhost:8065", login_id="victima@
                             except Exception:
                                 pass
                 except Exception as e:
-                    print(f"No se pudo crear equipo automáticamente: {e}")
+                    print(f"Couldnt create team: {e}")
                     try:
                         os.makedirs("results", exist_ok=True)
                         page.screenshot(path="results/create_team_error.png")
@@ -286,7 +286,7 @@ def run_dynamic_discovery():
     with open("results/B4_dynamic.json", "w", encoding="utf-8") as f:
         json.dump(attack_surface, f, indent=4)
 
-    print("B4 dinámico completado y guardado en results/attack_surface.json y results/B4_dynamic.json")
+    print("B4 dynamic completed and saved to results/attack_surface.json and results/B4_dynamic.json")
 
 if __name__ == "__main__":
     run_dynamic_discovery()

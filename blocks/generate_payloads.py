@@ -248,7 +248,7 @@ def generate_payloads(client=None):
     #save_json_file(os.path.join(RESULTS_DIR, "payloads.json"), output)
     save_json_file(os.path.join(RESULTS_DIR, "B5_payloads.json"), output)
 
-    print(f"B5 finalizado. Payloads generados: {len(payload_outputs)}")
+    print(f"B5 finalized, generated payloads: {len(payload_outputs)}")
     return output
 
 

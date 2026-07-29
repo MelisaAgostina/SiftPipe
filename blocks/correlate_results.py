@@ -30,7 +30,7 @@ def _normalize_result_label(value):
 
 
 def correlate_results(pipeline_results=None):
-    print("\n[B9] Ejecutando correlación estático + dinámico...")
+    print("\n[B9] Executing static + dynamic correlation...")
 
     b3_findings = []
     b8_findings = []
@@ -135,7 +135,7 @@ def correlate_results(pipeline_results=None):
     if pipeline_results is not None:
         pipeline_results["B9"] = output
 
-    print(f"[+] B9 finalizado. Hallazgos consolidados: {len(correlated)}")
+    print(f"[+] B9 finalized. Correlated findings: {len(correlated)}")
     return output
 
 if __name__ == "__main__":

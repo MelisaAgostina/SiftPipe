@@ -4,7 +4,7 @@ from playwright.sync_api import sync_playwright
 
 def execute_qa_interaction(target_url, input_selector, submit_selector, test_text, payload_id):
     """
-    Navega a la URL, intercepta la red, inyecta el texto y toma screenshot.
+    Navigate to the URL, intercept the network traffic, inject the text, and take a screenshot.
     """
     results = {
         "payload_id": payload_id,
@@ -14,7 +14,7 @@ def execute_qa_interaction(target_url, input_selector, submit_selector, test_tex
     }
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=False)
         page = browser.new_page()
 
         # 1. Configurar el listener de respuestas ANTES de navegar
@@ -55,9 +55,9 @@ def execute_qa_interaction(target_url, input_selector, submit_selector, test_tex
 
 def run_payloads(validated_payloads_path, pipeline_results):
     """
-    Lee el JSON validado de B6 y ejecuta cada payload dinámico.
-    Aplica reglas simples de detección (SQLi, XSS reflejado) sobre el diccionario `results`
-    que devuelve `execute_qa_interaction`, y guarda evidencias en `pipeline_results["B7"]`.
+    Read the validated JSON from B6 and execute each dynamic payload.
+    Apply simple detection rules (SQLi, XSS reflected) to the `results` dictionary
+    returned by `execute_qa_interaction`, and store evidence in `pipeline_results["B7"]`.
     """
     entries = []
     total_tested = 0
@@ -226,6 +226,6 @@ def run_payloads(validated_payloads_path, pipeline_results):
     with open("results/B7_dynamic.json", "w", encoding="utf-8") as f:
         json.dump(final, f, indent=4)
 
-    print(f"B7 finalizado. Tests realizados: {total_tested}. Detecciones: {detected}")
+    print(f"B7 finalized, executed: {total_tested}. Anomalies: {detected}")
 
     return final

@@ -32,6 +32,7 @@ from blocks.human_review import run_human_review
 from blocks.dynamic_injector import run_payloads
 from blocks.analyze_results import analyze_results
 from blocks.correlate_results import correlate_results
+from blocks.environment import fresh_reset   
 
 def ask_llm(prompt):
     try:
@@ -150,16 +151,16 @@ def execute_attacks():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["fresh", "restore"], default="fresh")
+    parser.add_argument("--mode", choices=["fresh", "restore"], default="restore")
     args = parser.parse_args()
 
-    print(f"Iniciando Pipeline en modo: {args.mode.upper()}")
+    print(f"Initiating pipeline in mode: {args.mode.upper()}")
     
     # Lógica de Inicialización
     if args.mode == "fresh":
-        print("Ejecutando reset reglamentario...")
-        # Aquí llamarías a: subprocess.run(["docker", "compose", "down", "-v"])
-        # Y luego: subprocess.run(["python", "seed.py"])
+        fresh_reset()
+    else:
+        print("Restore mode: using container and existing volumes.")
     
     # Ejecución de bloques
     run_static_analysis(pipeline_results)
@@ -170,7 +171,7 @@ def main():
     analyze_results(pipeline_results, ask_llm)
     correlate_results(pipeline_results)
     
-    print("\nPipeline completado. Resultados disponibles en /results.")
+    print("\nPipeline completed. Results available in /results.")
 
 if __name__ == "__main__":
     main()

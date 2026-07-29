@@ -2,7 +2,7 @@ import json
 import os
 
 def analyze_results(pipeline_results, ask_llm):
-    print("\nEjecutando bloque B8: Análisis inteligente de resultados dinámicos...")
+    print("\nExecuting block B8: Intelligent analysis of dynamic results...")
 
     # 1. Leer los logs y respuestas de B7
     b7_results = pipeline_results.get("B7", {})
@@ -12,7 +12,7 @@ def analyze_results(pipeline_results, ask_llm):
             with open(b7_path, "r", encoding="utf-8") as f:
                 b7_results = json.load(f)
         else:
-            print("[-] Error: No se encontró la salida dinámica de B7.")
+            print("[-] Error: could not find the dynamic output from B7.")
             return pipeline_results
 
     findings = b7_results.get("findings", [])
@@ -61,7 +61,7 @@ def analyze_results(pipeline_results, ask_llm):
             print(f"[+] Evaluado {target} -> {llm_analysis.get('result', 'unknown').upper()}")
 
         except Exception as e:
-            print(f"[-] Error parseando respuesta del LLM para {target}: {e}")
+            print(f"[-] Error parsing response for {target}: {e}")
 
     # 4. Guardar en B8_dynamic_analysis.json
     final_output = {
@@ -77,6 +77,6 @@ def analyze_results(pipeline_results, ask_llm):
 
     # 5. Integración en el diccionario central
     pipeline_results["B8"] = final_output
-    print(f"B8 finalizado. Resultados guardados en {out_path}\n")
+    print(f"B8 finalized. Results saved to {out_path}\n")
 
     return pipeline_results
