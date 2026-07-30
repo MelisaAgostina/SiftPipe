@@ -1,10 +1,10 @@
-mattermost/ (Aquí vive el clon del repositorio de Mattermost) 
+mattermost/ (Aquí vive el clon del repositorio de Mattermost)
 
-blocks/ (Tus scripts funcionales para B3 a B9) 
+blocks/ (Tus scripts funcionales para B3 a B9)
 
-results/ (Donde se guardan los JSONs generados) 
+results/ (Donde se guardan los JSONs generados)
 
-ui/ (Tu código de react) 
+ui/ (Tu código de react)
 Deja exactamente como están los siguientes archivos y carpetas, ya que son el motor que hace funcionar a React:
 
     node_modules/
@@ -19,7 +19,7 @@ Deja exactamente como están los siguientes archivos y carpetas, ya que son el m
 
     eslint.config.js e index.html
 
-main.py (Tu orquestador principal) 
+main.py (Tu orquestador principal)
 
 seed.py (Tu script de inyección de datos)
 
@@ -46,3 +46,5 @@ levantar back: .venv\Scripts\uvicorn.exe api:app --reload --port 8000
 levantar front: bun run dev
 
 Nota sobre el Bloque 6 (Revisión Humana): La pausa en el pipeline durante esta etapa es estrictamente intencional y no un proceso automatizado. Constituye el núcleo del argumento académico del enfoque híbrido : la IA se encarga de reducir el espacio de búsqueda y generar los payloads contextualizados, pero es el criterio técnico humano quien decide el riesgo real y prioriza la ejecución, eliminando los falsos positivos antes del análisis dinámico
+
+testing succesful login
