@@ -1,0 +1,162 @@
+SiftPipe — Fixes Log (first real end-to-end pipeline run)
+Date: 2026-07-30
+
+This documents the problems found running the pipeline B3→B9 end to end for
+the first time, and the fixes applied. Scope was deliberately kept narrow:
+B7 (dynamic_injector.py) and B8/B9's core analysis logic were left alone
+unless a fix was structurally necessary; most of the value came from fixing
+DATA (validated_payloads.json) rather than code.
+
+
+1. PROBLEMS OBSERVED
+---------------------
+
+1.1 validated_payloads.json was a placeholder, not a real B6 curation
+    results/validated_payloads.json contained a hardcoded 1-target/3-payload
+    "smoke-test" stub. human_review.py's entire design (B6) is "human filters
+    B5_payloads.json down into validated_payloads.json" — that step had never
+    actually been performed. Result: B7 only ever executed 3 payloads against
+    1 target, so B8 had almost nothing to analyze and B9 had almost no
+    dynamic data to correlate.
+
+1.2 B9's vulnerability-label matching could never produce a Hybrid match
+    correlate_results.py matched B3 (static) and B8 (dynamic) findings by
+    exact string equality on the "vulnerability" field. B7 emits underscored
+    labels (e.g. "Broken_Access_Control", "Command_Injection"), while B3's
+    static scanner emits spaced labels (e.g. "Broken Access Control",
+    "Injection"). These could never be string-equal, so the
+    "Hybrid (Static + Dynamic)" / CONFIRMED branch in B9 was effectively
+    dead code — B9 could only ever report "Dynamic" or "Estático" sources,
+    regardless of how good the underlying data was.
+
+1.3 B8 had no resilience against Groq's daily token cap
+    ask_llm() in main.py catches every exception (including HTTP 429 rate
+    limit errors) and returns a fake finding: {"vulnerability": "API Error",
+    "evidence": str(e)}. analyze_results() (B8) called the LLM once per B7
+    finding with no memory of prior runs. Once the free-tier daily cap
+    (100,000 tokens/day) was hit mid-run, every remaining payload silently
+    became a bogus "API Error" pseudo-finding in results/B8_dynamic.json,
+    and a naive re-run would burn tokens again on payloads that had already
+    been classified successfully before the cap was hit.
+
+
+2. FIXES APPLIED
+-----------------
+
+2.1 Curated validated_payloads.json from B5's real output (data only)
+    Rebuilt results/validated_payloads.json from results/B5_payloads.json:
+      - Dropped all fileUploadInput entries — dynamic_injector.py already
+        hard-skips these (set_input_files isn't implemented), so keeping
+        them was dead weight.
+      - Grouped remaining entries by (page_url, field_id) and de-duplicated
+        payload variants, since B5 had generated multiple overlapping
+        "form field" / "input" entries for the same real page.
+    Result: 5 targets, all backed by real forms B4 (dynamic_analysis.py)
+    actually discovered in attack_surface.json (town-square, canal-analisis,
+    off-topic, the DM channel, search) — 37 total payload executions instead
+    of 3. No code in B7/B8/B9 was touched for this fix.
+
+2.2 correlate_results.py — normalized vulnerability-label matching
+    Added _normalize_vuln_label(value): lowercases the string and replaces
+    underscores with spaces before comparison. The match condition changed
+    from strict equality (b3_vuln == vuln_type) to:
+        b3_vuln == norm_vuln_type OR b3_vuln in norm_vuln_type OR norm_vuln_type in b3_vuln
+    (both sides normalized), keeping the existing OWASP-category substring
+    check as a secondary path.
+
+    Why this shape: the substring check (not just equality) lets a narrow
+    dynamic label like "Command_Injection" match a broader static category
+    like "Injection", which mirrors how the two scanners actually categorize
+    things (B7 is specific per-payload, B3 is a general OWASP bucket).
+
+    Technical implication: this is a label-matching fix, not a leniency
+    change to scoring. A dynamic finding still has to be independently
+    classified "confirmed" by the LLM in B8 to reach the Hybrid/CONFIRMED
+    branch in B9 — this fix only removes a spelling/format mismatch that was
+    silently preventing that branch from ever being reachable. Verified with
+    a synthetic case: B3 "Injection" + B8 "Command_Injection"/confirmed now
+    correctly produces source "Hybrid (Static + Dynamic)", classification
+    "CONFIRMED" (previously: "Dynamic" / "POSSIBLE").
+
+    Known side effect (not fixed, by request): correlate_results() always
+    writes results/B9_correlation.json to disk, even when called for a test
+    or with synthetic pipeline_results. Running tests/test_correlate_results.py
+    will overwrite the real B9 output; re-run B9 against real B3/B8 data
+    afterward if you need it back.
+
+2.3 analyze_results.py (B8) — resumable analysis + heuristic pre-filter
+    Two independent changes to the per-finding loop:
+
+    (a) Resume support
+        Before the loop, load any existing results/B8_dynamic.json and index
+        it by payload_id. If a payload already has a usable prior result
+        (result in {confirmed, possible, discarded} AND vulnerability not in
+        {"API Error", "Error de Parseo JSON"}), reuse that entry instead of
+        calling the LLM again.
+        Why: without this, every re-run re-spent tokens on payloads that had
+        already been classified successfully before a rate limit was hit,
+        making recovery from a partial run strictly worse over time.
+
+    (b) Skip the LLM when B7 found nothing
+        If a finding has anomaly_detected == false (none of B7's own
+        rule-based checks fired — no SQL error string, no reflected payload,
+        no shell error marker, no 401/403, etc.), skip the LLM call entirely
+        and record it locally as {"result": "discarded", "confidence": "low",
+        "evidence": "No rule-based anomaly detected by B7; LLM call skipped."}.
+        Why: a finding with zero heuristic signal is, in practice, always
+        going to come back "discarded" from the LLM anyway — this was
+        confirmed against the one real historical case where this played out
+        (payload 1_3, anomaly-free, LLM independently said "discarded").
+        Skipping doesn't change the outcome, it just stops paying for a
+        foregone conclusion.
+
+    Measured effect on the current 37-payload validated_payloads.json:
+        - B7 flags 27/37 findings as anomalous (anomaly_detected: true).
+        - Of those, 1 already had a valid prior result (reused, 0 tokens).
+        - Net: a full B8 run needs 26 real LLM calls instead of 37 (~30%
+          reduction), and after any partial rate-limit failure, only the
+          still-unresolved payloads are retried — not the whole batch.
+        Verified by running analyze_results() with a mock ask_llm() and
+        confirming the call counts (llm_calls=26, reused=1,
+        skipped_no_anomaly=10) matched the prediction exactly.
+
+    Explicitly NOT done: no retry/backoff loop for 429s. Groq's cap is
+    tokens-per-day, not tokens-per-minute — the error messages observed gave
+    6-13 minute wait estimates per request, so a short backoff loop would
+    not have helped and would have just made a run hang. If a run still hits
+    the cap mid-batch, the affected payloads are written as
+    "vulnerability": "API Error" (as before) and are safe to retry on the
+    next analyze_results() call — they are correctly NOT treated as "usable"
+    prior results, so they'll be retried for real, not silently skipped.
+
+2.4 tests/test_correlate_results.py (new)
+    Added stdlib unittest tests (chose unittest over pytest: pytest isn't
+    installed in the project's .venv and there's no requirements.txt yet, so
+    this avoids introducing a new dependency for one test file). Covers:
+      - _normalize_vuln_label() directly (underscore→space, lowercasing,
+        non-string input).
+      - Three correlation outcomes end to end: Hybrid/CONFIRMED match,
+        Dynamic-only POSSIBLE (no static match), Static false-positive
+        (discarded dynamic result that does match a static finding).
+    Run with: python -m unittest tests/test_correlate_results.py -v
+    Note: this will overwrite results/B9_correlation.json as a side effect
+    (see 2.2) — re-run B9 for real afterward if needed.
+
+
+3. KNOWN LIMITATIONS / NOT FIXED
+----------------------------------
+
+- Groq's 100k tokens/day free-tier cap is an external constraint. The B8
+  changes reduce consumption but don't remove the ceiling — a large enough
+  validated_payloads.json can still exhaust it in one run.
+- correlate_results() writes results/B9_correlation.json unconditionally,
+  with no way to redirect output (e.g. for isolated test runs). Left as-is
+  per direction given during this session.
+- The target app (a stock, unmodified Mattermost instance) is not actually
+  vulnerable to the classic OWASP payloads used (XSS/SQLi/command
+  injection/path traversal). Most B7/B8 findings are expected to stay
+  "discarded" or "possible" (via B7's reflected-payload heuristic, which is
+  a byproduct of Mattermost's API normally echoing posted message content
+  back in its JSON response — not a real vulnerability). These fixes address
+  data volume, token cost, and correlation correctness; they do not and
+  cannot manufacture real vulnerabilities that aren't there.
