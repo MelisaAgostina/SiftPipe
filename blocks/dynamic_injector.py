@@ -254,5 +254,5 @@ def run_payloads(validated_payloads_path, pipeline_results):
     with open("results/B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
         json.dump(final, f, indent=4)
 
-    print(f"[B7] Finalizado — ejecutados: {total} | anomalías: {anomalies}")
+    print(f"[B7] Finalized - executed: {total} | anomalies: {anomalies}")
     return final

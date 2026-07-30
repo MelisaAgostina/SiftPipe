@@ -130,8 +130,8 @@ def correlate_results(pipeline_results=None):
                 "vulnerability": b3.get("vulnerability", "Unknown"),
                 "target": b3.get("file", "unknown"),
                 "classification": "POSIBLE",
-                "confidence": "MEDIA",
-                "source": "Estático",
+                "confidence": "MEDIUM",
+                "source": "Static",
                 "evidence": b3.get("evidence", "Static detection only")
             })
 

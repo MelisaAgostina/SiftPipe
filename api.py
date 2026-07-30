@@ -9,6 +9,8 @@ from pydantic import BaseModel
 
 from main import (
     analyze_results,
+    ask_llm,
+    client,
     correlate_results,
     execute_attacks,
     generate_payloads,
@@ -61,31 +63,31 @@ def run_pipeline_until_b6():
 
     try:
         pipeline_state["current_block"] = "B3"
-        log("▶ B3 — Análisis estático iniciado")
+        log(">> B3 - Analisis estatico iniciado")
         run_static_analysis(pipeline_results)
-        log("✓ B3 completado")
+        log("OK B3 completado")
 
         pipeline_state["current_block"] = "B4"
-        log("▶ B4 — Discovery dinámico iniciado")
+        log(">> B4 - Discovery dinamico iniciado")
         run_dynamic_discovery(pipeline_results)
-        log("✓ B4 completado")
+        log("OK B4 completado")
 
         pipeline_state["current_block"] = "B5"
-        log("▶ B5 — Generación de payloads")
+        log(">> B5 - Generacion de payloads")
         generate_payloads(client=client)
-        log("✓ B5 completado")
+        log("OK B5 completado")
 
         # Pausa aquí — la UI muestra los payloads para revisión humana
         pipeline_state["current_block"] = "B6"
         pipeline_state["waiting_for_human"] = True
         pipeline_state["running"] = False
-        log("━━ [B6] REVISIÓN HUMANA — esperando validación en la UI ━━")
+        log("== [B6] REVISION HUMANA - esperando validacion en la UI ==")
 
     except Exception as e:
         pipeline_state["error"] = str(e)
         pipeline_state["running"] = False
         pipeline_state["current_block"] = None
-        log(f"✗ Error en pipeline: {e}")
+        log(f"ERROR en pipeline: {e}")
 
 
 def run_pipeline_from_b7():
@@ -96,30 +98,30 @@ def run_pipeline_from_b7():
 
     try:
         pipeline_state["current_block"] = "B7"
-        log("▶ B7 — Ejecución de ataques")
+        log(">> B7 - Ejecucion de ataques")
         execute_attacks()
-        log("✓ B7 completado")
+        log("OK B7 completado")
 
         pipeline_state["current_block"] = "B8"
-        log("▶ B8 — Análisis inteligente de resultados")
-        analyze_results()
-        log("✓ B8 completado")
+        log(">> B8 - Analisis inteligente de resultados")
+        analyze_results(pipeline_results, ask_llm)
+        log("OK B8 completado")
 
         pipeline_state["current_block"] = "B9"
-        log("▶ B9 — Correlación estático + dinámico")
-        correlate_results()
-        log("✓ B9 completado")
+        log(">> B9 - Correlacion estatico + dinamico")
+        correlate_results(pipeline_results)
+        log("OK B9 completado")
 
         pipeline_state["current_block"] = None
         pipeline_state["running"] = False
         pipeline_state["completed"] = True
-        log("✓ Pipeline completado. Resultados disponibles.")
+        log("OK Pipeline completado. Resultados disponibles.")
 
     except Exception as e:
         pipeline_state["error"] = str(e)
         pipeline_state["running"] = False
         pipeline_state["current_block"] = None
-        log(f"✗ Error en pipeline: {e}")
+        log(f"ERROR en pipeline: {e}")
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
@@ -210,19 +212,24 @@ def validate_payloads(body: ValidatePayloadsRequest):
     with open(payloads_file) as f:
         all_payloads = json.load(f)
 
-    # Guardar solo los aprobados
-    validated = {
-        "approved_indices": body.approved_indices,
+    candidates = all_payloads.get("payloads", [])
+    approved = [candidates[i] for i in body.approved_indices if 0 <= i < len(candidates)]
+
+    # B7 (execute_attacks -> dynamic_injector.run_payloads) reads this exact
+    # file/shape — same contract as the console path (human_review.py).
+    validated_path = RESULTS_DIR / "validated_payloads.json"
+    RESULTS_DIR.mkdir(exist_ok=True)
+    with open(validated_path, "w", encoding="utf-8") as f:
+        json.dump({"status": "complete", "payloads": approved}, f, indent=4)
+
+    pipeline_results["B6"] = {
+        "status": "complete",
+        "total_validated": len(approved),
+        "payloads": approved,
         "comment": body.comment,
-        "source": all_payloads,
-        "status": "validated",
     }
 
-    RESULTS_DIR.mkdir(exist_ok=True)
-    with open(RESULTS_DIR / "B6_validated.json", "w") as f:
-        json.dump(validated, f, indent=4)
-
-    log(f"✓ B6 — {len(body.approved_indices)} payloads validados por la investigadora")
+    log(f"OK B6 - {len(approved)} payloads validados por la investigadora")
 
     # Disparar B7 → B9 en background
     thread = threading.Thread(target=run_pipeline_from_b7, daemon=True)

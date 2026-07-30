@@ -1,0 +1,138 @@
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from fastapi import HTTPException
+
+import api
+
+
+class FakeThread:
+    """
+    Stands in for threading.Thread so /api/validate doesn't actually spawn
+    B7->B9 (which would hit Playwright + a live Mattermost + Groq). Records
+    what it was asked to run instead of running it.
+    """
+    started = []
+
+    def __init__(self, target=None, args=(), daemon=None):
+        self.target = target
+        self.args = args
+
+    def start(self):
+        FakeThread.started.append(self.target)
+
+
+class TestApiRoutes(unittest.TestCase):
+
+    def setUp(self):
+        FakeThread.started = []
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        os.chdir(self._tmp.name)
+
+        api.pipeline_state.update({
+            "running": False, "current_block": None, "waiting_for_human": False,
+            "completed": False, "error": None, "logs": [],
+        })
+        api.pipeline_results.clear()
+
+        self._thread_patch = patch.object(api.threading, "Thread", FakeThread)
+        self._thread_patch.start()
+
+    def tearDown(self):
+        self._thread_patch.stop()
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def test_health(self):
+        self.assertEqual(api.health(), {"status": "ok"})
+
+    def test_reset_clears_state(self):
+        api.pipeline_state["error"] = "boom"
+        api.pipeline_state["logs"] = ["x"]
+
+        api.reset_pipeline()
+
+        self.assertIsNone(api.pipeline_state["error"])
+        self.assertEqual(api.pipeline_state["logs"], [])
+
+    def test_reset_rejects_while_running(self):
+        api.pipeline_state["running"] = True
+        with self.assertRaises(HTTPException) as ctx:
+            api.reset_pipeline()
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_run_starts_pipeline_thread(self):
+        api.run_pipeline()
+        self.assertEqual(len(FakeThread.started), 1)
+        self.assertEqual(FakeThread.started[0], api.run_pipeline_until_b6)
+
+    def test_run_rejects_when_already_running(self):
+        api.pipeline_state["running"] = True
+        with self.assertRaises(HTTPException) as ctx:
+            api.run_pipeline()
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_get_block_result_404_when_missing(self):
+        with self.assertRaises(HTTPException) as ctx:
+            api.get_block_result("B3_static")
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_get_results_merges_all_json_files(self):
+        os.makedirs("results", exist_ok=True)
+        with open("results/B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+
+        data = api.get_results()
+
+        self.assertIn("B3_static", data)
+        self.assertEqual(data["B3_static"]["status"], "complete")
+
+    def test_validate_rejects_when_not_waiting_for_human(self):
+        with self.assertRaises(HTTPException) as ctx:
+            api.validate_payloads(api.ValidatePayloadsRequest(approved_indices=[0]))
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_validate_writes_validated_payloads_matching_b7_contract(self):
+        api.pipeline_state["waiting_for_human"] = True
+        os.makedirs("results", exist_ok=True)
+        b5 = {
+            "status": "complete",
+            "payloads": [
+                {"target": "a", "page_url": "http://x/a", "field_id": "a", "payloads": ["p1"]},
+                {"target": "b", "page_url": "http://x/b", "field_id": "b", "payloads": ["p2"]},
+                {"target": "c", "page_url": "http://x/c", "field_id": "c", "payloads": ["p3"]},
+            ],
+        }
+        with open("results/B5_payloads.json", "w", encoding="utf-8") as f:
+            json.dump(b5, f)
+
+        # Index 99 is out of range and must be silently dropped, not crash the request.
+        response = api.validate_payloads(api.ValidatePayloadsRequest(approved_indices=[0, 2, 99], comment="ok"))
+
+        self.assertIn("Validación recibida", response["message"])
+
+        saved = json.loads(Path("results/validated_payloads.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(saved["payloads"]), 2)
+        self.assertEqual({p["target"] for p in saved["payloads"]}, {"a", "c"})
+
+        self.assertEqual(api.pipeline_results["B6"]["total_validated"], 2)
+        self.assertEqual(len(FakeThread.started), 1)
+        self.assertEqual(FakeThread.started[0], api.run_pipeline_from_b7)
+
+    def test_validate_404_without_b5_output(self):
+        api.pipeline_state["waiting_for_human"] = True
+        with self.assertRaises(HTTPException) as ctx:
+            api.validate_payloads(api.ValidatePayloadsRequest(approved_indices=[0]))
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
+if __name__ == "__main__":
+    unittest.main()

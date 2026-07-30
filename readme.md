@@ -1,6 +1,6 @@
 # Checkpoint técnico de SiftPipe
 
-Checkpoint generado el 2026-07-29.
+Checkpoint generado el 2026-07-29. Actualizado el 2026-07-30 tras la primera corrida end-to-end B3→B9 (ver [fixes.txt](fixes.txt) para el detalle de esos cambios) y una segunda ronda el mismo día que corrigió la integración de [api.py](api.py) con [main.py](main.py) y añadió tests reales y un manifiesto de dependencias (puntos 2, 3, 5 y 6 de la sección 7).
 
 Este documento describe el estado real del repositorio tal como está implementado hoy. Se basa en los archivos y módulos presentes en [main.py](main.py), [api.py](api.py), [blocks/](blocks), [seed.py](seed.py), [ui/package.json](ui/package.json), [ui/src/](ui/src/), y los resultados persistidos en [results/](results). No se basa en el diseño original ni en el roadmap previsto.
 
@@ -28,6 +28,7 @@ Este documento describe el estado real del repositorio tal como está implementa
 - Observaciones:
   - La implementación existe y produce resultados, pero es una versión muy limitada: solo escanea 10 archivos y usa un truncado de 15.000 caracteres por archivo.
   - El análisis está acotado a un prompt OWASP y a una extracción de JSON simple, sin validación semántica profunda ni trazabilidad de líneas real.
+  - [blocks/static_scanner.py](blocks/static_scanner.py) (listado de archivos, exclusión de directorios, construcción del prompt) está cubierto por [tests/test_static_scanner.py](tests/test_static_scanner.py).
 
 ### B4 — Discovery dinámico con Playwright
 - Archivos: [blocks/dynamic_analysis.py](blocks/dynamic_analysis.py), [main.py](main.py)
@@ -38,6 +39,7 @@ Este documento describe el estado real del repositorio tal como está implementa
 - Observaciones:
   - El flujo depende fuertemente de la UI de Mattermost y de selectores concretos (`input[id='input_loginId']`, etc.), por lo que es frágil ante cambios en la interfaz.
   - Usa `headless=False`, lo que lo hace observable en tiempo real pero también menos estable para automatización no interactiva.
+  - `discover_attack_surface()` y `extract_forms()` necesitan un browser real y una instancia Mattermost viva, así que quedan fuera del alcance de tests unitarios. `build_attack_surface_records()` — el post-procesamiento puro que B5 consume — sí está cubierto en [tests/test_dynamic_analysis.py](tests/test_dynamic_analysis.py).
 
 ### B5 — Generación de payloads
 - Archivos: [blocks/generate_payloads.py](blocks/generate_payloads.py), [main.py](main.py)
@@ -49,44 +51,50 @@ Este documento describe el estado real del repositorio tal como está implementa
 - Observaciones:
   - Genera una salida estructurada, pero está limitada a un conjunto de targets y a una heurística simple de relevancia con hallazgos estáticos.
   - No hay una capa de selección/filtrado más refinada antes de la revisión humana.
+  - Cubierto por [tests/test_generate_payloads.py](tests/test_generate_payloads.py): construcción de targets, matching por keywords con hallazgos estáticos, recuperación de JSON parcial y `generate_payloads()` end-to-end con un LLM simulado.
 
 ### B6 — Revisión humana / validación de payloads
 - Archivos: [blocks/human_review.py](blocks/human_review.py), [api.py](api.py)
 - Qué hace realmente:
   - En la ruta de consola, `run_human_review()` pausa el pipeline y espera que el usuario cree un archivo [results/validated_payloads.json](results/validated_payloads.json) con los payloads validados.
-  - En la ruta de API, [api.py](api.py) expone `POST /api/validate` y guarda una estructura distinta en [results/B6_validated.json](results/B6_validated.json).
-- Estado: ⚡ Parcial.
+  - En la ruta de API, `POST /api/validate` recibe `approved_indices`, selecciona esas entradas de [results/B5_payloads.json](results/B5_payloads.json) (descartando índices fuera de rango) y escribe el mismo archivo y la misma forma (`{"payloads": [...]}`) que espera B7.
+- Estado: ✅ Alineado.
 - Observaciones:
-  - La implementación existe, pero la integración entre la lógica de consola y la API no está alineada: hay dos artefacts distintos (`validated_payloads.json` vs `B6_validated.json`) y B7 espera el primero.
+  - Ambas rutas convergen ahora en un único artefacto — [results/validated_payloads.json](results/validated_payloads.json) — con la forma que `dynamic_injector.run_payloads()` consume directamente. Antes la ruta de API escribía [results/B6_validated.json](results/B6_validated.json) sin filtrar por `approved_indices`, así que B7 nunca encontraba el archivo que esperaba.
+  - Cubierto por [tests/test_human_review.py](tests/test_human_review.py) (ruta de consola) y [tests/test_api.py](tests/test_api.py) (ruta de API, incluyendo el descarte de índices fuera de rango).
 
 ### B7 — Ejecución de ataques dinámicos
 - Archivos: [blocks/dynamic_injector.py](blocks/dynamic_injector.py), [main.py](main.py)
 - Qué hace realmente:
   - Lee los payloads validados y los ejecuta contra los targets detectados en Playwright.
-  - Captura screenshots, escribe resultados por payload en [results/dynamic/](results/dynamic/), y guarda un resumen en [results/B7_dynamic.json](results/B7_dynamic.json) y [results/B7_dynamic_attacks.json](results/B7_dynamic_attacks.json).
-- Estado: 🔧 Implementado pero no probado de forma end-to-end en esta sesión.
+  - Captura screenshots, escribe resultados por payload en [results/dynamic/](results/dynamic/), y guarda un resumen en [results/B7_dynamic_attacks.json](results/B7_dynamic_attacks.json).
+- Estado: 🔧 Implementado y probado end-to-end contra una instancia Mattermost real (ver [fixes.txt](fixes.txt)); las reglas de detección tienen cobertura de tests con un browser simulado.
 - Observaciones:
   - Es una implementación de smoke testing, no un motor de explotación robusto: intenta llenar campos, hacer clic y detectar anomalías con heurísticas simples.
   - El login es best-effort y no garantiza que todos los targets estén accesibles.
+  - [tests/test_dynamic_injector.py](tests/test_dynamic_injector.py) reemplaza `sync_playwright` por un browser/page falsos para probar la construcción de selectores, el skip de `fileUploadInput` y las reglas de detección (SQLi/XSS/etc.) sin necesitar un browser real ni Mattermost levantado.
 
 ### B8 — Interpretación inteligente de resultados dinámicos
 - Archivos: [blocks/analyze_results.py](blocks/analyze_results.py), [main.py](main.py)
 - Qué hace realmente:
-  - Toma los resultados de B7 y consulta a Groq para clasificar cada intento como `confirmed`, `possible` o `discarded`.
+  - Toma los resultados de B7 (`pipeline_results["B7"]`, con fallback a leer [results/B7_dynamic_attacks.json](results/B7_dynamic_attacks.json) desde disco) y consulta a Groq para clasificar cada intento como `confirmed`, `possible` o `discarded`.
+  - Antes de llamar al LLM: reusa la clasificación previa de una corrida anterior si ya era válida (`_load_previous_analysis` / `_is_llm_result_usable`), y descarta directamente los findings donde B7 no detectó ninguna anomalía (`anomaly_detected == false`), sin gastar tokens en un resultado que ya se sabe cuál va a ser.
   - Persiste un output en [results/B8_dynamic.json](results/B8_dynamic.json).
-- Estado: 🔧 Implementado pero no probado.
+- Estado: 🔧 Implementado y probado.
 - Observaciones:
-  - El código contiene un error de runtime evidente: usa `analyzed_results` cuando la variable real generada por el loop es `analyzed`.
-  - Además, el fallback de archivos intenta leer [results/B7_dynamic_attacks.json](results/B7_dynamic_attacks.json), pero el bloque B7 escribe [results/B7_dynamic.json](results/B7_dynamic.json) y también [results/B7_dynamic_attacks.json](results/B7_dynamic_attacks.json) desde el orquestador principal.
+  - El bug de runtime que usaba `analyzed_results` en vez de la variable real `analyzed` ya está corregido.
+  - Cubierto por [tests/test_analyze_results.py](tests/test_analyze_results.py): helpers puros, skip sin LLM cuando no hay anomalía, reuso de clasificaciones previas válidas, y reintento real cuando la entrada previa era un placeholder de error (`"API Error"` / `"Error de Parseo JSON"`).
 
 ### B9 — Correlación estático + dinámico
 - Archivos: [blocks/correlate_results.py](blocks/correlate_results.py), [main.py](main.py)
 - Qué hace realmente:
-  - Lee hallazgos de B3 y B8, aplica una correlación simple por nombre o categoría, y escribe [results/B9_correlation.json](results/B9_correlation.json).
-  - Clasifica resultados como `CONFIRMADA`, `POSIBLE` o `DESCARTADA` con una heurística simple.
+  - Lee hallazgos de B3 y B8, normaliza las etiquetas de vulnerabilidad de ambos lados (`_normalize_vuln_label`: minúsculas, `_` → espacio) para poder compararlas por igualdad o sub-cadena, y escribe [results/B9_correlation.json](results/B9_correlation.json).
+  - Clasifica resultados como `CONFIRMED`, `POSSIBLE` o `DESCARTED` con una heurística simple.
 - Estado: ⚡ Parcial.
 - Observaciones:
   - La correlación existe y produce un output, pero está basada en coincidencias superficiales y no en un modelo semántico ni una lógica formal de evidencia.
+  - Antes de la normalización de etiquetas, B7/B8 emitían etiquetas con guion bajo (`"Command_Injection"`) mientras B3 emitía etiquetas con espacio (`"Injection"`), por lo que nunca podían ser iguales por string y la rama `"Hybrid (Static + Dynamic)"` / `CONFIRMED` era código muerto. Ya corregido; cubierto por [tests/test_correlate_results.py](tests/test_correlate_results.py).
+  - `correlate_results()` siempre escribe [results/B9_correlation.json](results/B9_correlation.json) en disco, incluso al llamarse desde un test — correr los tests sobreescribe el output real; hay que volver a correr B9 contra datos reales si hace falta.
 
 ### B10 — Reporte de consolidación y explotación
 - Archivos: no existe código específico en este repositorio para este bloque.
@@ -137,9 +145,9 @@ Este documento describe el estado real del repositorio tal como está implementa
 ### Infra / despliegue
 - Docker Compose, con archivos en [mattermost/docker-compose.yml](mattermost/docker-compose.yml) y [mattermost/docker-compose.nginx.yml](mattermost/docker-compose.nginx.yml)
 
-### Nota importante sobre dependencias Python
-- No existe un [requirements.txt](requirements.txt), [pyproject.toml](pyproject.toml) ni [poetry.lock](poetry.lock) en la raíz del repositorio.
-- Las dependencias de Python usadas por el código se infieren de las importaciones reales y del entorno actual verificado en esta sesión.
+### Dependencias Python
+- [requirements.txt](requirements.txt) fija las versiones exactas verificadas en el [.venv](.venv) del proyecto: `fastapi`, `pydantic`, `uvicorn`, `python-dotenv`, `requests`, `groq`, `playwright`.
+- Instalación: `pip install -r requirements.txt` (además de `playwright install chromium` para el navegador).
 
 ## 3. Decisiones técnicas tomadas durante la implementación
 
@@ -171,13 +179,11 @@ El flujo real implementado en el código es el siguiente:
    - Escribe [results/B5_payloads.json](results/B5_payloads.json).
 
 4. [blocks/human_review.py](blocks/human_review.py) o [api.py](api.py) esperan la validación humana.
-   - El flujo de consola espera [results/validated_payloads.json](results/validated_payloads.json).
-   - El flujo de API guarda [results/B6_validated.json](results/B6_validated.json).
+   - Ambas rutas convergen en [results/validated_payloads.json](results/validated_payloads.json) con la misma forma (`{"payloads": [...]}`).
 
 5. [main.py](main.py) ejecuta `execute_attacks()`.
    - Llama a [blocks/dynamic_injector.py](blocks/dynamic_injector.py).
-   - Escribe resultados individuales en [results/dynamic/](results/dynamic/) y un resumen en [results/B7_dynamic.json](results/B7_dynamic.json).
-   - También guarda [results/B7_dynamic_attacks.json](results/B7_dynamic_attacks.json) a través del orquestador.
+   - Escribe resultados individuales en [results/dynamic/](results/dynamic/) y el resumen en [results/B7_dynamic_attacks.json](results/B7_dynamic_attacks.json).
 
 6. [blocks/analyze_results.py](blocks/analyze_results.py) consume los resultados de B7 y produce [results/B8_dynamic.json](results/B8_dynamic.json).
 
@@ -187,17 +193,14 @@ El flujo real implementado en el código es el siguiente:
 
 Estas son las limitaciones que se observan directamente en el código:
 
-- No existen tests automatizados en [tests/](tests/); el directorio está vacío.
-- La compilación de los módulos Python principales sí se verificó en esta sesión con `python -m compileall api.py main.py blocks seed.py`, pero no se ejecutó un pipeline completo end-to-end.
-- [blocks/analyze_results.py](blocks/analyze_results.py) tiene un bug de runtime: usa `analyzed_results` cuando la variable real es `analyzed`.
-- [api.py](api.py) presenta varios problemas de integración:
-  - llama a `generate_payloads(client=client)` sin definir `client` en ese módulo;
-  - llama a `analyze_results()` sin los argumentos esperados por la firma real;
-  - escribe [results/B6_validated.json](results/B6_validated.json), mientras que la ruta de consola y B7 esperan [results/validated_payloads.json](results/validated_payloads.json).
-- [blocks/dynamic_analysis.py](blocks/dynamic_analysis.py) depende de selectores concretos y rutas fijas de Mattermost, por lo que no es genérico ni estable ante cambios en UI.
+- [tests/](tests/) ya no está vacío: hay 58 tests reales (`python -m unittest discover -s tests`) cubriendo B3, B4 (post-procesamiento puro), B5, B6, B7 (con un browser Playwright simulado), B8 y B9, además de las rutas de [api.py](api.py). B0–B2, B10–B13 no tienen código propio o son UI, así que no aplican.
+- La compilación de los módulos Python principales se verificó con `python -m compileall api.py main.py blocks seed.py`, y B7→B9 se corrió end-to-end contra una instancia Mattermost real (ver [fixes.txt](fixes.txt)).
+- [blocks/dynamic_analysis.py](blocks/dynamic_analysis.py) depende de selectores concretos y rutas fijas de Mattermost, por lo que no es genérico ni estable ante cambios en UI. Sigue siendo el punto más frágil del pipeline (ver punto 4 de la sección 7).
 - [blocks/dynamic_injector.py](blocks/dynamic_injector.py) no captura de forma robusta el cuerpo HTTP real de las respuestas; la evidencia de explotación es muy limitada y depende de heurísticas.
 - La generación de payloads y la correlación están basadas en heurísticas simples, no en un motor de evaluación o semántica de seguridad más formal.
 - Los secretos y credenciales aparecen como variables de entorno y datos de seed; no hay una estrategia clara de gestión de secretos más allá de [.env](.env) y el entorno local.
+- El límite gratuito de Groq (100.000 tokens/día) es una restricción externa: B8 ahora reutiliza clasificaciones previas y evita llamadas al LLM cuando B7 no detectó ninguna anomalía, pero eso reduce el consumo, no elimina el techo.
+- El target actual (una instancia Mattermost estándar sin modificar) no es realmente vulnerable a los payloads OWASP clásicos usados. La mayoría de los hallazgos de B7/B8 quedan en `discarded` o `possible` — eso es correcto, no un fallo del pipeline.
 
 ## 6. Cómo correr el proyecto hoy
 
@@ -230,21 +233,24 @@ El flujo “real” que el código soporta hoy es el siguiente:
      - `bun install`
      - `bun run dev`
 
-4. Paso manual de revisión B6
-   - Después de generar [results/B5_payloads.json](results/B5_payloads.json), el flujo actual espera que el usuario cree [results/validated_payloads.json](results/validated_payloads.json) con los payloads aprobados.
-   - En el estado actual, este paso es manual y no está completamente alineado con la ruta de la API ([results/B6_validated.json](results/B6_validated.json)).
+4. Paso de revisión B6
+   - Ruta de consola: después de generar [results/B5_payloads.json](results/B5_payloads.json), el flujo espera que el usuario cree manualmente [results/validated_payloads.json](results/validated_payloads.json) con los payloads aprobados.
+   - Ruta de API: `POST /api/validate` con `{"approved_indices": [...], "comment": "..."}` hace esto automáticamente a partir de B5 y dispara B7→B9 en background.
+
+5. Correr los tests
+   - `python -m unittest discover -s tests -v`
+   - Todos los tests usan mocks/fakes para Groq y Playwright y corren en directorios temporales — no requieren Docker, Mattermost, ni una `GROQ_API_KEY` válida con crédito, aunque sí necesitan que `GROQ_API_KEY` esté seteada en [.env](.env) porque [main.py](main.py) instancia el cliente de Groq al importarse.
+   - Nota: [tests/test_correlate_results.py](tests/test_correlate_results.py) sí sobreescribe el [results/B9_correlation.json](results/B9_correlation.json) real como efecto secundario (no está aislado en un directorio temporal); volver a correr B9 después si hace falta ese archivo.
 
 ## 7. Próximos pasos técnicos inmediatos
 
-Basado en lo que está roto o incompleto hoy, los próximos pasos más urgentes son:
-
-1. Corregir el runtime de B8 y alinear los nombres de archivos entre B7, B8 y la API.
-2. Unificar el handoff de B6 entre la ruta de consola y la ruta de API para que B7 siempre encuentre un único archivo de validación.
-3. Corregir la integración de la API con [main.py](main.py) para que no falle por argumentos faltantes ni variables no definidas.
-4. Reemplazar la lógica de selectores y login de Playwright por un enfoque más robusto y menos dependiente de la interfaz actual de Mattermost.
-5. Añadir tests reales para los bloques B3–B9 y para las rutas de la API.
-6. Añadir un manifiesto de dependencias Python explícito (por ejemplo, `requirements.txt` o `pyproject.toml`) para que el entorno sea reproducible.
+1. ✅ Corregir el runtime de B8 y alinear los nombres de archivos entre B7, B8 y la API. — Hecho (ver [fixes.txt](fixes.txt) y sección B8 arriba).
+2. ✅ Unificar el handoff de B6 entre la ruta de consola y la ruta de API para que B7 siempre encuentre un único archivo de validación. — Hecho: ambas rutas escriben [results/validated_payloads.json](results/validated_payloads.json) con la misma forma (ver sección B6 arriba).
+3. ✅ Corregir la integración de la API con [main.py](main.py) para que no falle por argumentos faltantes ni variables no definidas. — Hecho: [api.py](api.py) ahora importa `client` y `ask_llm` de [main.py](main.py), y llama a `analyze_results(pipeline_results, ask_llm)` / `correlate_results(pipeline_results)` con la firma real. De paso se corrigió un `UnicodeEncodeError` latente en `log()` (imprimía ▶ ✓ ✗ ━, que no son codificables en la consola `cp1252` de Windows y hacían crashear el pipeline en su propio manejo de errores).
+4. Reemplazar la lógica de selectores y login de Playwright por un enfoque más robusto y menos dependiente de la interfaz actual de Mattermost. — Pendiente; sigue siendo el punto más frágil del pipeline.
+5. ✅ Añadir tests reales para los bloques B3–B9 y para las rutas de la API. — Hecho: 58 tests en [tests/](tests/), ver detalle por bloque en la sección 1.
+6. ✅ Añadir un manifiesto de dependencias Python explícito. — Hecho: [requirements.txt](requirements.txt).
 
 ## Resumen ejecutivo
 
-El proyecto está implementado como un pipeline híbrido parcialmente funcional de análisis estático y dinámico, con LLM, Playwright y una interfaz React. La arquitectura real existente es más simple y más frágil que el diseño teórico: el flujo está vivo, pero varias partes dependen de heurísticas, archivos JSON manuales y entornos muy específicos. La mayor deuda técnica está en la integración entre bloques, la coherencia de los artefacts de salida, y la falta de pruebas automatizadas y de un manifiesto reproducible de dependencias Python.
+El proyecto está implementado como un pipeline híbrido parcialmente funcional de análisis estático y dinámico, con LLM, Playwright y una interfaz React. La arquitectura real existente es más simple y más frágil que el diseño teórico: el flujo está vivo, pero varias partes dependen de heurísticas y entornos muy específicos. La integración entre bloques (B6→B7, B8, y la API) ya está alineada, hay un manifiesto de dependencias reproducible y 58 tests reales cubren la lógica de B3 a B9 y las rutas de la API. La deuda técnica que queda es principalmente B4/B7: la dependencia de selectores concretos y el login best-effort de Playwright frente a la UI real de Mattermost (punto 4 de la sección 7), y el techo de tokens/día de Groq como restricción externa.
