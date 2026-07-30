@@ -29,8 +29,15 @@ def _normalize_result_label(value):
     return mapping.get(normalized, "discarded")
 
 
+def _normalize_vuln_label(value):
+    if not isinstance(value, str):
+        return ""
+    # "Broken_Access_Control" / "Broken Access Control" -> "broken access control"
+    return " ".join(value.strip().lower().replace("_", " ").split())
+
+
 def correlate_results(pipeline_results=None):
-    print("\n[B9] Ejecutando correlación estático + dinámico...")
+    print("\n[B9] Executing static + dynamic correlation...")
 
     b3_findings = []
     b8_findings = []
@@ -71,32 +78,38 @@ def correlate_results(pipeline_results=None):
         screenshot_path = b8.get("screenshot_path")
 
         match_found = False
+        norm_vuln_type = _normalize_vuln_label(vuln_type)
         for i, b3 in enumerate(b3_findings):
-            b3_vuln = str(b3.get("vulnerability", "")).strip()
+            b3_vuln = _normalize_vuln_label(b3.get("vulnerability", ""))
             b3_cat = str(b3.get("category", "")).strip()
-            if b3_vuln == vuln_type or (b3_cat and b3_cat.lower() in vuln_type.lower()):
+            same_family = b3_vuln and norm_vuln_type and (
+                b3_vuln == norm_vuln_type
+                or b3_vuln in norm_vuln_type
+                or norm_vuln_type in b3_vuln
+            )
+            if same_family or (b3_cat and b3_cat.lower() in vuln_type.lower()):
                 match_found = True
                 b3_matched_indices.add(i)
                 break
 
         if dyn_result == "confirmed":
             if match_found:
-                status = "CONFIRMADA"
-                conf = "MUY ALTA"
-                source = "Híbrido (Estático + Dinámico)"
+                status = "CONFIRMED"
+                conf = "REALLY HIGH"
+                source = "Hybrid (Static + Dynamic)"
             else:
-                status = "POSIBLE"
-                conf = "MEDIA"
-                source = "Dinámico"
+                status = "POSSIBLE"
+                conf = "MEDIUM"
+                source = "Dynamic"
         elif dyn_result == "possible":
-            status = "POSIBLE"
-            conf = "MEDIA"
-            source = "Dinámico"
+            status = "POSSIBLE"
+            conf = "MEDIUM "
+            source = "Dynamic"
         else:
             if match_found:
-                status = "DESCARTADA"
-                conf = "BAJA"
-                source = "Estático (Falso Positivo)"
+                status = "DESCARTED"
+                conf = "LOW"
+                source = "Static (False Positive)"
             else:
                 continue
 
@@ -135,7 +148,7 @@ def correlate_results(pipeline_results=None):
     if pipeline_results is not None:
         pipeline_results["B9"] = output
 
-    print(f"[+] B9 finalizado. Hallazgos consolidados: {len(correlated)}")
+    print(f"[+] B9 finalized. Correlated findings: {len(correlated)}")
     return output
 
 if __name__ == "__main__":

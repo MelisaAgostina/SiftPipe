@@ -34,33 +34,13 @@ def scan_and_save_files(source_dir, output_file="results/files_list.txt"):
 
 
 def load_files_list(file_path):
-    """Carga la lista de archivos guardada en disco si existe."""
+    """Load the list of files saved to disk if it exists."""
     if not os.path.exists(file_path):
         return None
     
     with open(file_path, 'r', encoding='utf-8') as f:
         return [line.strip() for line in f if line.strip()]
 
-
-# def get_analysis_prompt(file_content):
-#     prompt = f"""You are a security auditor. Analyze the following code for OWASP vulnerabilities.
-
-# FOCUS ONLY ON:
-# {json.dumps(OWASP_SCOPE, indent=2)}
-
-# CRITICAL INSTRUCTIONS:
-# - You MUST respond with ONLY a valid JSON object, nothing else
-# - No explanations, no prose, no markdown, no code blocks
-# - If you find a vulnerability, respond with EXACTLY this format:
-# {{"vulnerability": "Name", "category": "AXX", "line": 1, "evidence": "code snippet", "confidence": "high"}}
-# - If you find nothing, respond with EXACTLY this:
-# {{"vulnerability": "None"}}
-
-# Code to analyze:
-# {file_content}
-
-# Respond with JSON only:"""
-#     return prompt
 
 import json
 
