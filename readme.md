@@ -1,6 +1,6 @@
 # Checkpoint técnico de SiftPipe
 
-Checkpoint generado el 2026-07-29. Actualizado el 2026-07-30 tras la primera corrida end-to-end B3→B9 (ver [fixes.txt](fixes.txt) para el detalle de esos cambios) y una segunda ronda el mismo día que corrigió la integración de [api.py](api.py) con [main.py](main.py) y añadió tests reales y un manifiesto de dependencias (puntos 2, 3, 5 y 6 de la sección 7).
+Checkpoint generado el 2026-07-29. Actualizado el 2026-07-30 tras la primera corrida end-to-end B3→B9 (ver [fixes.txt](fixes.txt) para el detalle de esos cambios) y una segunda ronda el mismo día que corrigió la integración de [api.py](api.py) con [main.py](main.py) y añadió tests reales y un manifiesto de dependencias (puntos 2, 3, 5 y 6 de la sección 7). Actualizado nuevamente el 2026-07-31 tras depurar y corregir `--mode fresh` end-to-end, verificado con corridas reales contra Docker Desktop (ver [fixes.txt](fixes.txt), sección "SESSION 2").
 
 Este documento describe el estado real del repositorio tal como está implementado hoy. Se basa en los archivos y módulos presentes en [main.py](main.py), [api.py](api.py), [blocks/](blocks), [seed.py](seed.py), [ui/package.json](ui/package.json), [ui/src/](ui/src/), y los resultados persistidos en [results/](results). No se basa en el diseño original ni en el roadmap previsto.
 
@@ -11,8 +11,14 @@ Este documento describe el estado real del repositorio tal como está implementa
 - Estado: ❌ No iniciado.
 
 ### B1 — Preparación del entorno y adquisición de contexto
-- Archivos: no existe código específico en este repositorio para este bloque.
-- Estado: ❌ No iniciado.
+- Archivos: [blocks/environment.py](blocks/environment.py), [seed.py](seed.py), [main.py](main.py)
+- Qué hace realmente:
+  - `fresh_reset()` en [blocks/environment.py](blocks/environment.py) implementa la secuencia completa: verifica que Docker esté disponible, derriba el contenedor (`docker compose down -v`), borra explícitamente los directorios bind-mounted de Postgres/Mattermost (`mattermost/volumes/db`, `mattermost/volumes/app`) usando un contenedor Alpine descartable, levanta un contenedor nuevo, espera hasta 120s a que Mattermost responda, crea la cuenta de System Admin vía API (el primer usuario creado en una instancia sin cuentas se vuelve System Admin automáticamente; hay un prompt manual como fallback si eso falla), corre [seed.py](seed.py) para poblar el usuario/equipo/canal/post ficticios, y limpia [results/](results).
+  - `--mode restore` (en [main.py](main.py)) se salta todo esto y asume que el contenedor y los datos ya existen.
+- Estado: ✅ Corregido y verificado end-to-end el 2026-07-31 (ver [fixes.txt](fixes.txt), sección "SESSION 2", para el detalle completo de los bugs encontrados y las correcciones).
+- Observaciones:
+  - Antes de esta corrección, `--mode fresh` no funcionaba de forma confiable: `docker compose down -v` no borraba nada porque el stack usa bind mounts (no named volumes), el timeout de arranque (60s) era demasiado corto para un boot real (~100-105s medidos), y no había manejo de error si Docker Desktop no estaba corriendo — esto último es, con alta probabilidad, la causa de la corrida fallida reportada antes de esta sesión.
+  - Requiere Docker Desktop corriendo antes de invocar `--mode fresh`; si no lo está, ahora falla rápido con un mensaje claro en vez de un traceback crudo.
 
 ### B2 — Definición del alcance de análisis
 - Archivos: no existe código específico en este repositorio para este bloque.
@@ -222,8 +228,8 @@ El flujo “real” que el código soporta hoy es el siguiente:
      - `cd c:\Users\Melissa\Desktop\SiftPipe`
      - `./.venv/Scripts/Activate.ps1`
      - `python main.py --mode fresh`
-   - `--mode fresh` ejecuta la secuencia de reset del entorno: derriba/levanta Mattermost con Docker Compose, espera a que responda, corre [seed.py](seed.py), y limpia [results/](results).
-   - `--mode restore` asume que el entorno ya está levantado y reusa el estado existente.
+   - `--mode fresh` requiere Docker Desktop corriendo de antemano. Ejecuta la secuencia real de reset del entorno: derriba el contenedor, borra los directorios de datos bind-mounted de Postgres/Mattermost (wipe real, no solo `docker compose down -v`), levanta un contenedor nuevo, espera a que responda (hasta 120s), crea la cuenta de System Admin vía API, corre [seed.py](seed.py), y limpia [results/](results). Ver [B1](#b1--preparación-del-entorno-y-adquisición-de-contexto) y [fixes.txt](fixes.txt) para el detalle.
+   - `--mode restore` asume que el entorno ya está levantado y reusa el estado existente (incluyendo la cuenta admin y los datos ya sembrados).
 
 3. Ejecutar la API y la UI
    - API:
@@ -250,7 +256,9 @@ El flujo “real” que el código soporta hoy es el siguiente:
 4. Reemplazar la lógica de selectores y login de Playwright por un enfoque más robusto y menos dependiente de la interfaz actual de Mattermost. — Pendiente; sigue siendo el punto más frágil del pipeline.
 5. ✅ Añadir tests reales para los bloques B3–B9 y para las rutas de la API. — Hecho: 58 tests en [tests/](tests/), ver detalle por bloque en la sección 1.
 6. ✅ Añadir un manifiesto de dependencias Python explícito. — Hecho: [requirements.txt](requirements.txt).
+7. ✅ Depurar y corregir `--mode fresh` end-to-end. — Hecho el 2026-07-31: ver sección B1 arriba y [fixes.txt](fixes.txt) ("SESSION 2") para el detalle completo de los 8 bugs encontrados (Docker no verificado, `-v` no borraba nada por ser bind mounts, seed.py asumiendo un admin preexistente, timeout de boot corto, permisos de Windows al borrar volúmenes, lock transitorio de Windows al limpiar `results/`, intérprete equivocado al invocar seed.py, y falta de chequeo de errores en seed.py) y las correcciones aplicadas.
+8. Conectar `fresh_reset()` a la API/UI: `/api/run` en [api.py](api.py) hoy arranca directo en B3 y no tiene forma de disparar `--mode fresh` ni de elegir el modo desde el frontend. — Pendiente.
 
 ## Resumen ejecutivo
 
-El proyecto está implementado como un pipeline híbrido parcialmente funcional de análisis estático y dinámico, con LLM, Playwright y una interfaz React. La arquitectura real existente es más simple y más frágil que el diseño teórico: el flujo está vivo, pero varias partes dependen de heurísticas y entornos muy específicos. La integración entre bloques (B6→B7, B8, y la API) ya está alineada, hay un manifiesto de dependencias reproducible y 58 tests reales cubren la lógica de B3 a B9 y las rutas de la API. La deuda técnica que queda es principalmente B4/B7: la dependencia de selectores concretos y el login best-effort de Playwright frente a la UI real de Mattermost (punto 4 de la sección 7), y el techo de tokens/día de Groq como restricción externa.
+El proyecto está implementado como un pipeline híbrido parcialmente funcional de análisis estático y dinámico, con LLM, Playwright y una interfaz React. La arquitectura real existente es más simple y más frágil que el diseño teórico: el flujo está vivo, pero varias partes dependen de heurísticas y entornos muy específicos. La integración entre bloques (B6→B7, B8, y la API) ya está alineada, hay un manifiesto de dependencias reproducible y 58 tests reales cubren la lógica de B3 a B9 y las rutas de la API. `--mode fresh` (B1) fue depurado y verificado end-to-end el 2026-07-31 contra un stack Docker real. La deuda técnica que queda es principalmente B4/B7 (dependencia de selectores concretos y login best-effort de Playwright frente a la UI real de Mattermost, punto 4 de la sección 7), el techo de tokens/día de Groq como restricción externa, y la falta de conexión entre `fresh_reset()` y la API/UI (punto 8 de la sección 7).

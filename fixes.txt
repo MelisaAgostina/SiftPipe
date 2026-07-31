@@ -160,3 +160,171 @@ DATA (validated_payloads.json) rather than code.
   back in its JSON response — not a real vulnerability). These fixes address
   data volume, token cost, and correlation correctness; they do not and
   cannot manufacture real vulnerabilities that aren't there.
+
+
+================================================================================
+SESSION 2 — --mode fresh debugging (2026-07-31)
+================================================================================
+
+Scope: `python main.py --mode fresh` had never been verified to actually
+work. The user reported it failing on a prior run. This session isolated
+fresh_reset() (blocks/environment.py) from the rest of the pipeline, found
+every bug blocking it, fixed them, and verified a real end-to-end run
+against a live Mattermost/Postgres stack via Docker Desktop.
+
+
+1. PROBLEMS OBSERVED
+---------------------
+
+1.1 No check that Docker was even running
+    docker_down()/docker_up() called subprocess.run(..., check=True) with no
+    try/except. If Docker Desktop isn't running (confirmed to be the case at
+    the start of this session via `docker info`), this throws an uncaught
+    CalledProcessError and kills the whole pipeline with a raw traceback —
+    almost certainly what happened on the reported failed run.
+
+1.2 `docker compose down -v` did not actually reset anything
+    mattermost/docker-compose.yml bind-mounts Postgres/Mattermost data to
+    host paths (./volumes/db, ./volumes/app per mattermost/.env) instead of
+    declaring named volumes in a top-level `volumes:` section. `-v` only
+    removes named volumes, so it was a no-op here — confirmed by finding
+    mattermost/volumes/{app,db} already populated with a prior run's data.
+    Net effect: "fresh" mode silently behaved like "restore" at the data
+    layer — same admin, same seeded users, same channel/team — while
+    claiming ("full wipe" in the docstring) to reset everything.
+
+1.3 seed.py assumed an admin account already existed
+    A side effect of 1.2: because the DB was never actually wiped, seed.py's
+    login as MM_ADMIN_EMAIL/MM_ADMIN_PASS kept working by accident. Once the
+    wipe in 2.2/2.3 below made resets real, a genuinely fresh Mattermost
+    instance has zero accounts — there's no admin to log in as, and no API
+    endpoint to create one before any account exists (self-registration is
+    normally gated by EnableOpenServer, confirmed False in this instance's
+    saved config).
+
+1.4 seed.py silently swallowed failures
+    Only the initial login call had .raise_for_status(). User/team/channel/
+    membership/post creation calls were unchecked — if any of them failed
+    (e.g. "already exists" from 1.2's stale data), the corresponding *_id
+    became None, later calls failed or no-opped silently, and the script
+    still printed "Seed script finalizado con éxito" regardless.
+
+1.5 60s boot timeout too short for a real fresh boot
+    wait_for_mattermost()'s default READY_TIMEOUT was 60s. A real fresh boot
+    (new Postgres, DB migrations from scratch) measured 101-105s across two
+    live runs in this session — comfortably over the old limit.
+
+1.6 Volume wipe hit PermissionError on Windows
+    Found while testing the fix for 1.2: Postgres writes its bind-mounted
+    data files with Linux ownership/permissions. Under Docker Desktop on
+    Windows, a plain Python shutil.rmtree() on those paths from the host
+    raises PermissionError ([WinError 5] Access is denied) partway through —
+    the host user's Windows account doesn't have rights to remove them
+    directly.
+
+1.7 results/ folder deletion hit a transient Windows file lock
+    Also found during live testing: shutil.rmtree("results") intermittently
+    raised PermissionError on the top-level directory itself (contents
+    already deleted) — consistent with a brief handle held by VS Code's file
+    watcher (results/ was open in the editor during the test run) or a
+    similar indexer. Not reproducible on every run.
+
+1.8 run_seed_script() invoked "python" literally
+    subprocess.run(["python", "seed.py"]) instead of using sys.executable —
+    could silently pick a different interpreter than the one running
+    main.py (e.g. missing requests/dotenv) depending on PATH, independent of
+    which venv main.py itself was launched from.
+
+
+2. FIXES APPLIED (all in blocks/environment.py unless noted)
+--------------------------------------------------------------
+
+2.1 check_docker_available()  — new
+    Runs `docker info` up front; raises a clear RuntimeError ("Docker
+    daemon not reachable. Start Docker Desktop...") instead of letting a
+    deep subprocess call crash with a raw traceback. Also wrapped
+    docker_down()/docker_up() themselves in try/except CalledProcessError
+    for the same reason (e.g. compose file errors, port conflicts).
+
+2.2 wipe_volumes()  — new
+    Explicitly deletes mattermost/volumes/db and mattermost/volumes/app
+    after `docker compose down -v`, since -v alone does nothing for this
+    stack's bind mounts (see 1.2).
+
+2.3 wipe_volumes() runs the delete inside a throwaway Alpine container
+    `docker run --rm -v <abs path to mattermost/volumes>:/target alpine sh
+    -c "rm -rf /target/db /target/app"` instead of Python's shutil.rmtree
+    on the host — sidesteps 1.6 because the container has the same
+    Linux-side rights that created the files in the first place. Verified
+    working after the fix (previously crashed with WinError 5 on the first
+    live test).
+
+2.4 create_admin_account()  — new
+    POSTs to /api/v4/users (unauthenticated) with MM_ADMIN_EMAIL/
+    MM_ADMIN_PASS/MM_ADMIN_USERNAME (defaults to "admin") right after
+    Mattermost responds to ping. On a zero-user instance this is
+    automatically granted System Admin by Mattermost itself — a bootstrap
+    exception that exists specifically so a fresh instance doesn't need a
+    human at the setup wizard. Verifies the account actually works with a
+    real login call afterward (not just a 201 status) before continuing.
+    Falls back to wait_for_admin_setup() (a new input()-based prompt, same
+    pattern as human_review.py's B6 pause) only if the automated call
+    fails for any reason — e.g. a Mattermost instance where the bootstrap
+    exception has been disabled at the org level.
+
+2.5 READY_TIMEOUT raised from 60s to 120s
+    Based on the 101-105s measured boot times in this session's live runs
+    (see 1.5). Still configurable via the function's timeout parameter.
+
+2.6 clear_results_folder() — retry loop added
+    Retries shutil.rmtree() up to 5 times with a 1s delay on PermissionError
+    before giving up, to absorb the transient Windows lock from 1.7 instead
+    of crashing the very last step of an otherwise-successful fresh reset.
+
+2.7 run_seed_script() now uses sys.executable instead of "python"
+    Fixes 1.8 — guarantees seed.py runs under the exact same interpreter
+    (and therefore the exact same installed dependencies) as main.py.
+
+2.8 seed.py — added .raise_for_status() to every request
+    User/team/team-membership/channel/channel-membership/post creation
+    calls now all check their response status, fixing 1.4. A failure now
+    surfaces immediately with the real HTTP error instead of silently
+    producing a None id and a false "finalizado con éxito" message.
+
+2.9 fresh_reset() sequencing updated to:
+    check_docker_available() -> docker_down() -> wipe_volumes() ->
+    docker_up() -> wait_for_mattermost() -> create_admin_account() ->
+    run_seed_script() -> clear_results_folder()
+
+
+3. VERIFICATION
+-----------------
+
+Ran fresh_reset() directly (isolated from main.py's B3-B9 blocks, to avoid
+burning Groq tokens/time on unrelated stages) against a real Docker Desktop
++ Mattermost + Postgres stack, twice:
+  - Run 1: caught the WinError 5 in wipe_volumes() (fix 2.3 applied
+    afterward) and confirmed the admin-creation/seed/timeout fixes all
+    worked on the same run (admin created and verified, seed.py completed
+    all 7 steps, Mattermost took 104.8s to boot).
+  - Run 2 (after 2.3 and 2.6): full sequence completed clean, including the
+    volume wipe via container and the results/ retry. Mattermost boot took
+    101.2s.
+
+
+4. KNOWN LIMITATIONS / NOT FIXED
+-----------------------------------
+
+- seed.py's subprocess output prints "Seed script finalizado con éxito" as
+  mojibake ("con �xito") in the parent console — a console-encoding
+  cosmetic issue (not a crash, exit code 0), left as-is; flag if it's worth
+  fixing properly (e.g. PYTHONIOENCODING=utf-8 on the subprocess env).
+- The API layer (api.py) still has no way to trigger fresh_reset() or
+  choose fresh/restore mode at all — /api/run always starts directly at B3.
+  Not addressed in this session; next step if/when connecting fresh mode to
+  the frontend.
+- wait_for_admin_setup()'s manual fallback path uses input(), which only
+  works in the console flow. If fresh_reset() is ever called from the API's
+  background-thread flow, that fallback would hang; the automated path in
+  create_admin_account() should be treated as the only supported path for
+  a non-interactive/API context.

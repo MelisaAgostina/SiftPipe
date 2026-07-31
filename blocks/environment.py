@@ -5,37 +5,97 @@ Handles Docker lifecycle and environment reset for reproducible pipeline runs.
 
 import subprocess
 import shutil
+import sys
 import time
 import os
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- Configuration ---
 MATTERMOST_DIR = "mattermost"           # folder containing docker-compose.yml
-MM_PING_URL = "http://localhost:8065/api/v4/system/ping"
-READY_TIMEOUT = 60                       # seconds to wait for Mattermost to boot
+MM_URL = os.getenv("MM_URL", "http://localhost:8065")
+MM_PING_URL = f"{MM_URL}/api/v4/system/ping"
+READY_TIMEOUT = 120                      # seconds to wait for Mattermost to boot (first-boot DB migrations can be slow)
 POLL_INTERVAL = 2                        # seconds between readiness checks
+
+# mattermost/.env bind-mounts Postgres/Mattermost data to host paths under
+# mattermost/volumes/ (see POSTGRES_DATA_PATH / MATTERMOST_DATA_PATH etc.).
+# There is no top-level `volumes:` section in docker-compose.yml, so these
+# are bind mounts, not named volumes — `docker compose down -v` does NOT
+# remove them. They have to be wiped explicitly for a real fresh start.
+
+
+def check_docker_available():
+    """Fails fast with a clear message if Docker Desktop isn't running."""
+    try:
+        subprocess.run(["docker", "info"], check=True, capture_output=True, timeout=10)
+    except FileNotFoundError:
+        raise RuntimeError("[env] Docker CLI not found. Install Docker Desktop and make sure 'docker' is on PATH.")
+    except subprocess.CalledProcessError:
+        raise RuntimeError("[env] Docker daemon not reachable. Start Docker Desktop, wait for it to be ready, and try again.")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("[env] Docker did not respond in time. Check that Docker Desktop is running.")
 
 
 def docker_down():
-    """Stops and removes the Mattermost container AND its volumes (full wipe)."""
-    print("[env] Stopping and removing container + existing volumes...")
+    """Stops and removes the Mattermost container."""
+    print("[env] Stopping and removing container...")
+    try:
+        subprocess.run(
+            ["docker", "compose", "down", "-v"],
+            cwd=MATTERMOST_DIR,
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"[env] 'docker compose down' failed: {e}")
+    print("[env] Container removed.")
+
+
+def wipe_volumes():
+    """Deletes the host bind-mount directories backing Postgres/Mattermost data.
+
+    `docker compose down -v` only removes named volumes declared in the
+    compose file's top-level `volumes:` section. This stack uses bind mounts
+    instead, so without this step 'fresh' mode silently reuses the previous
+    run's database (same admin, same seeded users) instead of resetting it.
+
+    Postgres writes these files with Linux ownership/permissions. Under
+    Docker Desktop on Windows that ends up untouchable by a plain os.rmdir
+    (PermissionError: Access is denied), so the wipe runs inside a
+    throwaway Linux container instead, which has the rights to remove them.
+    """
+    volumes_root = os.path.join(MATTERMOST_DIR, "volumes")
+    if not os.path.exists(volumes_root):
+        print("[env] No existing volumes to wipe.")
+        return
+
+    print(f"[env] Wiping bind-mounted volumes under '{volumes_root}'...")
+    abs_root = os.path.abspath(volumes_root)
     subprocess.run(
-        ["docker", "compose", "down", "-v"],
-        cwd=MATTERMOST_DIR,
-        check=True
+        [
+            "docker", "run", "--rm",
+            "-v", f"{abs_root}:/target",
+            "alpine", "sh", "-c", "rm -rf /target/db /target/app",
+        ],
+        check=True,
     )
-    print("[env] Container and volumes removed.")
+    print("[env] Bind-mounted volumes wiped.")
 
 
 def docker_up():
     """Starts a fresh Mattermost container in detached mode."""
     print("[env] Starting new container...")
-    subprocess.run(
-        ["docker", "compose", "up", "-d"],
-        cwd=MATTERMOST_DIR,
-        check=True
-    )
-    print("[env] Container iniciado (detached).")
+    try:
+        subprocess.run(
+            ["docker", "compose", "up", "-d"],
+            cwd=MATTERMOST_DIR,
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"[env] 'docker compose up' failed: {e}")
+    print("[env] Container started (detached).")
 
 
 def wait_for_mattermost(url=MM_PING_URL, timeout=READY_TIMEOUT, interval=POLL_INTERVAL):
@@ -59,21 +119,105 @@ def wait_for_mattermost(url=MM_PING_URL, timeout=READY_TIMEOUT, interval=POLL_IN
     )
 
 
+def _admin_login_ok():
+    """Tries the MM_ADMIN_EMAIL/MM_ADMIN_PASS credentials from .env against a live login."""
+    try:
+        resp = requests.post(
+            f"{MM_URL}/api/v4/users/login",
+            json={"login_id": os.getenv("MM_ADMIN_EMAIL"), "password": os.getenv("MM_ADMIN_PASS")},
+            timeout=5,
+        )
+        return resp.status_code == 200
+    except requests.exceptions.RequestException:
+        return False
+
+
+def wait_for_admin_setup():
+    """
+    Fallback: pauses the pipeline so the System Admin account can be created
+    by hand via the browser setup wizard. Only reached if create_admin_account()
+    couldn't do it automatically.
+    """
+    admin_email = os.getenv("MM_ADMIN_EMAIL")
+    admin_pass = os.getenv("MM_ADMIN_PASS")
+
+    print("\n=== ADMIN SETUP REQUIRED ===")
+    print("Automated admin creation didn't go through — create it by hand instead:")
+    print(f"1. Open {MM_URL} in your browser.")
+    print("2. Complete the first-run setup wizard, creating the System Admin account with:")
+    print(f"   email:    {admin_email}")
+    print(f"   password: {admin_pass}")
+    print("   (from MM_ADMIN_EMAIL / MM_ADMIN_PASS in .env)")
+
+    while True:
+        input("-> Press Enter once the admin account is created...")
+        if _admin_login_ok():
+            print("[env] Admin login verified.")
+            return
+        print("[env] Admin login failed. Double-check the account and try again.")
+
+
+def create_admin_account():
+    """
+    Creates the System Admin account via API instead of the browser wizard.
+
+    On a brand-new Mattermost instance (zero existing users), the first
+    account created via POST /api/v4/users is automatically granted System
+    Admin — a bootstrap exception that exists precisely so a fresh instance
+    can be provisioned without a human going through the setup wizard.
+    Falls back to the manual prompt if the automated call doesn't work.
+    """
+    admin_email = os.getenv("MM_ADMIN_EMAIL")
+    admin_pass = os.getenv("MM_ADMIN_PASS")
+    admin_username = os.getenv("MM_ADMIN_USERNAME", "admin")
+
+    print("[env] Creating System Admin account via API...")
+    try:
+        resp = requests.post(
+            f"{MM_URL}/api/v4/users",
+            json={"email": admin_email, "username": admin_username, "password": admin_pass},
+            timeout=10,
+        )
+    except requests.exceptions.RequestException as e:
+        print(f"[env] Could not reach Mattermost to create admin: {e}")
+        wait_for_admin_setup()
+        return
+
+    if resp.status_code == 201 and _admin_login_ok():
+        print(f"[env] Admin account '{admin_username}' created and verified.")
+        return
+
+    print(f"[env] Automated admin creation didn't work (status {resp.status_code}): {resp.text[:200]}")
+    wait_for_admin_setup()
+
+
 def run_seed_script():
     """Runs seed.py to populate the fresh instance with fictitious test data."""
     print("[env] Running seed.py...")
     subprocess.run(
-        ["python", "seed.py"],
+        [sys.executable, "seed.py"],
         check=True
     )
     print("[env] Seed completed.")
 
 
-def clear_results_folder(path="results"):
-    """Wipes old results so no stale JSON survives across runs."""
+def clear_results_folder(path="results", retries=5, retry_delay=1):
+    """Wipes old results so no stale JSON survives across runs.
+
+    Retries briefly on Windows PermissionError — an editor/indexer holding a
+    transient handle on the folder right after its contents are deleted is
+    common (e.g. VS Code's file watcher) and normally clears within a second.
+    """
     if os.path.exists(path):
         print(f"[env] Clearing folder '{path}'...")
-        shutil.rmtree(path)
+        for attempt in range(1, retries + 1):
+            try:
+                shutil.rmtree(path)
+                break
+            except PermissionError:
+                if attempt == retries:
+                    raise
+                time.sleep(retry_delay)
     os.makedirs(path, exist_ok=True)
     print(f"[env] Folder '{path}' ready and empty.")
 
@@ -81,16 +225,21 @@ def clear_results_folder(path="results"):
 def fresh_reset():
     """
     Full fresh-start sequence:
-    1. Tear down existing container + volumes
-    2. Bring up a new container
-    3. Wait until Mattermost responds
-    4. Seed fictitious test data
-    5. Clear old results
+    1. Verify Docker is reachable
+    2. Tear down existing container and wipe bind-mounted volumes
+    3. Bring up a new container
+    4. Wait until Mattermost responds
+    5. Create the System Admin account (falls back to a manual prompt)
+    6. Seed fictitious victim user/team/channel/post
+    7. Clear old results
     """
     print("\n=== INITIATING FRESH RESET ===")
+    check_docker_available()
     docker_down()
+    wipe_volumes()
     docker_up()
     wait_for_mattermost()
+    create_admin_account()
     run_seed_script()
     clear_results_folder()
     print("=== FRESH RESET COMPLETED ===\n")
