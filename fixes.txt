@@ -714,3 +714,210 @@ LABEL_TO_CWE remain a curated subset (now 16 entries), not the full CWE
 catalog — nothing in the pipeline currently generates findings for the two
 new 2025 categories (A03 Software Supply Chain Failures, A10 Mishandling of
 Exceptional Conditions) beyond the placeholder catalog entries added above.
+
+
+================================================================================
+SESSION 5 — Wire the React UI to the real backend + build the B6 approval UI
+(2026-08-01)
+================================================================================
+
+Scope: before this session, ui/src/components/secpipeline/ had exactly ONE
+component talking to the real backend (Sidebar.tsx — status polling + the
+"run" button). PipelineView, CorrelationView, and LogsView all rendered
+static mock arrays from data.ts, and there was no UI at all for the B6
+human-review step (the only way past it was a console input() prompt or a
+raw curl to POST /api/validate). This session replaced the mock data path
+end to end and built the missing B6 approval UI. Planned via plan mode: two
+Explore agents mapped the frontend component tree and the exact backend JSON
+shapes, a Plan agent designed the implementation against both, and the user
+explicitly confirmed the B6 UI should be built now rather than deferred.
+
+
+1. BUGS FOUND (both confirmed against source, not inferred)
+--------------------------------------------------------------
+
+1.1 Sidebar.tsx's phase highlighting has never worked
+    BLOCK_TO_PHASE mapped lowercase keys ("b3".."b9") to values
+    ("static"/"dynamic"/etc.) that don't exist as ids anywhere. api.py sets
+    pipeline_state["current_block"] to uppercase "B3".."B9" (confirmed in
+    api.py's run_pipeline_until_b6()/run_pipeline_from_b7()), and data.ts's
+    phases array already uses ids "b3".."b9" directly. So the lookup never
+    matched on either axis (case, and the mapped-to values were never real
+    ids to begin with) — the "active phase" highlight in the sidebar has
+    silently never worked since the component was written.
+
+1.2 Tag.tsx conflated the CSS lookup key with the displayed text
+    `styles[tag]` for the class, `{tag}` for the rendered label — this only
+    worked because mock data happened to use the same 5 strings for both.
+    Real backend values ("CONFIRMED", "high" confidence, etc.) don't fit a
+    5-value closed union and were never meant to be forced into one.
+
+
+2. FIXES / NEW CODE
+-----------------------
+
+2.1 ui/src/lib/types.ts, api.ts, queries.ts (new)
+    types.ts: every backend response shape transcribed field-by-field from
+    api.py and blocks/*.py (not guessed) — B3Finding/B3Result,
+    B4Summary/B4Raw, B5PayloadGroup/B5Result, B7Finding/B7Result,
+    B8Finding/B8Result, B9Entry/B9Result, PipelineStatus, etc. — with
+    optional/nullable fields marked exactly where the backend actually omits
+    or nulls them (e.g. B8Finding's cwe_id/screenshot_path can be absent on
+    entries reused from an older run; B9Entry's confidence field really does
+    contain the literal value "MEDIUM " with a trailing space in real output).
+    api.ts: centralizes API_BASE and one typed function per endpoint,
+    replacing the two inline fetch("http://localhost:8000/...") calls that
+    were only in Sidebar.tsx. getBlockResult<T>() treats a 404 as null (a
+    normal "block hasn't produced results yet" state) rather than throwing;
+    every other non-2xx throws a typed ApiError carrying FastAPI's parsed
+    .detail string, so real backend error text reaches the UI instead of a
+    generic "request failed".
+    queries.ts: one React Query hook per concern (usePipelineStatus, useB3
+    through useB9, useValidatedPayloads, useLogs, useRunPipeline,
+    useValidatePayloads, useResetPipeline), all keyed through one queryKeys
+    object so repeated calls dedupe into one network request. Polling policy:
+    pipeline-status always every 2s (unchanged); B3-B5 poll every 3s while
+    running OR waiting_for_human (so B5 is fresh right as B6 starts); B7-B9
+    poll every 3s only while running; logs poll every 2s only while running
+    (nothing new is logged during the B6 wait) — otherwise every query relies
+    on React Query's default refetchOnMount/refetchOnWindowFocus so switching
+    tabs always shows current data without wasted continuous polling once
+    idle. Mutations invalidate exactly the queries they affect.
+
+2.2 Tag.tsx / FindingRow.tsx / Section.tsx decoupled from mock shapes
+    Tag now takes {tone, label} instead of {tag} — tone still keys the same
+    5-value CSS lookup (ui/src/styles.css only defines --status-posible/
+    form/confirmada/descartada, no new tokens needed; "input" reuses "form"'s
+    colors as it always did), but label can now be any real backend string.
+    FindingRow/Section repointed to the new UIFinding/UISection types —
+    structurally unchanged otherwise, both were already generic enough.
+
+2.3 ui/src/components/secpipeline/mappers.ts (new)
+    One pure function per source block translating its real shape into
+    UIFinding (mapB3Finding, mapB4Form, mapB4Input, mapB5Group, mapB8Finding,
+    mapB9Entry), plus classifyLogLine() for log-line tone. classifyLogLine's
+    heuristic (">> " = start, "OK " = success, "ERROR" = error, "==...==" =
+    divider) is matched against the exact literal prefixes api.py's log()
+    calls actually emit, confirmed by reading every log() call site in
+    api.py — not guessed from the mock data's old tone field.
+
+2.4 Sidebar.tsx fixed (bug 1.1)
+    Deleted BLOCK_TO_PHASE entirely; activePhaseId is now
+    `status?.current_block?.toLowerCase() ?? null`, which matches data.ts's
+    "b3".."b9" ids directly. Also switched the two inline fetch() calls to
+    usePipelineStatus()/useRunPipeline() from lib/queries.ts — pure refactor,
+    button/label/disabled logic unchanged beyond the bug fix.
+
+2.5 PipelineView.tsx, CorrelationView.tsx, LogsView.tsx rewritten
+    All three now read real data via the new hooks instead of importing
+    static arrays from data.ts. A new shared QueryState.tsx component handles
+    the loading/error/empty three-way branch once instead of repeating it in
+    every section of every view.
+    - PipelineView: B3/B4/B5 as three independent sections (one block can
+      have data while another doesn't yet); B4 additionally gets its own
+      status/error banner (failed/partial/complete + per-stage errors) since
+      that's real signal the old mock data never carried.
+    - CorrelationView: the previously-hardcoded "SQLi en auth.go:42" /
+      "payload ejecutado en login_form" narrative block is now a real
+      highest-score B9 entry where source == "Hybrid (Static + Dynamic)"
+      (renders nothing if none exists yet, rather than showing fake data).
+      The three stat tiles are now real aggregates — CONFIRMED count /
+      total_correlated, "Static (False Positive)" count, and
+      total_correlated itself replacing the fabricated "55 min" tile (no
+      endpoint anywhere returns timing/duration data, so that stat had no
+      honest real-data substitute and was dropped rather than preserved as
+      fake).
+    - LogsView: renders GET /api/logs's plain string array through
+      classifyLogLine for tone coloring; no time column (backend provides
+      none — not fabricated); auto-scrolls to the bottom as new lines arrive.
+
+2.6 PayloadReviewView.tsx (new) — the B6 approval UI
+    Added as a 4th tab ("Revisión (B6)") in data.ts's tabs array, chosen over
+    a modal/overlay since it composes with the existing controlled Tabs
+    mechanism and survives tab-switching/refresh. SecPipelineApp.tsx
+    auto-switches to it the moment waiting_for_human flips false->true
+    (tracked via a ref so it only fires once per wait-cycle and doesn't fight
+    a user who navigated elsewhere). The view itself handles the real state
+    matrix explicitly, not just the happy path:
+      - no B5 data at all -> "run the pipeline first"
+      - B5 exists, already validated (validated_payloads has data) ->
+        read-only summary of what was approved
+      - B5 exists, not yet at B6 -> "waiting for the pipeline to reach B6"
+      - waiting_for_human == true -> full interactive form: one card per
+        payload group (target, taxonomy tags, rationale, payload chips), a
+        checkbox per index (disabled when that group's payloads array is
+        empty — nothing there to approve), select-all/none, a comment
+        textarea, and a submit button calling POST /api/validate. On success:
+        sonner toast + switch to the Logs tab so the resumed B7->B9 run is
+        immediately visible. On error (409/404 from the backend): toasts the
+        real ApiError.detail text instead of failing silently.
+    Uses shadcn Checkbox/Textarea/Button/Card, all already present in
+    ui/src/components/ui/ and unused elsewhere — no new dependency added.
+    Toaster mounted locally in SecPipelineApp.tsx (page-scoped, not global —
+    __root.tsx wasn't touched).
+
+2.7 data.ts cleanup
+    Removed pipelineSections, correlationSections, logLines, and the old
+    Finding/Section/LogLine types (fully superseded by lib/types.ts +
+    mappers.ts). Kept prerequisites, phases (still legitimate static UI
+    config, not mock data), and tabs/TabId (now 4 entries).
+
+
+3. VERIFICATION
+-----------------
+
+Static checks: `npx tsc --noEmit` and `npx eslint` clean across every file
+created/modified this session. (eslint also flagged ~5000 pre-existing CRLF
+line-ending errors across the whole repo in files this session never
+touched — e.g. vite.config.ts, start.ts, Callout.tsx, Tabs.tsx, TopBar.tsx,
+src/lib/error-capture.ts/error-page.ts/utils.ts — confirmed pre-existing by
+scoping eslint to exactly the touched file list and seeing them disappear;
+left untouched rather than reformatting unrelated files.)
+
+Live smoke test: started the real backend (`uvicorn api:app --port 8000`
+from repo root) and the real frontend (`npm run dev` in ui/, port 5173).
+- GET /api/status returned the expected idle shape.
+- GET /api/results/B9_correlation returned the one real result file on disk,
+  byte-for-byte matching the B9Entry type written in lib/types.ts.
+- GET /api/results/B5_payloads correctly 404'd (no file yet) — confirms
+  getBlockResult()'s null-on-404 path against a real backend response, not
+  just a mocked one.
+- Fetched the SSR'd /app HTML directly: no error/exception/"failed to fetch"
+  text anywhere in the output, and all expected static UI text rendered
+  (tab labels including "Revisión (B6)", the "PRE-REQUISITOS" sidebar
+  heading). The SSR pass itself shows "Cargando..." (loading) states, as
+  expected — React Query's client-side fetches (to localhost:8000) resolve
+  after hydration in the browser, which a plain curl/SSR fetch can't observe.
+
+NOT verified this session (no browser automation tool available): the
+actual post-hydration rendering of live data (e.g. that the one real B9
+entry paints with the correct tone/color once the browser fetches it), and
+the full interactive click-through (triggering a run, watching phases
+progress, approving payloads in the new B6 UI, confirming the resume to
+B7->B9). Both servers were left running (backend :8000, frontend :5173) for
+manual visual/interactive confirmation.
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- No visual/interactive confirmation yet (see above) — the implementation is
+  type-checked, lint-clean, and verified against real (not mocked) backend
+  responses at the network level, but hasn't been watched running in an
+  actual browser by either the assistant or, as of this entry, the user.
+- fresh/restore mode selection is still not exposed anywhere in the UI —
+  unchanged non-goal from prior sessions; POST /api/run still can't trigger
+  fresh_reset().
+- TopBar.tsx is still fully hardcoded (logo, "Mattermost v9.x · Docker ·
+  PostgreSQL" text, a status dot that's always green) — no backend endpoint
+  exists for real environment/target info, left as a deliberate non-goal.
+- B7 finding screenshots (results/dynamic/*.png) are not rendered as images
+  anywhere in the UI — api.py has no static-file-serving endpoint for them.
+  Not added this session to avoid silently expanding scope beyond the
+  approved plan; would need a small new backend endpoint first.
+- GET /api/results (the bulk endpoint returning every results/*.json keyed
+  by filename) has a typed client function in lib/api.ts but isn't wired
+  into any view — the per-block endpoint gives cleaner typed 404-vs-data
+  semantics per query than the bulk dict, which silently omits absent keys
+  instead of representing "not produced yet" uniformly. Deliberate choice,
+  not an oversight.

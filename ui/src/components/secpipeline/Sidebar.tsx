@@ -1,53 +1,46 @@
-import { Check, Circle, Square, PlayCircle, Loader2 } from "lucide-react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Check, Circle, Square, PlayCircle, Loader2, RotateCcw, X } from "lucide-react";
+import {
+  useEnvironmentHealth,
+  useEnvironmentStatus,
+  usePipelineStatus,
+  useResetEnvironment,
+  useRunPipeline,
+} from "@/lib/queries";
 import { prerequisites, phases } from "./data";
 
-// Mapeo de current_block (lo que devuelve la API) → id de fase (lo que tenés en data.ts)
-// Ajustá los ids si en data.ts tienen nombres distintos
-const BLOCK_TO_PHASE: Record<string, string> = {
-  b3: "static",
-  b4: "dynamic",
-  b5: "payloads",
-  b6: "human",
-  b7: "attacks",
-  b8: "analysis",
-  b9: "correlation",
-};
-
 export function Sidebar() {
-  const queryClient = useQueryClient();
+  const { data: status } = usePipelineStatus();
+  const runMutation = useRunPipeline();
 
-  const { data: status } = useQuery({
-    queryKey: ["pipeline-status"],
-    queryFn: () => fetch("http://localhost:8000/api/status").then((r) => r.json()),
-    refetchInterval: 2000,
-  });
+  const { data: envHealth } = useEnvironmentHealth();
+  const { data: envStatus } = useEnvironmentStatus();
+  const resetMutation = useResetEnvironment();
 
-  const runMutation = useMutation({
-    mutationFn: () =>
-      fetch("http://localhost:8000/api/run", { method: "POST" }).then((r) => {
-        if (!r.ok) throw new Error("Error al iniciar pipeline");
-        return r.json();
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["pipeline-status"] });
-    },
-  });
-
-  // Fase activa según lo que dice la API
-  const activePhaseId = status?.current_block ? BLOCK_TO_PHASE[status.current_block] : null;
+  // current_block from the API is uppercase ("B3".."B9"); data.ts's phase ids
+  // are lowercase ("b3".."b9") — lowercasing directly matches them 1:1.
+  const activePhaseId = status?.current_block?.toLowerCase() ?? null;
 
   const isRunning = status?.running === true;
   const isWaiting = status?.waiting_for_human === true;
   const isCompleted = status?.completed === true;
 
-  const buttonDisabled = isRunning || isWaiting || runMutation.isPending;
+  const mattermostUp = envHealth?.mattermost_up === true;
+  const envResetting = envStatus?.running === true || resetMutation.isPending;
+
+  const buttonDisabled = isRunning || isWaiting || runMutation.isPending || !mattermostUp;
 
   const buttonLabel = () => {
     if (runMutation.isPending || isRunning) return "Corriendo...";
     if (isWaiting) return "Esperando revisión (B6)";
     if (isCompleted) return "Pipeline completado";
+    if (!mattermostUp) return "Preparar entorno primero";
     return "Ejecutar análisis";
+  };
+
+  const resetButtonLabel = () => {
+    if (envResetting) return "Preparando entorno...";
+    if (mattermostUp) return "Reiniciar entorno (fresh)";
+    return "Preparar entorno (fresh)";
   };
 
   return (
@@ -58,13 +51,47 @@ export function Sidebar() {
             PRE-REQUISITOS
           </h2>
           <ul className="space-y-2 text-sm">
-            {prerequisites.map((p) => (
-              <li key={p} className="flex items-center justify-between text-foreground/90">
-                <span>{p}</span>
+            <li className="flex items-center justify-between text-foreground/90">
+              <span>Mattermost corriendo</span>
+              {mattermostUp ? (
                 <Check className="h-4 w-4 text-primary" />
-              </li>
-            ))}
+              ) : (
+                <X className="h-4 w-4 text-destructive" />
+              )}
+            </li>
+            {prerequisites
+              .filter((p) => p !== "Docker corriendo")
+              .map((p) => (
+                <li key={p} className="flex items-center justify-between text-foreground/90">
+                  <span>{p}</span>
+                  <Check className="h-4 w-4 text-primary" />
+                </li>
+              ))}
           </ul>
+
+          <button
+            onClick={() => resetMutation.mutate()}
+            disabled={envResetting || isRunning || isWaiting}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {envResetting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" />
+            )}
+            {resetButtonLabel()}
+          </button>
+          {!mattermostUp && !envResetting && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              Requiere Docker Desktop corriendo. Borra los datos existentes y siembra una instancia nueva.
+            </p>
+          )}
+          {envStatus?.error && (
+            <p className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              Error preparando entorno: {envStatus.error}
+            </p>
+          )}
         </section>
 
         <section>

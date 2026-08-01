@@ -3,10 +3,12 @@ import threading
 from pathlib import Path
 from typing import List
 
+import requests
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from blocks.environment import MM_PING_URL, fresh_reset
 from main import (
     analyze_results,
     ask_llm,
@@ -44,6 +46,16 @@ pipeline_state = {
     "logs": [],
 }
 
+# Estado del reset de entorno (Docker/Mattermost) — separado de pipeline_state
+# porque es un ciclo de vida distinto (se corre una vez antes del pipeline,
+# no en cada corrida de B3-B9).
+env_state = {
+    "running": False,
+    "completed": False,
+    "error": None,
+    "logs": [],
+}
+
 RESULTS_DIR = Path("results")
 
 
@@ -51,6 +63,31 @@ def log(message: str):
     """Agrega una línea al log en memoria."""
     print(message)
     pipeline_state["logs"].append(message)
+
+
+def env_log(message: str):
+    """Agrega una línea al log en memoria del reset de entorno."""
+    print(message)
+    env_state["logs"].append(message)
+
+
+def run_environment_reset():
+    """Corre fresh_reset() en background. No interactivo: si la creación
+    automática del admin falla, levanta un error en vez de bloquear el
+    thread esperando un input() que nunca va a llegar desde la API."""
+    env_state["running"] = True
+    env_state["completed"] = False
+    env_state["error"] = None
+    env_state["logs"] = []
+
+    try:
+        fresh_reset(log_fn=env_log, interactive=False)
+        env_state["completed"] = True
+    except Exception as e:
+        env_state["error"] = str(e)
+        env_log(f"ERROR en reset de entorno: {e}")
+    finally:
+        env_state["running"] = False
 
 
 def run_pipeline_until_b6():
@@ -135,6 +172,49 @@ class ValidatePayloadsRequest(BaseModel):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/environment/health")
+def environment_health():
+    """Chequeo rápido y no bloqueante: ¿Mattermost ya está arriba y respondiendo?
+    Permite que la UI decida si hace falta un fresh reset antes de correr B3-B9."""
+    try:
+        resp = requests.get(MM_PING_URL, timeout=3)
+        return {"mattermost_up": resp.status_code == 200}
+    except requests.exceptions.RequestException:
+        return {"mattermost_up": False}
+
+
+@app.post("/api/environment/reset")
+def reset_environment():
+    """Corre fresh_reset() (Docker down, wipe de volúmenes, up, seed) en background.
+    Reemplaza a `python main.py --mode fresh` para quien solo usa la UI."""
+    if env_state["running"]:
+        raise HTTPException(status_code=409, detail="El entorno ya se está preparando")
+    if pipeline_state["running"] or pipeline_state["waiting_for_human"]:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede resetear el entorno mientras el pipeline está corriendo",
+        )
+
+    thread = threading.Thread(target=run_environment_reset, daemon=True)
+    thread.start()
+    return {"message": "Reset de entorno iniciado"}
+
+
+@app.get("/api/environment/status")
+def environment_status():
+    """Estado del reset de entorno — se puede pollear igual que /api/status."""
+    return {
+        "running": env_state["running"],
+        "completed": env_state["completed"],
+        "error": env_state["error"],
+    }
+
+
+@app.get("/api/environment/logs")
+def environment_logs():
+    return {"logs": env_state["logs"]}
 
 
 @app.post("/api/run")

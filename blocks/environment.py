@@ -39,9 +39,9 @@ def check_docker_available():
         raise RuntimeError("[env] Docker did not respond in time. Check that Docker Desktop is running.")
 
 
-def docker_down():
+def docker_down(log_fn=print):
     """Stops and removes the Mattermost container."""
-    print("[env] Stopping and removing container...")
+    log_fn("[env] Stopping and removing container...")
     try:
         subprocess.run(
             ["docker", "compose", "down", "-v"],
@@ -50,10 +50,10 @@ def docker_down():
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"[env] 'docker compose down' failed: {e}")
-    print("[env] Container removed.")
+    log_fn("[env] Container removed.")
 
 
-def wipe_volumes():
+def wipe_volumes(log_fn=print):
     """Deletes the host bind-mount directories backing Postgres/Mattermost data.
 
     `docker compose down -v` only removes named volumes declared in the
@@ -68,10 +68,10 @@ def wipe_volumes():
     """
     volumes_root = os.path.join(MATTERMOST_DIR, "volumes")
     if not os.path.exists(volumes_root):
-        print("[env] No existing volumes to wipe.")
+        log_fn("[env] No existing volumes to wipe.")
         return
 
-    print(f"[env] Wiping bind-mounted volumes under '{volumes_root}'...")
+    log_fn(f"[env] Wiping bind-mounted volumes under '{volumes_root}'...")
     abs_root = os.path.abspath(volumes_root)
     subprocess.run(
         [
@@ -81,12 +81,12 @@ def wipe_volumes():
         ],
         check=True,
     )
-    print("[env] Bind-mounted volumes wiped.")
+    log_fn("[env] Bind-mounted volumes wiped.")
 
 
-def docker_up():
+def docker_up(log_fn=print):
     """Starts a fresh Mattermost container in detached mode."""
-    print("[env] Starting new container...")
+    log_fn("[env] Starting new container...")
     try:
         subprocess.run(
             ["docker", "compose", "up", "-d"],
@@ -95,19 +95,19 @@ def docker_up():
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"[env] 'docker compose up' failed: {e}")
-    print("[env] Container started (detached).")
+    log_fn("[env] Container started (detached).")
 
 
-def wait_for_mattermost(url=MM_PING_URL, timeout=READY_TIMEOUT, interval=POLL_INTERVAL):
+def wait_for_mattermost(url=MM_PING_URL, timeout=READY_TIMEOUT, interval=POLL_INTERVAL, log_fn=print):
     """Polls Mattermost's ping endpoint until it responds or times out."""
-    print("[env] Waiting for Mattermost to be ready...")
+    log_fn("[env] Waiting for Mattermost to be ready...")
     start = time.time()
     while time.time() - start < timeout:
         try:
             resp = requests.get(url, timeout=3)
             if resp.status_code == 200:
                 elapsed = round(time.time() - start, 1)
-                print(f"[env] Mattermost ready after {elapsed}s.")
+                log_fn(f"[env] Mattermost ready after {elapsed}s.")
                 return
         except requests.exceptions.ConnectionError:
             pass  # expected while container is still booting
@@ -132,14 +132,27 @@ def _admin_login_ok():
         return False
 
 
-def wait_for_admin_setup():
+def wait_for_admin_setup(log_fn=print, interactive=True):
     """
     Fallback: pauses the pipeline so the System Admin account can be created
     by hand via the browser setup wizard. Only reached if create_admin_account()
     couldn't do it automatically.
+
+    When called from a non-interactive context (e.g. the API's background
+    thread), there's no console to prompt and no way for a caller to signal
+    "done" — blocking on input() there would hang the thread forever with
+    no feedback in the UI. In that case, raise instead so the failure
+    surfaces as an error the UI can display.
     """
     admin_email = os.getenv("MM_ADMIN_EMAIL")
     admin_pass = os.getenv("MM_ADMIN_PASS")
+
+    if not interactive:
+        raise RuntimeError(
+            f"[env] Automated admin creation failed and no console is available to prompt. "
+            f"Open {MM_URL}, complete the first-run setup wizard with MM_ADMIN_EMAIL/MM_ADMIN_PASS "
+            f"from .env, then retry."
+        )
 
     print("\n=== ADMIN SETUP REQUIRED ===")
     print("Automated admin creation didn't go through — create it by hand instead:")
@@ -152,12 +165,12 @@ def wait_for_admin_setup():
     while True:
         input("-> Press Enter once the admin account is created...")
         if _admin_login_ok():
-            print("[env] Admin login verified.")
+            log_fn("[env] Admin login verified.")
             return
-        print("[env] Admin login failed. Double-check the account and try again.")
+        log_fn("[env] Admin login failed. Double-check the account and try again.")
 
 
-def create_admin_account():
+def create_admin_account(log_fn=print, interactive=True):
     """
     Creates the System Admin account via API instead of the browser wizard.
 
@@ -171,7 +184,7 @@ def create_admin_account():
     admin_pass = os.getenv("MM_ADMIN_PASS")
     admin_username = os.getenv("MM_ADMIN_USERNAME", "admin")
 
-    print("[env] Creating System Admin account via API...")
+    log_fn("[env] Creating System Admin account via API...")
     try:
         resp = requests.post(
             f"{MM_URL}/api/v4/users",
@@ -179,29 +192,29 @@ def create_admin_account():
             timeout=10,
         )
     except requests.exceptions.RequestException as e:
-        print(f"[env] Could not reach Mattermost to create admin: {e}")
-        wait_for_admin_setup()
+        log_fn(f"[env] Could not reach Mattermost to create admin: {e}")
+        wait_for_admin_setup(log_fn=log_fn, interactive=interactive)
         return
 
     if resp.status_code == 201 and _admin_login_ok():
-        print(f"[env] Admin account '{admin_username}' created and verified.")
+        log_fn(f"[env] Admin account '{admin_username}' created and verified.")
         return
 
-    print(f"[env] Automated admin creation didn't work (status {resp.status_code}): {resp.text[:200]}")
-    wait_for_admin_setup()
+    log_fn(f"[env] Automated admin creation didn't work (status {resp.status_code}): {resp.text[:200]}")
+    wait_for_admin_setup(log_fn=log_fn, interactive=interactive)
 
 
-def run_seed_script():
+def run_seed_script(log_fn=print):
     """Runs seed.py to populate the fresh instance with fictitious test data."""
-    print("[env] Running seed.py...")
+    log_fn("[env] Running seed.py...")
     subprocess.run(
         [sys.executable, "seed.py"],
         check=True
     )
-    print("[env] Seed completed.")
+    log_fn("[env] Seed completed.")
 
 
-def clear_results_folder(path="results", retries=5, retry_delay=1):
+def clear_results_folder(path="results", retries=5, retry_delay=1, log_fn=print):
     """Wipes old results so no stale JSON survives across runs.
 
     Retries briefly on Windows PermissionError — an editor/indexer holding a
@@ -209,7 +222,7 @@ def clear_results_folder(path="results", retries=5, retry_delay=1):
     common (e.g. VS Code's file watcher) and normally clears within a second.
     """
     if os.path.exists(path):
-        print(f"[env] Clearing folder '{path}'...")
+        log_fn(f"[env] Clearing folder '{path}'...")
         for attempt in range(1, retries + 1):
             try:
                 shutil.rmtree(path)
@@ -219,27 +232,28 @@ def clear_results_folder(path="results", retries=5, retry_delay=1):
                     raise
                 time.sleep(retry_delay)
     os.makedirs(path, exist_ok=True)
-    print(f"[env] Folder '{path}' ready and empty.")
+    log_fn(f"[env] Folder '{path}' ready and empty.")
 
 
-def fresh_reset():
+def fresh_reset(log_fn=print, interactive=True):
     """
     Full fresh-start sequence:
     1. Verify Docker is reachable
     2. Tear down existing container and wipe bind-mounted volumes
     3. Bring up a new container
     4. Wait until Mattermost responds
-    5. Create the System Admin account (falls back to a manual prompt)
+    5. Create the System Admin account (falls back to a manual prompt, unless
+       interactive=False — see wait_for_admin_setup)
     6. Seed fictitious victim user/team/channel/post
     7. Clear old results
     """
-    print("\n=== INITIATING FRESH RESET ===")
+    log_fn("\n=== INITIATING FRESH RESET ===")
     check_docker_available()
-    docker_down()
-    wipe_volumes()
-    docker_up()
-    wait_for_mattermost()
-    create_admin_account()
-    run_seed_script()
-    clear_results_folder()
-    print("=== FRESH RESET COMPLETED ===\n")
+    docker_down(log_fn=log_fn)
+    wipe_volumes(log_fn=log_fn)
+    docker_up(log_fn=log_fn)
+    wait_for_mattermost(log_fn=log_fn)
+    create_admin_account(log_fn=log_fn, interactive=interactive)
+    run_seed_script(log_fn=log_fn)
+    clear_results_folder(log_fn=log_fn)
+    log_fn("=== FRESH RESET COMPLETED ===\n")

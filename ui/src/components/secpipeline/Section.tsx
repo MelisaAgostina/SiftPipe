@@ -1,8 +1,8 @@
 import { FileText } from "lucide-react";
-import type { Section as SectionT } from "./data";
+import type { UISection } from "@/lib/types";
 import { FindingRow } from "./FindingRow";
 
-export function Section({ section }: { section: SectionT }) {
+export function Section({ section }: { section: UISection }) {
   return (
     <section className="space-y-3">
       <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-muted-foreground">
