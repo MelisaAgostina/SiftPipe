@@ -88,12 +88,12 @@ export function Sidebar() {
           <button
             onClick={() => resetMutation.mutate()}
             disabled={envResetting || isRunning || isWaiting}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            className="font-button mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             {envResetting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-7 w-7 animate-spin" />
             ) : (
-              <RotateCcw className="h-3.5 w-3.5" />
+              <RotateCcw className="h-7 w-7" />
             )}
             {resetButtonLabel()}
           </button>
@@ -154,12 +154,12 @@ export function Sidebar() {
       <button
         onClick={() => runMutation.mutate()}
         disabled={buttonDisabled}
-        className="mt-6 flex items-center justify-center gap-2 rounded-md border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        className="font-button mt-6 flex items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-4 py-3.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isRunning || runMutation.isPending ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Loader2 className="h-8 w-8 animate-spin" />
         ) : (
-          <PlayCircle className="h-4 w-4" />
+          <PlayCircle className="h-8 w-8" />
         )}
         {buttonLabel()}
       </button>
