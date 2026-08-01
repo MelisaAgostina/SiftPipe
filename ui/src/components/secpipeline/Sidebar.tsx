@@ -30,17 +30,17 @@ export function Sidebar() {
   const buttonDisabled = isRunning || isWaiting || runMutation.isPending || !mattermostUp;
 
   const buttonLabel = () => {
-    if (runMutation.isPending || isRunning) return "Corriendo...";
-    if (isWaiting) return "Esperando revisión (B6)";
-    if (isCompleted) return "Pipeline completado";
-    if (!mattermostUp) return "Preparar entorno primero";
-    return "Ejecutar análisis";
+    if (runMutation.isPending || isRunning) return "Running...";
+    if (isWaiting) return "Waiting for review (B6)";
+    if (isCompleted) return "Pipeline completed";
+    if (!mattermostUp) return "Prepare environment first";
+    return "Run analysis";
   };
 
   const resetButtonLabel = () => {
-    if (envResetting) return "Preparando entorno...";
-    if (mattermostUp) return "Reiniciar entorno (fresh)";
-    return "Preparar entorno (fresh)";
+    if (envResetting) return "Preparing environment...";
+    if (mattermostUp) return "Reset environment (fresh)";
+    return "Prepare environment (fresh)";
   };
 
   return (
@@ -48,11 +48,11 @@ export function Sidebar() {
       <div className="space-y-8">
         <section>
           <h2 className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground">
-            PRE-REQUISITOS
+            PREREQUISITES
           </h2>
           <ul className="space-y-2 text-sm">
             <li className="flex items-center justify-between text-foreground/90">
-              <span>Mattermost corriendo</span>
+              <span>Mattermost running</span>
               {mattermostUp ? (
                 <Check className="h-4 w-4 text-primary" />
               ) : (
@@ -60,7 +60,7 @@ export function Sidebar() {
               )}
             </li>
             {prerequisites
-              .filter((p) => p !== "Docker corriendo")
+              .filter((p) => p !== "Docker running")
               .map((p) => (
                 <li key={p} className="flex items-center justify-between text-foreground/90">
                   <span>{p}</span>
@@ -84,19 +84,19 @@ export function Sidebar() {
           {!mattermostUp && !envResetting && (
             <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Requiere Docker Desktop corriendo. Borra los datos existentes y siembra una instancia nueva.
+              Requires Docker Desktop running. Delete existing data and seed a new instance.
             </p>
           )}
           {envStatus?.error && (
             <p className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              Error preparando entorno: {envStatus.error}
+              Error preparing environment: {envStatus.error}
             </p>
           )}
         </section>
 
         <section>
           <h2 className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground">
-            FASES DEL ANÁLISIS
+            ANALYSIS PHASES
           </h2>
           <ul className="space-y-1.5 text-sm">
             {phases.map((ph) => {
@@ -123,7 +123,7 @@ export function Sidebar() {
           </ul>
         </section>
 
-        {/* Error de la API */}
+        {/* API error */}
         {status?.error && (
           <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
             Error: {status.error}

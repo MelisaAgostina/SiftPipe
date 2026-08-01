@@ -85,7 +85,7 @@ def run_environment_reset():
         env_state["completed"] = True
     except Exception as e:
         env_state["error"] = str(e)
-        env_log(f"ERROR en reset de entorno: {e}")
+        env_log(f"ERROR in environment reset: {e}")
     finally:
         env_state["running"] = False
 
@@ -100,31 +100,31 @@ def run_pipeline_until_b6():
 
     try:
         pipeline_state["current_block"] = "B3"
-        log(">> B3 - Analisis estatico iniciado")
+        log(">> B3 - Static analysis started")
         run_static_analysis(pipeline_results)
-        log("OK B3 completado")
+        log("OK B3 completed")
 
         pipeline_state["current_block"] = "B4"
-        log(">> B4 - Discovery dinamico iniciado")
+        log(">> B4 - Dynamic discovery started")
         run_dynamic_discovery(pipeline_results)
-        log("OK B4 completado")
+        log("OK B4 completed")
 
         pipeline_state["current_block"] = "B5"
-        log(">> B5 - Generacion de payloads")
+        log(">> B5 - Payload generation")
         generate_payloads(client=client)
-        log("OK B5 completado")
+        log("OK B5 completed")
 
-        # Pausa aquí — la UI muestra los payloads para revisión humana
+        # Pauses here — the UI shows the payloads for human review
         pipeline_state["current_block"] = "B6"
         pipeline_state["waiting_for_human"] = True
         pipeline_state["running"] = False
-        log("== [B6] REVISION HUMANA - esperando validacion en la UI ==")
+        log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
 
     except Exception as e:
         pipeline_state["error"] = str(e)
         pipeline_state["running"] = False
         pipeline_state["current_block"] = None
-        log(f"ERROR en pipeline: {e}")
+        log(f"ERROR in pipeline: {e}")
 
 
 def run_pipeline_from_b7():
@@ -135,30 +135,30 @@ def run_pipeline_from_b7():
 
     try:
         pipeline_state["current_block"] = "B7"
-        log(">> B7 - Ejecucion de ataques")
+        log(">> B7 - Attack execution")
         execute_attacks()
-        log("OK B7 completado")
+        log("OK B7 completed")
 
         pipeline_state["current_block"] = "B8"
-        log(">> B8 - Analisis inteligente de resultados")
+        log(">> B8 - Intelligent results analysis")
         analyze_results(pipeline_results, ask_llm)
-        log("OK B8 completado")
+        log("OK B8 completed")
 
         pipeline_state["current_block"] = "B9"
-        log(">> B9 - Correlacion estatico + dinamico")
+        log(">> B9 - Static + dynamic correlation")
         correlate_results(pipeline_results, ask_llm)
-        log("OK B9 completado")
+        log("OK B9 completed")
 
         pipeline_state["current_block"] = None
         pipeline_state["running"] = False
         pipeline_state["completed"] = True
-        log("OK Pipeline completado. Resultados disponibles.")
+        log("OK Pipeline completed. Results available.")
 
     except Exception as e:
         pipeline_state["error"] = str(e)
         pipeline_state["running"] = False
         pipeline_state["current_block"] = None
-        log(f"ERROR en pipeline: {e}")
+        log(f"ERROR in pipeline: {e}")
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
@@ -190,16 +190,16 @@ def reset_environment():
     """Corre fresh_reset() (Docker down, wipe de volúmenes, up, seed) en background.
     Reemplaza a `python main.py --mode fresh` para quien solo usa la UI."""
     if env_state["running"]:
-        raise HTTPException(status_code=409, detail="El entorno ya se está preparando")
+        raise HTTPException(status_code=409, detail="The environment is already being prepared")
     if pipeline_state["running"] or pipeline_state["waiting_for_human"]:
         raise HTTPException(
             status_code=409,
-            detail="No se puede resetear el entorno mientras el pipeline está corriendo",
+            detail="Cannot reset the environment while the pipeline is running",
         )
 
     thread = threading.Thread(target=run_environment_reset, daemon=True)
     thread.start()
-    return {"message": "Reset de entorno iniciado"}
+    return {"message": "Environment reset started"}
 
 
 @app.get("/api/environment/status")
@@ -221,13 +221,13 @@ def environment_logs():
 def run_pipeline():
     """Arranca el pipeline desde B3. Rechaza si ya está corriendo."""
     if pipeline_state["running"]:
-        raise HTTPException(status_code=409, detail="Pipeline ya está corriendo")
+        raise HTTPException(status_code=409, detail="Pipeline is already running")
     if pipeline_state["waiting_for_human"]:
-        raise HTTPException(status_code=409, detail="Esperando revisión humana en B6")
+        raise HTTPException(status_code=409, detail="Waiting for human review in B6")
 
     thread = threading.Thread(target=run_pipeline_until_b6, daemon=True)
     thread.start()
-    return {"message": "Pipeline iniciado"}
+    return {"message": "Pipeline started"}
 
 
 @app.get("/api/status")
@@ -270,7 +270,7 @@ def get_block_result(block_name: str):
     """Devuelve el resultado de un bloque específico. Ej: /api/results/B3_static"""
     file = RESULTS_DIR / f"{block_name}.json"
     if not file.exists():
-        raise HTTPException(status_code=404, detail=f"{block_name} no tiene resultados todavía")
+        raise HTTPException(status_code=404, detail=f"{block_name} has no results yet")
     with open(file) as f:
         return json.load(f)
 
@@ -282,12 +282,12 @@ def validate_payloads(body: ValidatePayloadsRequest):
     Guarda validated_payloads.json y dispara B7 → B9 en background.
     """
     if not pipeline_state["waiting_for_human"]:
-        raise HTTPException(status_code=409, detail="El pipeline no está esperando revisión")
+        raise HTTPException(status_code=409, detail="The pipeline is not waiting for review")
 
     # Leer payloads generados por B5
     payloads_file = RESULTS_DIR / "B5_payloads.json"
     if not payloads_file.exists():
-        raise HTTPException(status_code=404, detail="B5_payloads.json no encontrado")
+        raise HTTPException(status_code=404, detail="B5_payloads.json not found")
 
     with open(payloads_file) as f:
         all_payloads = json.load(f)
@@ -309,20 +309,20 @@ def validate_payloads(body: ValidatePayloadsRequest):
         "comment": body.comment,
     }
 
-    log(f"OK B6 - {len(approved)} payloads validados por la investigadora")
+    log(f"OK B6 - {len(approved)} payloads validated by the researcher")
 
     # Disparar B7 → B9 en background
     thread = threading.Thread(target=run_pipeline_from_b7, daemon=True)
     thread.start()
 
-    return {"message": "Validación recibida. Continuando con B7 → B9."}
+    return {"message": "Validation received. Continuing with B7 → B9."}
 
 
 @app.post("/api/reset")
 def reset_pipeline():
     """Limpia el estado para poder correr el pipeline de nuevo."""
     if pipeline_state["running"]:
-        raise HTTPException(status_code=409, detail="No se puede resetear mientras corre")
+        raise HTTPException(status_code=409, detail="Cannot reset while running")
 
     pipeline_state.update({
         "running": False,
@@ -332,4 +332,4 @@ def reset_pipeline():
         "error": None,
         "logs": [],
     })
-    return {"message": "Estado reseteado"}
+    return {"message": "State reset"}

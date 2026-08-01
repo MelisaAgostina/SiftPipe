@@ -18,7 +18,7 @@ export function TopBar() {
       </div>
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
-        Entorno listo
+        Environment ready
       </div>
     </header>
   );

@@ -115,7 +115,7 @@ def run_payloads(validated_payloads_path, pipeline_results):
     via Playwright using a single authenticated browser session.
     """
     if not os.path.exists(validated_payloads_path):
-        raise FileNotFoundError(f"No se encontró: {validated_payloads_path}")
+        raise FileNotFoundError(f"Not found: {validated_payloads_path}")
 
     with open(validated_payloads_path, "r", encoding="utf-8") as f:
         raw = json.load(f)

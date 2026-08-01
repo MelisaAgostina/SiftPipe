@@ -6,9 +6,9 @@ import { QueryState } from "./QueryState";
 import { Section } from "./Section";
 
 const B4_STATUS_LABEL: Record<B4Status, string> = {
-  complete: "Discovery completo",
-  partial: "Discovery parcial — algunas etapas fallaron",
-  failed: "Discovery falló",
+  complete: "Discovery complete",
+  partial: "Discovery partial — some stages failed",
+  failed: "Discovery failed",
 };
 const B4_STATUS_TONE: Record<B4Status, string> = {
   complete: "text-primary",
@@ -55,20 +55,20 @@ export function PipelineView() {
     <div className="space-y-6">
       <Callout>
         {hasAnyData || status?.running
-          ? "Lo que ves acá es el pipeline corriendo sobre Mattermost en vivo. El experimento que valida este enfoque está documentado por separado."
-          : "Todavía no hay resultados — corré el pipeline desde el botón en la barra lateral para ver B3-B5 en vivo."}
+          ? "What you're seeing here is the pipeline running live against Mattermost. The experiment validating this approach is documented separately."
+          : "No results yet — run the pipeline from the button in the sidebar to see B3-B5 live."}
       </Callout>
 
       <QueryState
         query={b3Query}
         empty={(d) => d.findings.length === 0}
-        emptyMessage="B3 — sin hallazgos todavía."
+        emptyMessage="B3 — no findings yet."
       >
         {(data) => (
           <Section
             section={{
               id: "B3",
-              title: `B3 — ANÁLISIS ESTÁTICO (IA COMO CODE REVIEWER) · ${data.total_scanned} archivos escaneados`,
+              title: `B3 — STATIC ANALYSIS (AI AS CODE REVIEWER) · ${data.total_scanned} files scanned`,
               findings: data.findings.map(mapB3Finding),
             }}
           />
@@ -80,13 +80,13 @@ export function PipelineView() {
         <QueryState
           query={b4Query}
           empty={(d) => d.forms.length === 0 && d.inputs.length === 0}
-          emptyMessage="B4 — sin formularios/inputs detectados todavía."
+          emptyMessage="B4 — no forms/inputs detected yet."
         >
           {(data) => (
             <Section
               section={{
                 id: "B4",
-                title: "B4 — DISCOVERY DINÁMICO (PLAYWRIGHT)",
+                title: "B4 — DYNAMIC DISCOVERY (PLAYWRIGHT)",
                 findings: [...data.forms.map(mapB4Form), ...data.inputs.map(mapB4Input)],
               }}
             />
@@ -97,13 +97,13 @@ export function PipelineView() {
       <QueryState
         query={b5Query}
         empty={(d) => d.payloads.length === 0}
-        emptyMessage="B5 — sin payloads generados todavía."
+        emptyMessage="B5 — no payloads generated yet."
       >
         {(data) => (
           <Section
             section={{
               id: "B5",
-              title: `B5 — GENERACIÓN DE PAYLOADS (IA CONTEXTUAL) · ${data.generated_targets} targets`,
+              title: `B5 — PAYLOAD GENERATION (CONTEXTUAL AI) · ${data.generated_targets} targets`,
               findings: data.payloads.map(mapB5Group),
             }}
           />

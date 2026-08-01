@@ -24,7 +24,7 @@ export function mapB4Form(f: B4Form): UIFinding {
   return {
     tone: "form",
     label: "FORM",
-    title: `${f.form_name} — inputs vía ${f.method}`,
+    title: `${f.form_name} — inputs via ${f.method}`,
     subtitle: `${f.page_url} · action: ${f.action}`,
   };
 }
@@ -42,7 +42,7 @@ export function mapB5Group(g: B5PayloadGroup, idx: number): UIFinding {
   return {
     tone: g.debug ? "descartada" : "posible",
     label: g.debug ? "ERROR LLM" : `${g.payloads.length} payload(s)`,
-    title: `#${idx} — ${g.target_desc ?? g.target ?? "target desconocido"}`,
+    title: `#${idx} — ${g.target_desc ?? g.target ?? "unknown target"}`,
     subtitle: g.debug ? (g.debug.message ?? g.debug.error) : g.rationale,
   };
 }
@@ -54,7 +54,7 @@ export function mapB8Finding(f: B8Finding): UIFinding {
     tone,
     label: f.result.toUpperCase(),
     title: `${f.vulnerability} — ${f.target}`,
-    subtitle: `${f.evidence} · confianza: ${f.confidence}`,
+    subtitle: `${f.evidence} · confidence: ${f.confidence}`,
   };
 }
 

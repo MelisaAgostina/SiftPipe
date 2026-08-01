@@ -37,11 +37,11 @@ function HighlightedHybridFinding({ entries }: { entries: B9Entry[] }) {
   return (
     <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-sm text-foreground">
       <p className="font-semibold text-primary">
-        {best.vulnerability} — {best.target} · confianza {best.confidence.trim()} · score{" "}
+        {best.vulnerability} — {best.target} · confidence {best.confidence.trim()} · score{" "}
         {best.score.toFixed(3)}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
-        (ambas fuentes coinciden — ver_tier: {best.match_tier})
+        (both sources match — match_tier: {best.match_tier})
       </p>
     </div>
   );
@@ -56,13 +56,13 @@ export function CorrelationView() {
       <QueryState
         query={b8Query}
         empty={(d) => d.findings.length === 0}
-        emptyMessage="B8 — sin resultados dinámicos interpretados todavía."
+        emptyMessage="B8 — no dynamic findings analyzed yet."
       >
         {(data) => (
           <Section
             section={{
               id: "B8",
-              title: "B8 — INTERPRETACIÓN DE RESULTADOS DINÁMICOS (IA)",
+              title: "B8 — Interpretation of dynamic findings",
               findings: data.findings.map(mapB8Finding),
             }}
           />
@@ -72,7 +72,7 @@ export function CorrelationView() {
       <QueryState
         query={b9Query}
         empty={(d) => d.results.length === 0}
-        emptyMessage="B9 — sin correlación todavía."
+        emptyMessage="B9 — no correlated findings yet."
       >
         {(data) => {
           const confirmed = data.results.filter((e) => e.classification === "CONFIRMED").length;
@@ -83,25 +83,21 @@ export function CorrelationView() {
           return (
             <section className="space-y-3">
               <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
-                B9 — CORRELACIÓN ESTÁTICO + DINÁMICO · NÚCLEO DEL HÍBRIDO
+                B9 — STATIC + DYNAMIC CORRELATION
               </h3>
 
               <HighlightedHybridFinding entries={data.results} />
 
               <div className="grid gap-4 md:grid-cols-3">
-                <Stat
-                  value={`${confirmed}/${data.total_correlated}`}
-                  label="confirmadas"
-                  tone="ok"
-                />
-                <Stat value={falsePositives} label="falsos positivos" tone="neutral" />
-                <Stat value={data.total_correlated} label="total analizado" tone="info" />
+                <Stat value={`${confirmed}/${data.total_correlated}`} label="confirmed" tone="ok" />
+                <Stat value={falsePositives} label="false positives" tone="neutral" />
+                <Stat value={data.total_correlated} label="total analyzed" tone="info" />
               </div>
 
               <Section
                 section={{
                   id: "B9-entries",
-                  title: "Todos los hallazgos correlacionados",
+                  title: "All correlated findings",
                   findings: data.results.map(mapB9Entry),
                 }}
               />

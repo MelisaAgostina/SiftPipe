@@ -5,28 +5,28 @@ export type Phase = {
 };
 
 export const prerequisites = [
-  "Docker corriendo",
-  "Repo clonado",
-  "Seed data lista",
-  "API LLM configurada",
-  "Playwright listo",
+  "Docker running",
+  "Repo cloned",
+  "Seed data ready",
+  "LLM API configured",
+  "Playwright ready",
 ];
 
 export const phases: Phase[] = [
-  { id: "b3", label: "Análisis estático (IA)" },
-  { id: "b4", label: "Discovery dinámico" },
-  { id: "b5", label: "Generación de payloads" },
-  { id: "b6", label: "Revisión humana", active: true },
-  { id: "b7", label: "Ejecución de ataques" },
-  { id: "b8", label: "Interpretación (IA)" },
-  { id: "b9", label: "Correlación" },
+  { id: "b3", label: "Static analysis (AI)" },
+  { id: "b4", label: "Dynamic discovery" },
+  { id: "b5", label: "Payload generation" },
+  { id: "b6", label: "Human review", active: true },
+  { id: "b7", label: "Attack execution" },
+  { id: "b8", label: "Interpretation (AI)" },
+  { id: "b9", label: "Correlation" },
 ];
 
 export const tabs = [
-  { id: "pipeline", label: "Pipeline híbrido" },
-  { id: "revision", label: "Revisión (B6)" },
-  { id: "correlacion", label: "Correlación" },
-  { id: "logs", label: "Logs en vivo" },
+  { id: "pipeline", label: "Hybrid pipeline" },
+  { id: "revision", label: "Review (B6)" },
+  { id: "correlacion", label: "Correlation" },
+  { id: "logs", label: "Live logs" },
 ] as const;
 
 export type TabId = (typeof tabs)[number]["id"];

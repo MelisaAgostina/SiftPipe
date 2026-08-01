@@ -28,7 +28,7 @@ export function LogsView() {
       <QueryState
         query={logsQuery}
         empty={(d) => d.logs.length === 0}
-        emptyMessage="Sin logs todavía — corré el pipeline para ver la salida en vivo."
+        emptyMessage="No logs yet — run the pipeline to see live output."
       >
         {(data) =>
           data.logs.map((line, i) => (

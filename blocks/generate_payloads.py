@@ -229,11 +229,11 @@ def generate_payloads(client=None):
         static_findings = static_data.get("findings", [])
 
     if attack_surface is None:
-        raise FileNotFoundError("No se encontró results/attack_surface.json. Ejecuta primero el discovery dinámico.")
+        raise FileNotFoundError("results/attack_surface.json not found. Run dynamic discovery first.")
 
     dynamic_targets = build_dynamic_targets(attack_surface)
     if not dynamic_targets:
-        raise ValueError("No se detectaron inputs dinámicos para generar payloads.")
+        raise ValueError("No dynamic inputs detected to generate payloads.")
 
     payload_outputs = []
     for dynamic_target in dynamic_targets[:20]:

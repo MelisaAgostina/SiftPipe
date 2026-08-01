@@ -35,15 +35,15 @@ export function PayloadReviewView({ onValidated }: { onValidated: () => void }) 
       { approved_indices: [...selected].sort((a, b) => a - b), comment },
       {
         onSuccess: () => {
-          toast.success("Validación enviada — continuando con B7 → B9");
+          toast.success("Validation sent — continuing with B7 → B9");
           setSelected(new Set());
           setComment("");
           onValidated();
         },
         onError: (err) => {
           const detail =
-            (err as ApiError)?.detail ?? (err as Error)?.message ?? "error desconocido";
-          toast.error(`No se pudo validar: ${detail}`);
+            (err as ApiError)?.detail ?? (err as Error)?.message ?? "unknown error";
+          toast.error(`Could not validate: ${detail}`);
         },
       },
     );
@@ -54,7 +54,7 @@ export function PayloadReviewView({ onValidated }: { onValidated: () => void }) 
       <QueryState
         query={b5Query}
         empty={(d) => d.payloads.length === 0}
-        emptyMessage="No hay payloads generados todavía. Ejecutá el pipeline (B3→B5) primero."
+        emptyMessage="No payloads generated yet. Run the pipeline (B3→B5) first."
       >
         {(b5) =>
           !waiting ? (
@@ -93,19 +93,19 @@ function AlreadyPastB6({
     <QueryState
       query={validatedQuery}
       empty={(d) => d.payloads.length === 0}
-      emptyMessage="Esperando a que el pipeline llegue a B6…"
+      emptyMessage="Waiting for the pipeline to reach B6…"
     >
       {(validated) => (
         <div className="space-y-3">
           <Callout>
-            Ya validado — {validated.payloads.length} target(s) aprobado(s) en esta corrida.
+            Already validated — {validated.payloads.length} target(s) approved in this run.
           </Callout>
           <div className="grid gap-3">
             {validated.payloads.map((g, i) => (
               <Card key={i}>
                 <CardHeader>
                   <CardTitle className="text-sm">
-                    {g.target_desc ?? g.target ?? "target desconocido"}
+                    {g.target_desc ?? g.target ?? "unknown target"}
                   </CardTitle>
                   <CardDescription>{g.rationale}</CardDescription>
                 </CardHeader>
@@ -163,20 +163,20 @@ function InteractiveReview({
   return (
     <div className="space-y-4">
       <Callout>
-        El pipeline está en pausa esperando revisión. Elegí qué payloads ejecutar contra Mattermost
-        en B7.
+        The pipeline is paused, waiting for review. Choose which payloads to run against
+        Mattermost in B7.
       </Callout>
 
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          {selected.size} de {selectableCount} seleccionados
+          {selected.size} of {selectableCount} selected
         </p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={onSelectAll} disabled={submitting}>
-            Seleccionar todo
+            Select all
           </Button>
           <Button variant="outline" size="sm" onClick={onSelectNone} disabled={submitting}>
-            Deseleccionar todo
+            Deselect all
           </Button>
         </div>
       </div>
@@ -195,7 +195,7 @@ function InteractiveReview({
                 />
                 <div className="min-w-0 flex-1">
                   <CardTitle className="text-sm">
-                    {g.target_desc ?? g.target ?? "target desconocido"}
+                    {g.target_desc ?? g.target ?? "unknown target"}
                   </CardTitle>
                   <CardDescription>
                     {[g.owasp_category, g.cwe_id, g.field_name, g.page_url]
@@ -209,7 +209,7 @@ function InteractiveReview({
                 <div className="flex flex-wrap gap-2">
                   {g.payloads.length === 0 ? (
                     <span className="text-xs italic text-muted-foreground">
-                      sin payloads (falló la generación)
+                      no payloads (generation failed)
                     </span>
                   ) : (
                     g.payloads.map((p, j) => (
@@ -227,19 +227,19 @@ function InteractiveReview({
 
       <div className="space-y-2">
         <label className="text-xs font-semibold tracking-wider text-muted-foreground">
-          COMENTARIO (OPCIONAL)
+          COMMENT (OPTIONAL)
         </label>
         <Textarea
           value={comment}
           onChange={(e) => onCommentChange(e.target.value)}
-          placeholder="Notas sobre esta validación..."
+          placeholder="Notes about this validation..."
           disabled={submitting}
         />
       </div>
 
       <Button onClick={onSubmit} disabled={submitting || selected.size === 0} className="w-full">
         {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-        Validar {selected.size} payload(s) y continuar a B7
+        Validate {selected.size} payload(s) and continue to B7
       </Button>
     </div>
   );
