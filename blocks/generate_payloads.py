@@ -3,6 +3,8 @@ from groq import Groq
 import os
 import re
 
+from blocks.taxonomy import infer_taxonomy
+
 
 RESULTS_DIR = "results"
 
@@ -122,6 +124,12 @@ def build_prompt(dynamic_target, related_findings, static_findings):
         context_lines.append("Related static findings:")
         for f in related_findings[:2]:   # limit to 2 to keep prompt short
             context_lines.append(f"  - {f.get('vulnerability')} ({f.get('confidence')})")
+        target_taxonomy = infer_taxonomy(related_findings[0])
+        if target_taxonomy["cwe_id"]:
+            context_lines.append(
+                f"Likely relevant: {target_taxonomy['cwe_id']} "
+                f"(OWASP {target_taxonomy['owasp_category']}) — weight the 5 payloads toward this class."
+            )
     elif static_findings:
         context_lines.append("General static context:")
         for f in static_findings[:2]:
@@ -221,17 +229,22 @@ def generate_payloads(client=None):
         static_findings = static_data.get("findings", [])
 
     if attack_surface is None:
-        raise FileNotFoundError("No se encontró results/attack_surface.json. Ejecuta primero el discovery dinámico.")
+        raise FileNotFoundError("results/attack_surface.json not found. Run dynamic discovery first.")
 
     dynamic_targets = build_dynamic_targets(attack_surface)
     if not dynamic_targets:
-        raise ValueError("No se detectaron inputs dinámicos para generar payloads.")
+        raise ValueError("No dynamic inputs detected to generate payloads.")
 
     payload_outputs = []
     for dynamic_target in dynamic_targets[:20]:
         related_findings = find_related_static_findings(dynamic_target, static_findings)
         prompt           = build_prompt(dynamic_target, related_findings, static_findings)
         llm_result       = ask_llm(prompt, client)
+
+        # Taxonomy of the best-matching static finding, if any — lets B7/B9
+        # trace this payload set back to a specific CWE/OWASP category
+        # instead of only the free-text "rationale" the LLM returns.
+        target_taxonomy = infer_taxonomy(related_findings[0]) if related_findings else {"cwe_id": None, "owasp_category": None}
 
         # Inject navigation metadata regardless of response shape
         def _enrich(item):
@@ -241,6 +254,8 @@ def generate_payloads(client=None):
             item.setdefault("action",      dynamic_target.get("action"))
             item.setdefault("field_id",    dynamic_target.get("field_id"))
             item.setdefault("field_name",  dynamic_target.get("field_name"))
+            item.setdefault("cwe_id",      target_taxonomy["cwe_id"])
+            item.setdefault("owasp_category", target_taxonomy["owasp_category"])
             item.setdefault("payloads",    [])
             item.setdefault("rationale",   "No rationale returned by LLM.")
             return item

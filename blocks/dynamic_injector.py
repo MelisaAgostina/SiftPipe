@@ -1,6 +1,7 @@
 import os
 import json
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from blocks.taxonomy import infer_taxonomy
 
 # --- Config (set these in your .env or environment) ---
 MM_URL      = os.getenv("MM_URL",      "http://localhost:8065")
@@ -46,10 +47,27 @@ def _login(page):
     print("[B7] Login exitoso.")
 
 
-def _execute_one(page, page_url, input_selector, payload, pid, captured):
+def _is_submission_response(response):
+    """
+    True only for the actual message/slash-command submission response — not an
+    unrelated request that happens to share a URL prefix. Mattermost's client
+    fires GETs like /api/v4/posts/{id}/thread right after a new post renders,
+    which a plain substring check on "/api/v4/posts" would also match; checking
+    the method and the exact path suffix avoids capturing the wrong response.
+    """
+    if response.request.method != "POST":
+        return False
+    url = response.url.rstrip("/")
+    return url.endswith("/api/v4/posts") or url.endswith("/api/v4/commands/execute")
+
+
+def _execute_one(page, page_url, input_selector, payload, pid):
     """
     Navigate to page_url, inject payload into input_selector, submit via Enter,
-    capture the first matching API response, and take a screenshot.
+    and capture the resulting API response. Uses page.expect_response() scoped
+    to the submit action itself, instead of a page-wide listener + fixed sleep —
+    that gave no real correlation between "this payload's submission" and
+    "whatever /api/v4/posts-ish response happened to arrive in the next 2s".
     Returns a result dict.
     """
     result = {
@@ -66,16 +84,23 @@ def _execute_one(page, page_url, input_selector, payload, pid, captured):
         page.fill(input_selector, payload)
 
         # Mattermost chat submits on Enter — there is no submit button in post_textbox
-        page.keyboard.press("Enter")
-        page.wait_for_timeout(2000)
+        try:
+            with page.expect_response(_is_submission_response, timeout=8000) as response_info:
+                page.keyboard.press("Enter")
+            response = response_info.value
+            result["status_code"] = response.status
+            try:
+                result["response_body"] = response.text()
+            except Exception as body_err:
+                result["error"] = f"Could not read response body: {body_err}"
+        except PlaywrightTimeoutError:
+            # Surfaced explicitly instead of silently leaving status_code/response_body
+            # empty, which looked identical to "submitted cleanly, nothing to report".
+            result["error"] = "No matching POST /api/v4/posts (or /commands/execute) response observed within 8s"
 
+        page.wait_for_timeout(500)  # let the UI settle before the screenshot
         os.makedirs("results/dynamic", exist_ok=True)
         page.screenshot(path=result["screenshot_path"])
-
-        # Pull whatever the response listener captured
-        if captured.get("status_code") is not None:
-            result["status_code"]   = captured.pop("status_code")
-            result["response_body"] = captured.pop("response_body", "")
 
     except Exception as e:
         result["error"] = str(e)
@@ -90,7 +115,7 @@ def run_payloads(validated_payloads_path, pipeline_results):
     via Playwright using a single authenticated browser session.
     """
     if not os.path.exists(validated_payloads_path):
-        raise FileNotFoundError(f"No se encontró: {validated_payloads_path}")
+        raise FileNotFoundError(f"Not found: {validated_payloads_path}")
 
     with open(validated_payloads_path, "r", encoding="utf-8") as f:
         raw = json.load(f)
@@ -111,20 +136,6 @@ def run_payloads(validated_payloads_path, pipeline_results):
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page    = context.new_page()
-
-        # Shared dict updated by the response listener
-        captured: dict = {}
-
-        def _on_response(response):
-            # Capture POST /api/v4/posts (message submission) or commands
-            if "/api/v4/posts" in response.url or "/api/v4/commands" in response.url:
-                captured["status_code"] = response.status
-                try:
-                    captured["response_body"] = response.text()
-                except Exception:
-                    captured["response_body"] = ""
-
-        page.on("response", _on_response)
 
         # Authenticate once
         _login(page)
@@ -164,7 +175,7 @@ def run_payloads(validated_payloads_path, pipeline_results):
                 pid = f"{idx}_{subidx}"
                 print(f"[B7] [{pid}] {field_id or selector} @ {page_url} | {repr(payload)[:60]}")
 
-                raw_r = _execute_one(page, page_url, selector, payload, pid, captured)
+                raw_r = _execute_one(page, page_url, selector, payload, pid)
 
                 # ── Detection rules ──
                 detections = []
@@ -210,6 +221,8 @@ def run_payloads(validated_payloads_path, pipeline_results):
                 else:
                     vuln = "Unknown"
 
+                vuln_taxonomy = infer_taxonomy({"vulnerability": vuln})
+
                 # Short evidence snippet
                 evidence = ""
                 if status == 500:
@@ -227,6 +240,8 @@ def run_payloads(validated_payloads_path, pipeline_results):
                     "field_id":         field_id,
                     "payload":          payload,
                     "vulnerability":    vuln,
+                    "cwe_id":           vuln_taxonomy["cwe_id"],
+                    "owasp_category":   vuln_taxonomy["owasp_category"],
                     "status_code":      status,
                     "anomaly_detected": bool(detections),
                     "detections":       detections,
@@ -254,5 +269,5 @@ def run_payloads(validated_payloads_path, pipeline_results):
     with open("results/B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
         json.dump(final, f, indent=4)
 
-    print(f"[B7] Finalizado — ejecutados: {total} | anomalías: {anomalies}")
+    print(f"[B7] Finalized - executed: {total} | anomalies: {anomalies}")
     return final

@@ -1,10 +1,10 @@
-mattermost/ (Aquí vive el clon del repositorio de Mattermost) 
+mattermost/ (Aquí vive el clon del repositorio de Mattermost)
 
-blocks/ (Tus scripts funcionales para B3 a B9) 
+blocks/ (Tus scripts funcionales para B3 a B9)
 
-results/ (Donde se guardan los JSONs generados) 
+results/ (Donde se guardan los JSONs generados)
 
-ui/ (Tu código de react) 
+ui/ (Tu código de react)
 Deja exactamente como están los siguientes archivos y carpetas, ya que son el motor que hace funcionar a React:
 
     node_modules/
@@ -19,7 +19,7 @@ Deja exactamente como están los siguientes archivos y carpetas, ya que son el m
 
     eslint.config.js e index.html
 
-main.py (Tu orquestador principal) 
+main.py (Tu orquestador principal)
 
 seed.py (Tu script de inyección de datos)
 

@@ -32,7 +32,7 @@ from blocks.human_review import run_human_review
 from blocks.dynamic_injector import run_payloads
 from blocks.analyze_results import analyze_results
 from blocks.correlate_results import correlate_results
-from blocks.environment import fresh_reset   
+from blocks.environment import fresh_reset
 
 def ask_llm(prompt):
     try:
@@ -49,78 +49,79 @@ def ask_llm(prompt):
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return json.loads(text)
     except json.JSONDecodeError:
-        return {"vulnerability": "Error de Parseo JSON", "evidence": text[:200]}
+        return {"vulnerability": "JSON Parse Error", "evidence": text[:200]}
     except Exception as e:
         return {"vulnerability": "API Error", "evidence": str(e)}
-    
+
 def run_static_analysis(pipeline_results):
-    print("\nEjecutando B3: Análisis estático...")
-    
+    print("\nExecuting B3: Static Analysis...")
+
     files = load_files_list("results/files_list.txt") or scan_and_save_files("mattermost-src/mattermost")
-    print(f"Archivos totales listados: {len(files)}")
-    
+    print(f"Total files listed: {len(files)}")
+
     results = []
 
     MAX_FILES = 10 #could scan more but it would consume a lot of tokens during development, so we limit it for now. In production, you might want to remove this limit or set it higher.
 
-    files_to_scan = files[:MAX_FILES] 
+    files_to_scan = files[:MAX_FILES]
     total_files = len(files_to_scan)
     for index, file_path in enumerate(files_to_scan, start=1):
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()[:15000] # Truncamiento de seguridad
-            
+
             print(f"Analizando ({index}/{total_files}): {os.path.basename(file_path)}...")
             prompt = get_analysis_prompt(content)
             llm_response = ask_llm(prompt)
             print(f"RAW LLM RESPONSE: {llm_response}")
-            
+
             # Validamos que sea una lista (array) como pedimos en el prompt
             if isinstance(llm_response, list):
                 for finding in llm_response:
                     # Filtro 1: Que haya detectado una vulnerabilidad válida
                     if finding.get("vulnerability") not in ["None", "None/Detected", None]:
-                        
+
                         # Filtro 2: Solo guardar confidence 'high' o 'medium'
                         confianza = finding.get("confidence", "").lower()
                         if confianza in ["high", "medium"]:
                             finding["file"] = file_path
                             results.append(finding)
-                            print(f"[+] Guardado: {finding.get('vulnerability')} ({confianza})")
+                            print(f"[+] Saved: {finding.get('vulnerability')} ({confianza})")
             else:
-                print(f"[-] Formato inesperado del LLM para {file_path}")
-                
+                print(f"[-] Unexpected format from LLM for {file_path}")
+
         except Exception as e:
-            print(f"Error procesando {file_path}: {e}")
+            print(f"Error processing {file_path}: {e}")
 
     # Guardar en diccionario central
     pipeline_results["B3"] = {
         "status": "complete",
-        "total_scanned": total_files, 
+        "total_scanned": total_files,
         "findings": results
     }
 
     time.sleep(15) #timer so it doesnt waste too many tokens in case of re-runs during development
-    
+
     # Persistir output JSON en /results para la UI (Streamlit)
     os.makedirs("results", exist_ok=True)
     with open("results/B3_static.json", "w", encoding="utf-8") as f:
         json.dump(pipeline_results["B3"], f, indent=4)
-        
-    print(f"B3 finalizado. Hallazgos detectados: {len(results)}\n")
+
+    print(f"B3 finalized. Findings detected: {len(results)}\n")
 
 
 
 #block 4 dynamic discovery
 def run_dynamic_discovery(pipeline_results):
-    print("Ejecutando B4: Descubrimiento dinámico...")
+    print("Executing B4: Dynamic Discovery...")
 
     attack_surface = discover_attack_surface()
     summary = {
-        "status": "complete",
+        "status": attack_surface.get("status", "complete"),
         "forms_found": len(attack_surface.get("forms", [])),
         "inputs_found": len(attack_surface.get("inputs", [])),
-        "endpoints_found": len(attack_surface.get("endpoints", []))
+        "endpoints_found": len(attack_surface.get("endpoints", [])),
+        "errors": attack_surface.get("errors", []),
     }
 
     save_result("B4_dynamic", summary)
@@ -129,10 +130,10 @@ def run_dynamic_discovery(pipeline_results):
     with open("results/attack_surface.json", "w", encoding="utf-8") as f:
         json.dump(attack_surface, f, indent=4)
 
-    print("B4 dinámico completado y guardado en results/attack_surface.json")
+    print("B4 dynamic completed and stored in results/attack_surface.json")
 
 def execute_attacks():
-    print("Ejecutando B7: Ejecución de ataques...")
+    print("Executing B7: Executing Attacks...")
     # Cargar los payloads validados por B6 y ejecutar las inyecciones dinámicas
     validated_path = "results/validated_payloads.json"
     try:
@@ -140,10 +141,10 @@ def execute_attacks():
         # Guardar el objeto completo retornado por run_payloads para que B9 pueda correlacionar
         save_result("B7_dynamic_attacks", b7)
     except FileNotFoundError as e:
-        print(f"[-] B7 cancelado: {e}")
+        print(f"[-] B7 canceled: {e}")
         save_result("B7_dynamic_attacks", {"status": "skipped", "reason": str(e)})
     except Exception as e:
-        print(f"[-] Error ejecutando B7: {e}")
+        print(f"[-] Error executing B7: {e}")
         save_result("B7_dynamic_attacks", {"status": "error", "reason": str(e)})
 
 
@@ -155,13 +156,13 @@ def main():
     args = parser.parse_args()
 
     print(f"Initiating pipeline in mode: {args.mode.upper()}")
-    
+
     # Lógica de Inicialización
     if args.mode == "fresh":
         fresh_reset()
     else:
         print("Restore mode: using container and existing volumes.")
-    
+
     # Ejecución de bloques
     run_static_analysis(pipeline_results)
     run_dynamic_discovery(pipeline_results)
@@ -169,8 +170,8 @@ def main():
     run_human_review(pipeline_results)
     execute_attacks()
     analyze_results(pipeline_results, ask_llm)
-    correlate_results(pipeline_results)
-    
+    correlate_results(pipeline_results, ask_llm)
+
     print("\nPipeline completed. Results available in /results.")
 
 if __name__ == "__main__":
