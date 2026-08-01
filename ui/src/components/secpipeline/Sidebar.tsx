@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Circle, Square, PlayCircle, Loader2, RotateCcw, X } from "lucide-react";
+import { AlertTriangle, Check, Circle, PlayCircle, Loader2, RotateCcw, X } from "lucide-react";
 import {
   useEnvironmentHealth,
   useEnvironmentStatus,
@@ -23,6 +23,22 @@ export function Sidebar() {
   const isRunning = status?.running === true;
   const isWaiting = status?.waiting_for_human === true;
   const isCompleted = status?.completed === true;
+
+  // current_block goes back to null once the pipeline finishes or errors out
+  // (see api.py), so matching against it alone can't tell "already done" apart
+  // from "never started" — every phase would render as a plain, unchecked
+  // circle either way. Comparing list position against the active phase (or,
+  // once isCompleted, treating everything as done) fixes that.
+  const phaseIds = phases.map((p) => p.id);
+  const activeIndex = activePhaseId ? phaseIds.indexOf(activePhaseId) : -1;
+
+  const phaseState = (index: number): "done" | "active" | "pending" => {
+    if (isCompleted) return "done";
+    if (activeIndex === -1) return "pending";
+    if (index < activeIndex) return "done";
+    if (index === activeIndex) return "active";
+    return "pending";
+  };
 
   const mattermostUp = envHealth?.mattermost_up === true;
   const envResetting = envStatus?.running === true || resetMutation.isPending;
@@ -99,20 +115,24 @@ export function Sidebar() {
             ANALYSIS PHASES
           </h2>
           <ul className="space-y-1.5 text-sm">
-            {phases.map((ph) => {
-              const isActive = ph.id === activePhaseId;
+            {phases.map((ph, index) => {
+              const state = phaseState(index);
               return (
                 <li
                   key={ph.id}
                   className={
                     "flex items-center gap-2.5 rounded-md px-2.5 py-2 transition-colors " +
-                    (isActive
+                    (state === "active"
                       ? "bg-accent ring-1 ring-primary/40 text-foreground"
-                      : "text-foreground/80 hover:bg-accent/50")
+                      : state === "done"
+                        ? "text-foreground/80"
+                        : "text-foreground/50 hover:bg-accent/50")
                   }
                 >
-                  {isActive ? (
-                    <Square className="h-4 w-4 text-primary" />
+                  {state === "active" ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  ) : state === "done" ? (
+                    <Check className="h-4 w-4 text-primary" />
                   ) : (
                     <Circle className="h-4 w-4 text-muted-foreground/60" />
                   )}

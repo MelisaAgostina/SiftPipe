@@ -55,7 +55,7 @@ export function PipelineView() {
     <div className="space-y-6">
       <Callout>
         {hasAnyData || status?.running
-          ? "What you're seeing here is the pipeline running live against Mattermost. The experiment validating this approach is documented separately."
+          ? "What you're seeing here is the pipeline running live against Mattermost."
           : "No results yet — run the pipeline from the button in the sidebar to see B3-B5 live."}
       </Callout>
 
