@@ -117,10 +117,11 @@ def run_dynamic_discovery(pipeline_results):
 
     attack_surface = discover_attack_surface()
     summary = {
-        "status": "complete",
+        "status": attack_surface.get("status", "complete"),
         "forms_found": len(attack_surface.get("forms", [])),
         "inputs_found": len(attack_surface.get("inputs", [])),
-        "endpoints_found": len(attack_surface.get("endpoints", []))
+        "endpoints_found": len(attack_surface.get("endpoints", [])),
+        "errors": attack_surface.get("errors", []),
     }
 
     save_result("B4_dynamic", summary)
@@ -169,7 +170,7 @@ def main():
     run_human_review(pipeline_results)
     execute_attacks()
     analyze_results(pipeline_results, ask_llm)
-    correlate_results(pipeline_results)
+    correlate_results(pipeline_results, ask_llm)
 
     print("\nPipeline completed. Results available in /results.")
 

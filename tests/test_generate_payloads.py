@@ -139,9 +139,28 @@ class TestGeneratePayloads(unittest.TestCase):
         self.assertEqual(item["field_id"], "q")
         self.assertEqual(item["page_url"], "http://x/search")
         self.assertEqual(item["payloads"], ["<script>alert(1)</script>"])
+        # No related static finding for this target (B3_static.json wasn't
+        # written in this fixture) -> taxonomy fields default to None.
+        self.assertIsNone(item["cwe_id"])
 
         saved = json.loads((Path(self._tmp.name) / "B5_payloads.json").read_text(encoding="utf-8"))
         self.assertEqual(saved, output)
+
+    @patch.object(gp, "ask_llm")
+    def test_target_is_tagged_with_taxonomy_from_related_static_finding(self, mock_ask_llm):
+        with open(Path(self._tmp.name) / "B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"findings": [
+                {"file": "query.go", "vulnerability": "Injection", "confidence": "high",
+                 "evidence": "raw SQL built from request.query"},
+            ]}, f)
+
+        mock_ask_llm.return_value = {"payloads": ["' OR 1=1 --"], "rationale": "test"}
+
+        output = gp.generate_payloads(client=object())
+
+        item = output["payloads"][0]
+        self.assertEqual(item["cwe_id"], "CWE-89")
+        self.assertEqual(item["owasp_category"], "A05")
 
     @patch.object(gp, "ask_llm")
     def test_llm_error_produces_empty_payloads_with_debug_info(self, mock_ask_llm):

@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from blocks.static_scanner import (
+    OWASP_SCOPE,
     get_analysis_prompt,
     load_files_list,
     scan_and_save_files,
@@ -84,6 +85,31 @@ class TestGetAnalysisPrompt(unittest.TestCase):
         self.assertIn("Injection", prompt)
         self.assertIn("Broken Access Control", prompt)
         self.assertIn("JSON array", prompt)
+
+    def test_prompt_requests_a_cwe_id_alongside_the_owasp_category(self):
+        prompt = get_analysis_prompt("os.system(user_input)")
+        self.assertIn("cwe_id", prompt)
+        self.assertIn("CWE-89", prompt)
+
+
+class TestOwaspScopeCodes(unittest.TestCase):
+    """
+    OWASP_SCOPE's keys use the OWASP Top 10:2025 numbering (finalized January
+    2026 at https://owasp.org/Top10/2025/), matching blocks/taxonomy.py's
+    OWASP_TOP10_2025 table used by B9's correlation. This went through two
+    corrections on 2026-07-31: first a 2021-numbering swap fix (Injection was
+    tagged "A05", Security Misconfiguration "A02"), then a full move to 2025
+    numbering once it became clear 2025 was already the current edition.
+    """
+
+    def test_injection_is_a05(self):
+        self.assertIn("Injection", OWASP_SCOPE["A05"])
+
+    def test_security_misconfiguration_is_a02(self):
+        self.assertIn("Security Misconfiguration", OWASP_SCOPE["A02"])
+
+    def test_broken_access_control_is_still_a01(self):
+        self.assertIn("Broken Access Control", OWASP_SCOPE["A01"])
 
 
 if __name__ == "__main__":

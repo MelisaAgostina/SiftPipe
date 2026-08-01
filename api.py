@@ -109,7 +109,7 @@ def run_pipeline_from_b7():
 
         pipeline_state["current_block"] = "B9"
         log(">> B9 - Correlacion estatico + dinamico")
-        correlate_results(pipeline_results)
+        correlate_results(pipeline_results, ask_llm)
         log("OK B9 completado")
 
         pipeline_state["current_block"] = None

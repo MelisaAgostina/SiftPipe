@@ -328,3 +328,389 @@ burning Groq tokens/time on unrelated stages) against a real Docker Desktop
   background-thread flow, that fallback would hang; the automated path in
   create_admin_account() should be treated as the only supported path for
   a non-interactive/API context.
+
+
+================================================================================
+SESSION 3 — B4 resilience + B7 HTTP-capture fix (2026-07-31)
+================================================================================
+
+Scope: readme.md flagged two known-weak spots — B4 (dynamic_analysis.py) is
+"the most fragile point in the pipeline" (hardcoded selectors/routes, no
+error reporting), and B7 (dynamic_injector.py) "doesn't robustly capture the
+real HTTP response body". Addressed both, code-only (no live Docker/
+Mattermost run this session — verified via the existing test suite, now 68
+tests, all passing).
+
+
+1. B4 (blocks/dynamic_analysis.py) — config, retries, real error reporting
+--------------------------------------------------------------------------
+
+1.1 Problem: hardcoded credentials/team/channel, unlike B7
+    discover_attack_surface()'s defaults (base_url, login_id, password) and
+    its page_routes list were literal strings ("equipo-tesina",
+    "canal-analisis", "usuario_test", "victima@test.com", "Password123!"),
+    while dynamic_injector.py (B7) already reads the same values from .env
+    (MM_URL/MM_TEAM/MM_USERNAME/MM_PASSWORD). Any change to seed.py's
+    fixture data silently broke B4 without a config change to match.
+
+    Fix: added module-level env-backed config (MM_URL, MM_TEAM, MM_CHANNEL,
+    MM_USERNAME, MM_PASSWORD, MM_SEED_USERNAME — the last two are new,
+    documented in .env), same pattern as B7. page_routes is now built from
+    these instead of literals. MM_CHANNEL/MM_SEED_USERNAME added to .env
+    with defaults matching seed.py's NEW_CHANNEL/NEW_USER so behavior is
+    unchanged unless .env is edited.
+
+1.2 Problem: one uncaught exception anywhere silently produced empty,
+    "successful"-looking output
+    The whole login -> team-setup -> forms -> per-route crawl sequence lived
+    inside one outer try/except that just printed and returned whatever had
+    been gathered so far — main.py's run_dynamic_discovery() then always
+    wrote {"status": "complete", ...} regardless. A login failure and a
+    "discovered nothing because that's genuinely everything" run were
+    indistinguishable to the UI.
+
+    Fix: every stage (login, team_setup, forms:dashboard, each route,
+    inputs:final_page) now has its own try/except appending a structured
+    {"stage": ..., "message": ...} entry to a local `errors` list instead of
+    only printing. A new pure helper, _determine_status(login_ok, errors),
+    classifies the run as "failed" (login never worked — nothing usable),
+    "partial" (login worked, but something along the way didn't), or
+    "complete" (no errors at all). attack_surface now carries "status" and
+    "errors" keys; main.py's run_dynamic_discovery() now reads
+    attack_surface.get("status"/"errors") into the B4_dynamic.json summary
+    instead of hardcoding "complete". Covered by 4 new unit tests on
+    _determine_status (no browser needed, same rationale as
+    build_attack_surface_records).
+
+1.3 Problem: no resilience to a single transient nav failure
+    Any one-off network hiccup on a page.goto() call failed that stage
+    outright. Added _goto_with_retry() (2 attempts, 1s backoff) and used it
+    for the login page load, the create_team flow, and each route crawl.
+
+1.4 Explicitly NOT changed: headless=False
+    Considered making headless mode configurable (relevant for a future
+    API/UI-triggered run, where a visible Chromium window on the server is
+    generally undesirable) but left as-is by request — visibility into the
+    live run is wanted for now. Revisit when B4 is actually wired to the API.
+
+    browser.close() is now in a try/finally around the whole login->crawl
+    sequence (previously implicit via the outer try/except's fallthrough;
+    now guaranteed even if a future change adds an uncaught path).
+
+
+2. B7 (blocks/dynamic_injector.py) — HTTP response capture rewrite
+---------------------------------------------------------------------
+
+2.1 Problem: no correlation between "this payload's submission" and
+    "whatever matching response arrived"
+    The old design registered ONE page.on("response", ...) listener for the
+    whole session, writing into a shared `captured` dict, filtered only by
+    `"/api/v4/posts" in response.url or "/api/v4/commands" in response.url`
+    — a plain substring check with no HTTP-method filter. Mattermost's
+    client fires GETs like /api/v4/posts/{id}/thread right after a new post
+    renders; those also matched the substring and could silently overwrite
+    `captured` with an unrelated 200 OK body instead of the actual
+    submission's response (which is what would carry SQL error strings,
+    reflected payload content, stack traces, etc.).
+
+2.2 Problem: capture was gated on a fixed 2-second sleep, not a real
+    synchronization point
+    _execute_one() pressed Enter, slept 2000ms, then checked whatever was in
+    `captured`. A server response slower than 2s left status_code/
+    response_body empty — visually identical to "request submitted cleanly,
+    nothing to report", when it actually meant "we stopped watching before
+    the answer came back". This is the concrete mechanism behind the
+    readme's "no captura de forma robusta el cuerpo HTTP real" note.
+
+2.3 Fix: page.expect_response() scoped to the submit action
+    Replaced the persistent listener + shared dict with Playwright's
+    expect_response() context manager, entered right around
+    page.keyboard.press("Enter"). New pure predicate _is_submission_response
+    checks response.request.method == "POST" AND the URL (right-stripped of
+    a trailing slash) ends exactly with "/api/v4/posts" or
+    "/api/v4/commands/execute" — no longer a loose substring match, so a
+    same-prefix GET can't be mistaken for the submission. A genuine timeout
+    (8s, no matching response observed) now raises PlaywrightTimeoutError,
+    caught explicitly and recorded as
+    result["error"] = "No matching POST /api/v4/posts (or /commands/execute)
+    response observed within 8s" — a real signal instead of silently empty
+    fields. Covered by 5 new unit tests on _is_submission_response (method
+    filtering, exact-suffix matching, the /thread false-positive case) plus
+    one integration-level test confirming a timeout surfaces as a visible
+    error rather than a false "nothing happened".
+
+2.4 Test infrastructure updated to match
+    tests/test_dynamic_injector.py's FakePage previously delivered fake
+    responses by calling the stored on("response") callback from inside
+    wait_for_timeout() — a fake built around the same race this fix removes.
+    Replaced with FakeExpectResponse, a context manager stand-in for
+    page.expect_response() that hands back the next queued FakeResponse (or
+    raises the fake timeout if None was queued), independent of any sleep.
+    FakeResponse gained a .request.method attribute so _is_submission_response
+    can be exercised for real.
+
+
+3. VERIFICATION
+-----------------
+
+Full suite: `python -m unittest discover -s tests -v` — 68 tests, all
+passing (62 before this session + 4 for _determine_status + 6 for
+dynamic_injector's new capture logic). No live Docker/Mattermost run this
+session; B4's live-boot path was already verified end-to-end in SESSION 2,
+and this session's changes to it are additive (config sourcing, error
+tracking, retries) rather than a change to the core navigation logic itself.
+
+
+4. KNOWN LIMITATIONS / NOT FIXED
+-----------------------------------
+
+- B4 still opens a visible (headless=False) browser window — fine for local
+  runs, will need to become configurable before B4 can be triggered from the
+  API/UI without popping a Chromium window on the server (see 1.4).
+- B7's 8-second response timeout is a fixed constant, not configurable per
+  call. Reasonable for Mattermost's normal post-submission latency, but a
+  genuinely slow target could still produce a false "no response observed"
+  error.
+- _is_submission_response() is Mattermost-API-specific (hardcoded to
+  /api/v4/posts and /api/v4/commands/execute). If B7 ever targets a
+  different endpoint shape, this predicate needs to grow alongside it.
+
+
+================================================================================
+SESSION 4 — Taxonomy-based evaluation engine for B5/B9 (2026-07-31)
+================================================================================
+
+Scope: replace B9's free-text substring correlation and B5's pure-keyword
+target relevance with something closer to what real DAST/SAST correlation
+engines do — a formal CWE/OWASP taxonomy, taxonomy-tier matching with an
+LLM-judge fallback for ambiguous pairs, and a weighted composite confidence/
+severity score instead of a single LLM-assigned label. Design was agreed
+with the user up front on two axes: (1) correlation = taxonomy matching +
+LLM-judge only for ambiguous pairs (not a full LLM-judge cross product, to
+respect Groq's 100k tokens/day cap), and (2) findings get a computed
+weighted score instead of a bare high/medium/low label.
+
+
+1. NEW: blocks/taxonomy.py
+-----------------------------
+
+Curated CWE catalog (14 entries, scoped to what OWASP_SCOPE in
+static_scanner.py actually looks for and what dynamic_injector.py's
+rule-based detections actually produce — not an attempt at the full ~900-
+entry CWE catalog) + the real OWASP Top 10 2021 category list.
+
+infer_taxonomy(finding) resolves a finding's {cwe_id, owasp_category} in
+priority order: (1) an explicit cwe_id already on the finding, (2) an
+explicit owasp_category/category with no CWE, (3) a lookup from the
+free-text "vulnerability" label via LABEL_TO_CWE — the fallback that keeps
+this working for legacy/pre-taxonomy data and test fixtures that don't carry
+a cwe_id. This graceful-degradation design is why the 3 pre-existing B9
+tests (SESSION 1) kept passing unmodified: their hand-authored fixtures
+never had cwe_id, so they exercise tier 3 automatically.
+
+1.1 Found and fixed while building this: static_scanner.py's OWASP_SCOPE
+    dict keys didn't match the real OWASP Top 10 2021 numbering — Injection
+    was tagged "A05" (should be A03) and Security Misconfiguration was
+    tagged "A02" (should be A05). B3 has been emitting the wrong category
+    code for every finding it ever produced. Fixed so it lines up with
+    taxonomy.py's OWASP_TOP10_2021 table; Broken Access Control (A01) and
+    Identification/Authentication Failures (A07) were already correct.
+
+
+2. NEW: blocks/scoring.py
+----------------------------
+
+compute_score(static_confidence, dynamic_result, dynamic_confidence,
+match_tier) -> (score in [0,1], severity). Weighted composite: dynamic
+evidence 0.50, static evidence 0.25, correlation match tier 0.25 — weighted
+toward dynamic evidence deliberately, since a live-proven exploitation
+attempt is stronger signal than a static heuristic guess; match tier is a
+corroboration multiplier, not the primary signal. Severity buckets
+(CRITICAL/HIGH/MEDIUM/LOW) are threshold-based on the score, not another
+LLM call. Every weight is a module-level constant, not buried in branching
+logic, specifically so the formula is auditable/citable.
+
+
+3. B3 (static_scanner.py) — cwe_id added to the existing LLM call
+----------------------------------------------------------------------
+
+get_analysis_prompt()'s requested JSON schema gained a "cwe_id" field (with
+worked examples: CWE-89 for SQLi, CWE-78 for OS Command Injection, etc.) —
+same LLM call already being made, no new token cost per file scanned.
+
+
+4. B7 (dynamic_injector.py) — deterministic taxonomy, no LLM involved
+---------------------------------------------------------------------
+
+After computing `vuln` from the rule-based `detections` list (unchanged
+logic), each finding now also gets cwe_id/owasp_category via
+infer_taxonomy({"vulnerability": vuln}) — free, since B7's detection is
+already rule-based/deterministic, not an LLM call.
+
+
+5. B8 (analyze_results.py) — taxonomy carried through, not re-derived
+-----------------------------------------------------------------------
+
+B8 classifies confirmed/possible/discarded; it doesn't decide WHAT the
+vulnerability class is — that's B7's rule engine's job. So cwe_id/
+owasp_category are read off the incoming B7 finding and setdefault'd onto
+the B8 output (in both the no-anomaly-skip path and the real LLM-call
+path), rather than asking the classification LLM call to reinvent them.
+
+
+6. B9 (correlate_results.py) — the actual evaluation engine rewrite
+------------------------------------------------------------------------
+
+correlate_results(pipeline_results=None, ask_llm=None) — new optional
+ask_llm param (main.py and api.py's call sites updated to pass it through;
+existing/test call sites that omit it still work, see 6.4).
+
+Matching is now tried in priority order per dynamic finding, each tier a
+stronger signal than the last:
+  1. "cwe"   — exact CWE-ID match between both sides. Deterministic, free.
+  2. "judge" — same OWASP category but a different/missing CWE ("ambiguous").
+               One LLM call decides if they're really the same underlying
+               issue: {"same_vulnerability": true|false, "rationale": ...}.
+               Only attempted when ask_llm is provided.
+  3. "owasp" — same OWASP category, but the judge was unavailable/not
+               provided/returned something unparseable — a shared category
+               is still real signal on its own, just weaker than a judge "yes".
+  4. "text"  — the original substring/category-string matching, reached only
+               when neither side has ANY usable taxonomy (keeps the pipeline
+               working even against data with no taxonomy info at all).
+
+6.1 Judge calls are resumable and capped
+    _load_previous_judgments() reads a "judgments" dict persisted inside
+    results/B9_correlation.json (same file, new top-level key) and reuses a
+    cached verdict for a given (payload_id, static file, candidate index) key
+    instead of re-asking. MAX_JUDGE_CALLS = 15 caps new calls per run — same
+    rationale as B3's MAX_FILES=10 and B8's reuse logic: protect Groq's
+    100k tokens/day cap on a run with many ambiguous pairs.
+
+6.2 Every correlated entry gained cwe_id, owasp_category, match_tier, score,
+    and severity fields, in addition to the existing vulnerability/target/
+    classification/confidence/source/evidence fields (additive — nothing
+    existing was removed, api.py's /api/results/B9_correlation passthrough
+    needs no changes).
+
+6.3 Static-only findings (no dynamic counterpart at all) now also get a
+    score via a new "untested" dynamic_result weight (0.3) in scoring.py,
+    instead of a hardcoded "MEDIUM" string with nothing backing it. Also
+    fixed a pre-existing typo: their classification was "POSIBLE", now
+    "POSSIBLE" (matches every other classification value B9 emits).
+
+6.4 Backward compatible by construction, verified: the 3 pre-existing B9
+    tests (SESSION 1, exact CWE-less fixtures) still pass unmodified —
+    walked through the match_tier logic by hand for each: tier 1 (cwe) never
+    fires since none of those fixtures carry a cwe_id, tier 2 (judge) is
+    skipped when ask_llm isn't passed and immediately falls through to a
+    tier-3 "owasp" match instead, reproducing the exact same match_found
+    outcome the old string-matching logic produced for those 3 specific cases.
+
+
+7. B5 (generate_payloads.py) — targets tagged with taxonomy
+----------------------------------------------------------------
+
+After find_related_static_findings() (keyword-overlap logic unchanged — a
+full rewrite of relevance ranking was judged out of scope this round), the
+best-matching related finding's taxonomy is computed once via
+infer_taxonomy() and: (a) surfaced to the LLM as a prompt hint ("Likely
+relevant: CWE-89 (OWASP A03) — weight the 5 payloads toward this class"),
+using the same LLM call already being made, and (b) attached to the output
+item as cwe_id/owasp_category via setdefault(), so B7/B9 can trace a
+generated payload set back to a specific CWE instead of only the LLM's
+free-text "rationale". Targets with no related static finding get
+cwe_id/owasp_category = None (the prompt's existing "cover 5 different
+classes generically" instruction still applies for those).
+
+
+8. VERIFICATION
+-----------------
+
+Full suite: `python -m unittest discover -s tests -v` — 102 tests, all
+passing (68 before this session + 14 for taxonomy.py + 8 for scoring.py +
+9 new/extended for correlate_results.py's judge/CWE/budget/reuse paths +
+1 extended B7 test + 2 extended B8 tests + 2 extended B5 tests + 3 for the
+OWASP_SCOPE code fix). No live Docker/Mattermost/Groq run this session —
+verified via unit tests with fake ask_llm callables, same approach as
+SESSION 3.
+
+
+9. KNOWN LIMITATIONS / NOT FIXED
+-----------------------------------
+
+- CWE_CATALOG and LABEL_TO_CWE are a curated ~14-entry subset, not the full
+  CWE catalog. A vulnerability class outside this set gets cwe_id=None from
+  the label-fallback tier (owasp_category may still resolve if the LLM/rule
+  engine provides a category directly) and correlates via the "text" tier.
+- The LLM-judge prompt asks for a single yes/no + rationale; it doesn't ask
+  the LLM to propose a corrected CWE ID for either side, so a "no" verdict on
+  a genuinely-related pair just means "not correlated this run" rather than
+  refining the taxonomy data itself.
+- find_related_static_findings() in B5 still ranks by keyword overlap, not
+  taxonomy — the taxonomy tag is computed from whatever that keyword search
+  already returns, it doesn't change which finding is picked as "related".
+- The weighted-score formula in scoring.py (0.50/0.25/0.25 split, the
+  specific per-tier weights) is a reasoned starting point, not empirically
+  tuned against a labeled dataset — worth revisiting once there's enough
+  real correlated-finding history to check the buckets against.
+
+
+--------------------------------------------------------------------------------
+SESSION 4 ADDENDUM — OWASP Top 10 2021 -> 2025 correction (2026-07-31)
+--------------------------------------------------------------------------------
+
+Everything above this addendum was built against OWASP Top 10:2021. The user
+asked "why 2021 and not 2025?" — a fair question given today's date. Checked
+via web search: OWASP Top 10:2025 was announced at AppSec DC in November
+2025 and finalized in January 2026 (https://owasp.org/Top10/2025/), months
+before this session. 2021 was the wrong edition to build against; corrected
+the same day.
+
+What changed between the two editions (per OWASP's official 2025 page):
+  A01 Broken Access Control        — unchanged position; SSRF (2021's A10)
+                                      folded into this category
+  A02 Security Misconfiguration    — moved up from A05:2021
+  A03 Software Supply Chain Failures — NEW (this pipeline doesn't scan for it)
+  A04 Cryptographic Failures       — moved down from A02:2021
+  A05 Injection                    — moved down from A03:2021
+  A06 Insecure Design              — moved down from A04:2021
+  A07 Authentication Failures      — same position, renamed from "Identification
+                                      and Authentication Failures"
+  A08 Software or Data Integrity Failures — same position, minor rename
+  A09 Security Logging and Alerting Failures — same position, minor rename
+  A10 Mishandling of Exceptional Conditions — NEW (2021's A09 Logging renamed
+                                      and moved to A09 above; SSRF, 2021's A10,
+                                      moved into A01 as noted)
+
+Fixes applied:
+  - blocks/taxonomy.py: OWASP_TOP10_2021 -> OWASP_TOP10_2025 with the real
+    2025 names/order. CWE_CATALOG's "owasp" values remapped accordingly
+    (CWE-89/78/79 Injection-family: A03->A05; CWE-798/259 hardcoded creds:
+    A02->A04; CWE-16/200 misconfig/disclosure: A05->A02; CWE-918 SSRF:
+    A10->A01, folded into Broken Access Control per the 2025 merge). Added
+    CWE-1104 (A03, supply chain) and CWE-755 (A10, exceptional conditions) as
+    representative entries for the two new categories, and moved CWE-209
+    (error-message info exposure) from the old A05 to A10, since "improper
+    error handling" is now explicitly what A10 covers.
+  - blocks/static_scanner.py: OWASP_SCOPE re-keyed a second time this session
+    — Injection A03->A05, Security Misconfiguration A05->A02, Broken Access
+    Control and Authentication Failures unchanged (A01/A07).
+  - All test fixtures/assertions referencing hardcoded "A03"/"A05" category
+    codes updated to match (tests/test_taxonomy.py, test_static_scanner.py,
+    test_dynamic_injector.py, test_generate_payloads.py, test_analyze_results.py,
+    test_correlate_results.py). One pre-existing B9 test (Hybrid/CONFIRMED
+    with B3 category "A03") was quietly passing via the tier-4 text-substring
+    fallback even after the mismatch, since "injection" is a plain substring
+    of "command injection" — not caught by the test suite itself, only by
+    manually tracing match_tier logic; corrected the fixture's category to
+    A05 so it now exercises the intended "owasp" tier instead.
+
+Verification: full suite still 102 tests, all passing after the fixture
+updates (`python -m unittest discover -s tests`).
+
+Known limitation, unchanged from the original SESSION 4 entry: CWE_CATALOG/
+LABEL_TO_CWE remain a curated subset (now 16 entries), not the full CWE
+catalog — nothing in the pipeline currently generates findings for the two
+new 2025 categories (A03 Software Supply Chain Failures, A10 Mishandling of
+Exceptional Conditions) beyond the placeholder catalog entries added above.

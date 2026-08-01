@@ -1,6 +1,16 @@
 import json
 import os
 
+from blocks.taxonomy import infer_taxonomy
+from blocks.scoring import compute_score
+
+# Safety cap on LLM-judge calls per run, same rationale as B3's MAX_FILES:
+# protects Groq's daily token cap on a large correlation run. Ambiguous pairs
+# beyond the cap fall back to a weak "same OWASP category" match instead of
+# an unbounded number of new LLM calls.
+MAX_JUDGE_CALLS = 15
+
+
 def _normalize_dynamic_findings(raw_b8):
     if isinstance(raw_b8, dict):
         if "findings" in raw_b8:
@@ -36,7 +46,78 @@ def _normalize_vuln_label(value):
     return " ".join(value.strip().lower().replace("_", " ").split())
 
 
-def correlate_results(pipeline_results=None):
+def _legacy_text_match(b3, vuln_type):
+    """
+    Pre-taxonomy fallback: substring matching on free-text labels. Only
+    reached when neither side has a usable CWE or OWASP category — real
+    correlation should go through the taxonomy tiers instead.
+    """
+    b3_vuln = _normalize_vuln_label(b3.get("vulnerability", ""))
+    norm_vuln_type = _normalize_vuln_label(vuln_type)
+    b3_cat = str(b3.get("category", "")).strip()
+
+    same_family = b3_vuln and norm_vuln_type and (
+        b3_vuln == norm_vuln_type
+        or b3_vuln in norm_vuln_type
+        or norm_vuln_type in b3_vuln
+    )
+    return bool(same_family or (b3_cat and b3_cat.lower() in vuln_type.lower()))
+
+
+def _load_previous_judgments(path):
+    """Index prior LLM-judge verdicts by pair key so a re-run doesn't
+    re-spend tokens on a pair that was already judged (same rationale as
+    B8's _load_previous_analysis)."""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data.get("judgments", {}) if isinstance(data, dict) else {}
+
+
+def _judge_prompt(b3, b8):
+    return f"""You are a security analyst reconciling two independent scans of the same \
+application. Both flagged something in the same OWASP category, but their vulnerability \
+labels don't line up exactly. Decide whether they describe the SAME underlying vulnerability.
+
+STATIC FINDING (source code analysis):
+  Vulnerability: {b3.get('vulnerability')}
+  File: {b3.get('file')}
+  Evidence: {b3.get('evidence')}
+
+DYNAMIC FINDING (live exploitation attempt):
+  Vulnerability: {b8.get('vulnerability')}
+  Target: {b8.get('target') or b8.get('endpoint')}
+  Payload: {b8.get('payload')}
+  Evidence: {b8.get('evidence')}
+
+Return ONLY this JSON, no markdown, no extra text:
+{{"same_vulnerability": true, "rationale": "<one sentence>"}}
+or
+{{"same_vulnerability": false, "rationale": "<one sentence>"}}
+"""
+
+
+def correlate_results(pipeline_results=None, ask_llm=None):
+    """
+    Correlates B3 (static) and B8 (dynamic) findings.
+
+    Matching is tried in priority order, each a stronger signal than the last:
+      1. "cwe"   — exact CWE-ID match (both sides carry one and they're equal)
+      2. "judge" — same OWASP category but different/missing CWE; an LLM call
+                   decides if they're really the same issue (only when
+                   ask_llm is provided; reused across re-runs, capped at
+                   MAX_JUDGE_CALLS new calls per run)
+      3. "owasp" — same OWASP category, judge unavailable/inconclusive/not provided
+      4. "text"  — legacy substring matching, only when neither side has any
+                   usable taxonomy at all
+    Every correlated entry also gets a weighted composite "score" (see
+    blocks/scoring.py) and a derived "severity", in addition to the existing
+    CONFIRMED/POSSIBLE/DESCARTED classification.
+    """
     print("\n[B9] Executing static + dynamic correlation...")
 
     b3_findings = []
@@ -66,6 +147,68 @@ def correlate_results(pipeline_results=None):
             except FileNotFoundError:
                 b8_findings = []
 
+    judgments = _load_previous_judgments("results/B9_correlation.json")
+    judge_calls_made = 0
+
+    def judge(b3, b8, pair_key):
+        nonlocal judge_calls_made
+
+        cached = judgments.get(pair_key)
+        if cached is not None:
+            return cached.get("verdict")
+
+        if ask_llm is None or judge_calls_made >= MAX_JUDGE_CALLS:
+            return None
+
+        judge_calls_made += 1
+        try:
+            raw = ask_llm(_judge_prompt(b3, b8))
+            same = raw.get("same_vulnerability") if isinstance(raw, dict) else None
+            if same is True:
+                verdict = "yes"
+            elif same is False:
+                verdict = "no"
+            else:
+                verdict = None
+            rationale = raw.get("rationale", "") if isinstance(raw, dict) else ""
+        except Exception as e:
+            verdict, rationale = None, f"judge call failed: {e}"
+
+        judgments[pair_key] = {"verdict": verdict, "rationale": rationale}
+        return verdict
+
+    def find_match(b8, dyn_taxonomy, vuln_type):
+        """Returns (matched_index|None, match_tier)."""
+        # Tier 1: exact CWE match
+        if dyn_taxonomy["cwe_id"]:
+            for i, b3 in enumerate(b3_findings):
+                stat_taxonomy = infer_taxonomy(b3)
+                if stat_taxonomy["cwe_id"] and stat_taxonomy["cwe_id"] == dyn_taxonomy["cwe_id"]:
+                    return i, "cwe"
+
+        # Tier 2/3: same OWASP category, different or missing CWE — ambiguous
+        if dyn_taxonomy["owasp_category"]:
+            for i, b3 in enumerate(b3_findings):
+                stat_taxonomy = infer_taxonomy(b3)
+                if stat_taxonomy["owasp_category"] != dyn_taxonomy["owasp_category"]:
+                    continue
+                pair_key = f"{b8.get('payload_id', '?')}|{b3.get('file', '?')}|{i}"
+                verdict = judge(b3, b8, pair_key)
+                if verdict == "yes":
+                    return i, "judge"
+                if verdict == "no":
+                    continue
+                # verdict is None: no judge available/inconclusive/budget spent —
+                # a shared OWASP category is still meaningful signal on its own.
+                return i, "owasp"
+
+        # Tier 4: legacy free-text fallback for findings with no taxonomy at all
+        for i, b3 in enumerate(b3_findings):
+            if _legacy_text_match(b3, vuln_type):
+                return i, "text"
+
+        return None, "none"
+
     correlated = []
     b3_matched_indices = set()
 
@@ -77,20 +220,13 @@ def correlate_results(pipeline_results=None):
         payload_id = b8.get("payload_id")
         screenshot_path = b8.get("screenshot_path")
 
-        match_found = False
-        norm_vuln_type = _normalize_vuln_label(vuln_type)
-        for i, b3 in enumerate(b3_findings):
-            b3_vuln = _normalize_vuln_label(b3.get("vulnerability", ""))
-            b3_cat = str(b3.get("category", "")).strip()
-            same_family = b3_vuln and norm_vuln_type and (
-                b3_vuln == norm_vuln_type
-                or b3_vuln in norm_vuln_type
-                or norm_vuln_type in b3_vuln
-            )
-            if same_family or (b3_cat and b3_cat.lower() in vuln_type.lower()):
-                match_found = True
-                b3_matched_indices.add(i)
-                break
+        dyn_taxonomy = infer_taxonomy(b8)
+        matched_index, match_tier = find_match(b8, dyn_taxonomy, vuln_type)
+        match_found = matched_index is not None
+        matched_b3 = b3_findings[matched_index] if match_found else None
+
+        if match_found:
+            b3_matched_indices.add(matched_index)
 
         if dyn_result == "confirmed":
             if match_found:
@@ -113,32 +249,58 @@ def correlate_results(pipeline_results=None):
             else:
                 continue
 
+        score, severity = compute_score(
+            static_confidence=matched_b3.get("confidence") if matched_b3 else None,
+            dynamic_result=dyn_result,
+            dynamic_confidence=b8.get("confidence"),
+            match_tier=match_tier,
+        )
+
         correlated.append({
             "vulnerability": vuln_type,
+            "cwe_id": dyn_taxonomy["cwe_id"],
+            "owasp_category": dyn_taxonomy["owasp_category"],
             "target": target,
             "payload_id": payload_id,
             "screenshot_path": screenshot_path,
             "classification": status,
             "confidence": conf,
             "source": source,
+            "match_tier": match_tier,
+            "score": score,
+            "severity": severity,
             "evidence": evidence
         })
 
     for i, b3 in enumerate(b3_findings):
-        if i not in b3_matched_indices:
-            correlated.append({
-                "vulnerability": b3.get("vulnerability", "Unknown"),
-                "target": b3.get("file", "unknown"),
-                "classification": "POSIBLE",
-                "confidence": "MEDIUM",
-                "source": "Static",
-                "evidence": b3.get("evidence", "Static detection only")
-            })
+        if i in b3_matched_indices:
+            continue
+        stat_taxonomy = infer_taxonomy(b3)
+        score, severity = compute_score(
+            static_confidence=b3.get("confidence"),
+            dynamic_result="untested",
+            dynamic_confidence=None,
+            match_tier="none",
+        )
+        correlated.append({
+            "vulnerability": b3.get("vulnerability", "Unknown"),
+            "cwe_id": stat_taxonomy["cwe_id"],
+            "owasp_category": stat_taxonomy["owasp_category"],
+            "target": b3.get("file", "unknown"),
+            "classification": "POSSIBLE",
+            "confidence": "MEDIUM",
+            "source": "Static",
+            "match_tier": "none",
+            "score": score,
+            "severity": severity,
+            "evidence": b3.get("evidence", "Static detection only")
+        })
 
     output = {
         "status": "complete",
         "total_correlated": len(correlated),
-        "results": correlated
+        "results": correlated,
+        "judgments": judgments,
     }
 
     os.makedirs("results", exist_ok=True)
@@ -148,7 +310,7 @@ def correlate_results(pipeline_results=None):
     if pipeline_results is not None:
         pipeline_results["B9"] = output
 
-    print(f"[+] B9 finalized. Correlated findings: {len(correlated)}")
+    print(f"[+] B9 finalized. Correlated findings: {len(correlated)} | LLM-judge calls made: {judge_calls_made}")
     return output
 
 if __name__ == "__main__":

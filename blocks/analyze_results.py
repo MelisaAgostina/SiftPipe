@@ -71,6 +71,8 @@ def analyze_results(pipeline_results, ask_llm):
         detects   = item.get("detections", [])
         pid       = item.get("payload_id", "?")
         shot      = item.get("screenshot_path", "")
+        cwe_id    = item.get("cwe_id")
+        owasp_cat = item.get("owasp_category")
 
         # ── Resume support: reuse a prior successful classification instead
         # of spending tokens on it again ──
@@ -90,6 +92,8 @@ def analyze_results(pipeline_results, ask_llm):
                 "payload": payload,
                 "result": "discarded",
                 "vulnerability": vuln,
+                "cwe_id": cwe_id,
+                "owasp_category": owasp_cat,
                 "confidence": "low",
                 "evidence": "No rule-based anomaly detected by B7; LLM call skipped.",
                 "screenshot_path": shot,
@@ -143,6 +147,8 @@ Return ONLY a valid JSON object, no markdown, no extra text:
             llm_result.setdefault("target", target)
             llm_result.setdefault("payload", payload)
             llm_result.setdefault("vulnerability", vuln)
+            llm_result.setdefault("cwe_id", cwe_id)
+            llm_result.setdefault("owasp_category", owasp_cat)
             llm_result.setdefault("confidence", "low")
             llm_result.setdefault("evidence", "No evidence provided by LLM")
             llm_result["screenshot_path"] = shot

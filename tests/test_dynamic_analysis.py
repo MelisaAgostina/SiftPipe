@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from blocks.dynamic_analysis import build_attack_surface_records
+from blocks.dynamic_analysis import build_attack_surface_records, _determine_status
 
 
 class TestBuildAttackSurfaceRecords(unittest.TestCase):
@@ -60,6 +60,32 @@ class TestBuildAttackSurfaceRecords(unittest.TestCase):
         self.assertEqual(endpoint_record["endpoint"], "http://x/api/v4/posts")
         input_record = next(r for r in records if r["type"] == "input")
         self.assertEqual(input_record["id"], "q")
+
+
+class TestDetermineStatus(unittest.TestCase):
+    """
+    _determine_status() is the pure classification logic behind B4's new
+    "status"/"errors" fields (see fixes.txt SESSION 3) — extracted so it's
+    testable without a live browser, same rationale as build_attack_surface_records.
+    """
+
+    def test_login_failure_is_failed_even_with_no_other_errors(self):
+        self.assertEqual(_determine_status(login_ok=False, errors=[]), "failed")
+
+    def test_login_failure_is_failed_regardless_of_errors_list(self):
+        self.assertEqual(
+            _determine_status(login_ok=False, errors=[{"stage": "login", "message": "boom"}]),
+            "failed",
+        )
+
+    def test_login_ok_with_errors_is_partial(self):
+        self.assertEqual(
+            _determine_status(login_ok=True, errors=[{"stage": "route:search", "message": "timeout"}]),
+            "partial",
+        )
+
+    def test_login_ok_with_no_errors_is_complete(self):
+        self.assertEqual(_determine_status(login_ok=True, errors=[]), "complete")
 
 
 if __name__ == "__main__":

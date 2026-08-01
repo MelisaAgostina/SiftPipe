@@ -71,7 +71,8 @@ class TestAnalyzeResults(unittest.TestCase):
     def _b7_finding(self, pid, anomaly, vuln="Injection"):
         return {
             "payload_id": pid, "endpoint": "http://x/town-square", "payload": "' OR 1=1",
-            "vulnerability": vuln, "evidence": "database error", "status_code": 500,
+            "vulnerability": vuln, "cwe_id": "CWE-89", "owasp_category": "A05",
+            "evidence": "database error", "status_code": 500,
             "anomaly_detected": anomaly, "detections": ["SQLi"] if anomaly else [],
             "screenshot_path": f"results/dynamic/screenshot_{pid}.png",
         }
@@ -90,6 +91,8 @@ class TestAnalyzeResults(unittest.TestCase):
         finding = out["B8"]["findings"][0]
         self.assertEqual(finding["result"], "discarded")
         self.assertIn("LLM call skipped", finding["evidence"])
+        self.assertEqual(finding["cwe_id"], "CWE-89")
+        self.assertEqual(finding["owasp_category"], "A05")
 
     def test_anomalous_finding_calls_llm_and_records_result(self):
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
@@ -103,6 +106,10 @@ class TestAnalyzeResults(unittest.TestCase):
         finding = out["B8"]["findings"][0]
         self.assertEqual(finding["result"], "confirmed")
         self.assertTrue(Path("results/B8_dynamic.json").exists())
+        # cwe_id/owasp_category aren't part of the LLM's response shape here —
+        # they must be carried through from the B7 finding via setdefault().
+        self.assertEqual(finding["cwe_id"], "CWE-89")
+        self.assertEqual(finding["owasp_category"], "A05")
 
     def test_rerun_reuses_prior_successful_classification_without_calling_llm(self):
         os.makedirs("results", exist_ok=True)
