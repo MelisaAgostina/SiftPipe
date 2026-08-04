@@ -1,13 +1,16 @@
 import json
+import os
 import threading
 from pathlib import Path
 from typing import List
 
 import requests
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from blocks import run_history
 from blocks.environment import MM_PING_URL, fresh_reset
 from main import (
     analyze_results,
@@ -24,17 +27,36 @@ from main import (
 app = FastAPI(title="SiftPipe API")
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-# Agregá tu URL de AWS acá cuando hagas el deploy
+# Set FRONTEND_ORIGIN in .env once the frontend is deployed (e.g. a Cloudflare
+# Pages URL) — comma-separated if there's more than one (a pages.dev URL and a
+# custom domain, for instance). Local dev origins always stay allowed.
+_extra_origins = [o.strip() for o in os.getenv("FRONTEND_ORIGIN", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:8080",
         "http://localhost:5173",
         "http://localhost:3000",
+        *_extra_origins,
     ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Auth on destructive endpoints ───────────────────────────────────────────
+# Unset (local dev) means no check at all — every request is accepted, same as
+# before this existed. Once deployed, set SIFTPIPE_API_KEY and the matching
+# VITE_API_KEY on the frontend build; this isn't meant to stop a determined
+# attacker (a key baked into a public frontend bundle is readable in devtools),
+# just to stop a stray bot from hitting an open reset endpoint on an unlisted
+# demo link nobody's advertising.
+SIFTPIPE_API_KEY = os.getenv("SIFTPIPE_API_KEY")
+
+
+def require_api_key(x_api_key: str | None = Header(default=None)):
+    if SIFTPIPE_API_KEY and x_api_key != SIFTPIPE_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # ── Estado global del pipeline ─────────────────────────────────────────────────
 pipeline_state = {
@@ -44,6 +66,7 @@ pipeline_state = {
     "completed": False,
     "error": None,
     "logs": [],
+    "run_id": None,          # blocks/run_history.py row for the current/last run
 }
 
 # Estado del reset de entorno (Docker/Mattermost) — separado de pipeline_state
@@ -57,6 +80,14 @@ env_state = {
 }
 
 RESULTS_DIR = Path("results")
+
+# ── Static evidence files (B7/B4 screenshots + per-payload videos) ────────────
+# StaticFiles requires the mounted directory to exist at import time — create it
+# up front instead of waiting for a pipeline run. Subdirectories (results/dynamic,
+# results/videos) are created on demand by the blocks that write into them and
+# don't need to exist yet for the mount itself to work.
+RESULTS_DIR.mkdir(exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(RESULTS_DIR)), name="media")
 
 
 def log(message: str):
@@ -97,6 +128,7 @@ def run_pipeline_until_b6():
     pipeline_state["error"] = None
     pipeline_state["logs"] = []
     pipeline_state["waiting_for_human"] = False
+    pipeline_state["run_id"] = run_history.start_run(mode="api")
 
     try:
         pipeline_state["current_block"] = "B3"
@@ -125,6 +157,7 @@ def run_pipeline_until_b6():
         pipeline_state["running"] = False
         pipeline_state["current_block"] = None
         log(f"ERROR in pipeline: {e}")
+        run_history.finish_run(pipeline_state["run_id"], "error")
 
 
 def run_pipeline_from_b7():
@@ -153,12 +186,14 @@ def run_pipeline_from_b7():
         pipeline_state["running"] = False
         pipeline_state["completed"] = True
         log("OK Pipeline completed. Results available.")
+        run_history.finish_run(pipeline_state["run_id"], "completed")
 
     except Exception as e:
         pipeline_state["error"] = str(e)
         pipeline_state["running"] = False
         pipeline_state["current_block"] = None
         log(f"ERROR in pipeline: {e}")
+        run_history.finish_run(pipeline_state["run_id"], "error")
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
@@ -185,7 +220,7 @@ def environment_health():
         return {"mattermost_up": False}
 
 
-@app.post("/api/environment/reset")
+@app.post("/api/environment/reset", dependencies=[Depends(require_api_key)])
 def reset_environment():
     """Corre fresh_reset() (Docker down, wipe de volúmenes, up, seed) en background.
     Reemplaza a `python main.py --mode fresh` para quien solo usa la UI."""
@@ -217,7 +252,7 @@ def environment_logs():
     return {"logs": env_state["logs"]}
 
 
-@app.post("/api/run")
+@app.post("/api/run", dependencies=[Depends(require_api_key)])
 def run_pipeline():
     """Arranca el pipeline desde B3. Rechaza si ya está corriendo."""
     if pipeline_state["running"]:
@@ -275,7 +310,23 @@ def get_block_result(block_name: str):
         return json.load(f)
 
 
-@app.post("/api/validate")
+@app.get("/api/runs")
+def get_runs():
+    """Newest-first list of past pipeline runs (see blocks/run_history.py)."""
+    return {"runs": run_history.list_runs()}
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: int):
+    """Full snapshot of one past run — same {block_name: json} shape as
+    GET /api/results, so the frontend can reuse the same rendering logic."""
+    run = run_history.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return run
+
+
+@app.post("/api/validate", dependencies=[Depends(require_api_key)])
 def validate_payloads(body: ValidatePayloadsRequest):
     """
     B6 — recibe los payloads aprobados por la investigadora.
@@ -318,7 +369,7 @@ def validate_payloads(body: ValidatePayloadsRequest):
     return {"message": "Validation received. Continuing with B7 → B9."}
 
 
-@app.post("/api/reset")
+@app.post("/api/reset", dependencies=[Depends(require_api_key)])
 def reset_pipeline():
     """Limpia el estado para poder correr el pipeline de nuevo."""
     if pipeline_state["running"]:

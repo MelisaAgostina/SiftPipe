@@ -7,6 +7,7 @@ import { Tabs } from "./Tabs";
 import { PipelineView } from "./PipelineView";
 import { CorrelationView } from "./CorrelationView";
 import { LogsView } from "./LogsView";
+import { PastRunsView } from "./PastRunsView";
 import { PayloadReviewView } from "./PayloadReviewView";
 import type { TabId } from "./data";
 
@@ -34,6 +35,7 @@ export function SecPipelineApp() {
           {tab === "pipeline" && <PipelineView />}
           {tab === "revision" && <PayloadReviewView onValidated={() => setTab("logs")} />}
           {tab === "correlacion" && <CorrelationView />}
+          {tab === "history" && <PastRunsView />}
           {tab === "logs" && <LogsView />}
         </main>
       </div>

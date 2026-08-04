@@ -5,6 +5,7 @@ import os
 import time
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
+from blocks.mattermost_auth import LOGIN_ID_SELECTORS, PASSWORD_SELECTORS, find_working_selector
 
 load_dotenv()
 
@@ -15,6 +16,7 @@ MM_CHANNEL       = os.getenv("MM_CHANNEL", "canal-analisis")
 MM_USERNAME      = os.getenv("MM_USERNAME", "victima@test.com")       # login id (email)
 MM_PASSWORD      = os.getenv("MM_PASSWORD", "Password123!")
 MM_SEED_USERNAME = os.getenv("MM_SEED_USERNAME", "usuario_test")      # @username, from seed.py's NEW_USER
+PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
 
 
 def extract_forms(page, page_label):
@@ -141,9 +143,11 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
         {"label": "new_post",   "path": f"/{MM_TEAM}/channels/off-topic"}
     ]
 
+    os.makedirs("results/videos", exist_ok=True)
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
+        browser = p.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
+        context = browser.new_context(record_video_dir="results/videos/")
         page = context.new_page()
 
         page.on(
@@ -155,15 +159,16 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
         try:
             # --- Login ---
             try:
-                _goto_with_retry(page, f"{base_url}/login", wait_until="networkidle")
+                _goto_with_retry(page, f"{base_url}/login", wait_until="domcontentloaded")
 
-                # Mattermost v9 selectors: be robust when button is rendered/different
-                # Wait for the input fields to appear first
-                page.wait_for_selector("input[id='input_loginId']", timeout=20000)
-                page.wait_for_selector("input[id='input_password-input']", timeout=20000)
+                # Mattermost v9 selectors: be robust when button is rendered/different.
+                # Field selectors themselves fall back through blocks/mattermost_auth.py
+                # if the primary ids ever change in a future Mattermost version.
+                login_selector = find_working_selector(page, LOGIN_ID_SELECTORS, timeout=20000)
+                password_selector = find_working_selector(page, PASSWORD_SELECTORS, timeout=20000)
 
-                page.fill("input[id='input_loginId']", login_id)
-                page.fill("input[id='input_password-input']", password)
+                page.fill(login_selector, login_id)
+                page.fill(password_selector, password)
 
                 login_clicked = False
 
@@ -189,7 +194,7 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
                 # Final fallback: press Enter on password field
                 if not login_clicked:
                     try:
-                        page.press("input[id='input_password-input']", "Enter")
+                        page.press(password_selector, "Enter")
                         login_clicked = True
                     except Exception:
                         pass
@@ -228,7 +233,7 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
                     team_name = f"auto-team-{int(time.time())}"
                     created = False
                     try:
-                        _goto_with_retry(page, f"{base_url}/create_team", wait_until="networkidle")
+                        _goto_with_retry(page, f"{base_url}/create_team", wait_until="domcontentloaded")
                         # Try a few possible selector names for the create-team form
                         possible_name_selectors = [
                             "input[id='name']",
@@ -263,7 +268,7 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
                             except Exception:
                                 # try navigating to town-square path as a fallback
                                 try:
-                                    page.goto(f"{base_url}/channels/town-square", wait_until="networkidle")
+                                    page.goto(f"{base_url}/channels/town-square", wait_until="domcontentloaded")
                                 except Exception:
                                     pass
                         else:
@@ -290,14 +295,14 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
 
                 for route in page_routes:
                     try:
-                        _goto_with_retry(page, f"{base_url}{route['path']}", wait_until="networkidle")
+                        _goto_with_retry(page, f"{base_url}{route['path']}", wait_until="domcontentloaded")
 
                         # Wait for the SPA router to resolve to the correct URL
                         try:
                             page.wait_for_url(f"**{route['path']}**", timeout=8000)
                         except Exception:
                             # If URL didn't resolve, force a second goto and wait for any channel
-                            page.goto(f"{base_url}{route['path']}", wait_until="networkidle")
+                            page.goto(f"{base_url}{route['path']}", wait_until="domcontentloaded")
                             page.wait_for_url("**/channels/**", timeout=8000)
 
                         # Wait for the channel view to actually render
@@ -336,7 +341,24 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
                     errors.append({"stage": "inputs:final_page", "message": str(e)})
 
         finally:
+            # Video only finalizes to disk once the browser (and its contexts) are
+            # closed, so resolve page.video.path() after browser.close() and give
+            # the run a stable, predictable name instead of Playwright's generated
+            # UUID filename.
             browser.close()
+            try:
+                video_path = page.video.path() if page.video else None
+            except Exception:
+                video_path = None
+            if video_path and os.path.exists(video_path):
+                final_path = "results/videos/b4_discovery.webm"
+                try:
+                    if os.path.exists(final_path):
+                        os.remove(final_path)
+                    os.rename(video_path, final_path)
+                    attack_surface["video_path"] = final_path
+                except Exception as e:
+                    print(f"[B4] Could not save discovery video: {e}")
 
     attack_surface["endpoints"] = sorted(attack_surface["endpoints"])
     attack_surface["status"] = _determine_status(login_ok, errors)

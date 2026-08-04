@@ -26,6 +26,7 @@ export const tabs = [
   { id: "pipeline", label: "Hybrid pipeline" },
   { id: "revision", label: "Review (B6)" },
   { id: "correlacion", label: "Correlation" },
+  { id: "history", label: "Past Runs" },
   { id: "logs", label: "Live logs" },
 ] as const;
 

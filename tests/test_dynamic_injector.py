@@ -123,11 +123,14 @@ class FakeBrowser:
     def __init__(self, page):
         self._page = page
 
-    def new_context(self):
+    def new_context(self, **kwargs):
         return self
 
     def new_page(self):
         return self._page
+
+    def storage_state(self):
+        return {}
 
     def close(self):
         pass

@@ -219,6 +219,7 @@ def correlate_results(pipeline_results=None, ask_llm=None):
         evidence = b8.get("evidence", "No dynamic evidence provided")
         payload_id = b8.get("payload_id")
         screenshot_path = b8.get("screenshot_path")
+        video_path = b8.get("video_path")
 
         dyn_taxonomy = infer_taxonomy(b8)
         matched_index, match_tier = find_match(b8, dyn_taxonomy, vuln_type)
@@ -263,6 +264,7 @@ def correlate_results(pipeline_results=None, ask_llm=None):
             "target": target,
             "payload_id": payload_id,
             "screenshot_path": screenshot_path,
+            "video_path": video_path,
             "classification": status,
             "confidence": conf,
             "source": source,
@@ -287,6 +289,7 @@ def correlate_results(pipeline_results=None, ask_llm=None):
             "cwe_id": stat_taxonomy["cwe_id"],
             "owasp_category": stat_taxonomy["owasp_category"],
             "target": b3.get("file", "unknown"),
+            "video_path": None,
             "classification": "POSSIBLE",
             "confidence": "MEDIUM",
             "source": "Static",

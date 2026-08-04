@@ -71,6 +71,7 @@ def analyze_results(pipeline_results, ask_llm):
         detects   = item.get("detections", [])
         pid       = item.get("payload_id", "?")
         shot      = item.get("screenshot_path", "")
+        video     = item.get("video_path", "")
         cwe_id    = item.get("cwe_id")
         owasp_cat = item.get("owasp_category")
 
@@ -97,6 +98,7 @@ def analyze_results(pipeline_results, ask_llm):
                 "confidence": "low",
                 "evidence": "No rule-based anomaly detected by B7; LLM call skipped.",
                 "screenshot_path": shot,
+                "video_path": video,
             }
             analyzed.append(llm_result)
             skipped_no_anomaly += 1
@@ -152,6 +154,7 @@ Return ONLY a valid JSON object, no markdown, no extra text:
             llm_result.setdefault("confidence", "low")
             llm_result.setdefault("evidence", "No evidence provided by LLM")
             llm_result["screenshot_path"] = shot
+            llm_result["video_path"] = video
 
             analyzed.append(llm_result)
             print(f"[B8] [{pid}] {target} -> {llm_result.get('result', '?').upper()} ({llm_result.get('confidence', '?')})")

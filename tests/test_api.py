@@ -117,7 +117,7 @@ class TestApiRoutes(unittest.TestCase):
         # Index 99 is out of range and must be silently dropped, not crash the request.
         response = api.validate_payloads(api.ValidatePayloadsRequest(approved_indices=[0, 2, 99], comment="ok"))
 
-        self.assertIn("Validación recibida", response["message"])
+        self.assertIn("Validation received", response["message"])
 
         saved = json.loads(Path("results/validated_payloads.json").read_text(encoding="utf-8"))
         self.assertEqual(len(saved["payloads"]), 2)

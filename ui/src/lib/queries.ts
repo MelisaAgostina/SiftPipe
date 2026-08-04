@@ -4,6 +4,8 @@ import {
   getEnvironmentHealth,
   getEnvironmentStatus,
   getLogs,
+  getRun,
+  getRuns,
   getStatus,
   resetEnvironment,
   resetPipeline,
@@ -114,6 +116,18 @@ export function useValidatePayloads() {
       qc.invalidateQueries({ queryKey: queryKeys.result("B5_payloads") });
       qc.invalidateQueries({ queryKey: queryKeys.result("validated_payloads") });
     },
+  });
+}
+
+export function usePastRuns() {
+  return useQuery({ queryKey: ["past-runs"], queryFn: getRuns });
+}
+
+export function useRunDetail(runId: number | null) {
+  return useQuery({
+    queryKey: ["run-detail", runId],
+    queryFn: () => getRun(runId as number),
+    enabled: runId !== null,
   });
 }
 

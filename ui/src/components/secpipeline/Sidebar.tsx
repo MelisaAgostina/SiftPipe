@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AlertTriangle, Check, Circle, PlayCircle, Loader2, RotateCcw, X } from "lucide-react";
 import {
   useEnvironmentHealth,
@@ -8,6 +9,8 @@ import {
 } from "@/lib/queries";
 import { prerequisites, phases } from "./data";
 
+type EnvMode = "fresh" | "restore";
+
 export function Sidebar() {
   const { data: status } = usePipelineStatus();
   const runMutation = useRunPipeline();
@@ -15,6 +18,13 @@ export function Sidebar() {
   const { data: envHealth } = useEnvironmentHealth();
   const { data: envStatus } = useEnvironmentStatus();
   const resetMutation = useResetEnvironment();
+
+  // There's no backend concept of "mode" beyond whether /api/environment/reset
+  // was called — restore mode is just "skip that and run against whatever's
+  // already there" (mirrors `python main.py --mode restore`). This toggle only
+  // makes that existing choice explicit in the UI instead of it being an
+  // undiscoverable side effect of "don't click the reset button."
+  const [envMode, setEnvMode] = useState<EnvMode>("fresh");
 
   // current_block from the API is uppercase ("B3".."B9"); data.ts's phase ids
   // are lowercase ("b3".."b9") — lowercasing directly matches them 1:1.
@@ -85,27 +95,61 @@ export function Sidebar() {
               ))}
           </ul>
 
-          <button
-            onClick={() => resetMutation.mutate()}
-            disabled={envResetting || isRunning || isWaiting}
-            className="font-button mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {envResetting ? (
-              <Loader2 className="h-7 w-7 animate-spin" />
-            ) : (
-              <RotateCcw className="h-7 w-7" />
-            )}
-            {resetButtonLabel()}
-          </button>
-          {!mattermostUp && !envResetting && (
-            <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Requires Docker Desktop running. Delete existing data and seed a new instance.
+          <div className="mt-4 flex rounded-lg border border-border bg-background/60 p-1 text-xs">
+            {(["fresh", "restore"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setEnvMode(m)}
+                disabled={envResetting || isRunning || isWaiting}
+                className={
+                  "flex-1 rounded-md px-2 py-1.5 font-medium capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
+                  (envMode === m
+                    ? "bg-accent text-foreground ring-1 ring-border"
+                    : "text-muted-foreground hover:text-foreground")
+                }
+              >
+                {m === "fresh" ? "Fresh reset" : "Restore existing"}
+              </button>
+            ))}
+          </div>
+
+          {envMode === "fresh" ? (
+            <>
+              <button
+                onClick={() => resetMutation.mutate()}
+                disabled={envResetting || isRunning || isWaiting}
+                className="font-button mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {envResetting ? (
+                  <Loader2 className="h-7 w-7 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-7 w-7" />
+                )}
+                {resetButtonLabel()}
+              </button>
+              {!mattermostUp && !envResetting && (
+                <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  Requires Docker Desktop running. Delete existing data and seed a new instance.
+                </p>
+              )}
+              {envStatus?.error && (
+                <p className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  Error preparing environment: {envStatus.error}
+                </p>
+              )}
+            </>
+          ) : mattermostUp ? (
+            <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-xs text-muted-foreground">
+              <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+              Reusing the existing environment as-is, no reset — same data as your last session. Run
+              analysis below whenever you're ready.
             </p>
-          )}
-          {envStatus?.error && (
-            <p className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              Error preparing environment: {envStatus.error}
+          ) : (
+            <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-xs text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              No environment detected. Restore mode won't start one for you — start it manually
+              (docker compose up -d in mattermost/), or switch to Fresh reset above.
             </p>
           )}
         </section>
