@@ -148,6 +148,11 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
         context = browser.new_context(record_video_dir="results/videos/")
+        # Mattermost redirects every first-ever page load to /landing (the
+        # "View in Browser" vs. "View in Desktop App" interstitial) unless
+        # localStorage already has this flag — set before any Mattermost JS
+        # runs so the redirect never happens, instead of clicking through it.
+        context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
         page = context.new_page()
 
         page.on(

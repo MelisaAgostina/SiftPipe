@@ -1076,3 +1076,236 @@ assumed — each had a distinct, concrete root cause.
   checkout. If the project is copied out of OneDrive again (or into a new
   machine the same way), the same symptom could reappear — there's no
   automated check/fix for it in the codebase itself.
+
+
+================================================================================
+SESSION 7 — Landing-page automation, B9 rationale, B6 comment persistence
+(2026-08-06)
+================================================================================
+
+Scope: three items from the user's own backend punch list (observations.txt):
+(1) B4/B7 required manually clicking through Mattermost's "View in Browser"
+interstitial on every run instead of it being automated, (2) B9 already
+computed an LLM-judge rationale for ambiguous matches but discarded it before
+it reached the frontend, with no click-to-expand "why/where" UI for any
+correlated finding, and (3) B6's reviewer comment field was accepted by the
+API and then silently dropped instead of surviving into Past Runs.
+
+
+1. PROBLEMS OBSERVED
+---------------------
+
+1.1 Landing-page interstitial had no automation anywhere
+    grep across the whole codebase for "landing"/"desktop"/"view in browser"
+    found nothing in blocks/dynamic_analysis.py or blocks/dynamic_injector.py
+    (only unrelated "Docker Desktop" hits in environment.py) — neither B4 nor
+    B7 addressed this page at all. Traced the actual mechanism in the
+    mattermost-src/mattermost submodule (webapp/channels/src/components/
+    root/root.tsx): every new browser session gets redirected to /landing
+    (the "View in Browser" vs. "View in Desktop App" prompt) unless
+    localStorage already has BrowserStore.hasSeenLandingPage() (key
+    __landingPageSeen__, constants.tsx) set true. Playwright starts every run
+    with empty localStorage, so this fired on every single B4/B7 run — which
+    is exactly why the user had been clicking it by hand.
+
+1.2 B9's judge rationale was computed then thrown away
+    correlate_results.py's judge() already asked the LLM for a one-sentence
+    rationale on ambiguous (same-OWASP-category, different-CWE) pairs and
+    persisted it in the on-disk `judgments` dict, but find_match() only ever
+    returned the yes/no verdict — the rationale never reached the correlated
+    finding dict, and the other three match tiers (cwe/owasp/text) had no
+    explanation field at all. Confirmed against the real
+    results/B9_correlation.json on disk: DESCARTED (false-positive) entries
+    carried B7's dynamic `evidence` but nothing describing why they were
+    still correlated to a static finding in the first place.
+
+1.3 B6 comment field was write-only
+    POST /api/validate accepted `comment` and stored it in the in-memory
+    pipeline_results["B6"] dict, but api.py's write of
+    results/validated_payloads.json only included {"status", "payloads"} —
+    the comment was never written to disk, so run_history.finish_run()'s
+    glob of results/*.json could never pick it up. It vanished the moment
+    the run ended; nothing downstream (PastRunsView, PayloadReviewView)
+    rendered it either, since the data never survived past the request
+    handler.
+
+
+2. FIXES APPLIED
+-----------------
+
+2.1 blocks/dynamic_analysis.py / blocks/dynamic_injector.py — skip the
+    landing page instead of clicking through it
+    Added context.add_init_script("localStorage.setItem('__landingPageSeen__',
+    'true');") to every browser context created in both files: B4's single
+    context, and B7's login_context plus each per-payload context inside
+    _execute_one(). An init script runs before any page JS on every new
+    document in that context, so root.tsx's showLandingPageIfNecessary()
+    finds hasSeenLandingPage() already true and the redirect never fires.
+    Chose this over scripting a click on the "View in Browser" link
+    (confirmed selector via Mattermost's own e2e page object,
+    e2e-tests/playwright/lib/src/ui/pages/landing_login.ts:
+    page.locator('text=View in Browser')) because it's immune to
+    localization/timing/race issues and mirrors Mattermost's own intended
+    mechanism for skipping the prompt, rather than fighting the UI reactively.
+    Test fix: tests/test_dynamic_injector.py's FakeBrowser stands in for both
+    Playwright's Browser and BrowserContext (new_context() returns self) and
+    had no add_init_script method — added a no-op so the fake matches the
+    real interface.
+
+2.2 blocks/correlate_results.py — match_rationale + matched_static_finding
+    on every entry
+    find_match() now returns (matched_index, match_tier, judge_rationale)
+    instead of just (matched_index, match_tier); the judge rationale is read
+    back out of the `judgments` cache, so it's populated identically whether
+    the verdict was just computed this run or reused from a prior one. New
+    _explain_match(match_tier, b3, b8, judge_rationale, dyn_target) builds a
+    one/two-sentence explanation per tier: "cwe" cites the exact CWE + the
+    static finding's file:line; "judge" cites file:line plus the LLM's real
+    rationale text; "owasp" explains it's a category-only match with no CWE
+    agreement; "text" flags the legacy substring fallback; "none" (no static
+    counterpart) says so plainly. Every correlated entry — both the
+    B8-driven branch and the leftover-static-only branch — now carries
+    match_rationale (string) and matched_static_finding
+    ({file, line, vulnerability} | null). No new LLM calls: the judge tier
+    reuses a rationale that was already being paid for and discarded; the
+    other tiers are template text, not model-generated.
+
+2.3 Frontend — click-to-expand rationale box, no new tab
+    ui/src/lib/types.ts: B9Entry gained match_rationale/matched_static_finding;
+    UIFinding gained an optional `rationale` field.
+    ui/src/components/secpipeline/mappers.ts: mapB9Entry passes
+    e.match_rationale through as UIFinding.rationale.
+    ui/src/components/secpipeline/FindingRow.tsx: rows with a rationale are
+    now clickable (local `expanded` state, chevron affordance); expanding
+    reveals an inline text box directly below the row — no modal, no
+    route/tab change. Rows without a rationale (every non-B9 finding type —
+    B3/B4/B5/B7/B8 mappers don't set it) render exactly as before.
+
+2.4 B6 comment — persisted through to Past Runs
+    api.py's validate_payloads() now writes
+    {"status", "payloads", "comment": body.comment} to
+    results/validated_payloads.json instead of omitting comment. Since
+    run_history.finish_run() already globs every results/*.json file into
+    the run's SQLite snapshot with no per-block special-casing, this alone
+    was enough for the comment to survive into GET /api/runs/{id} as the
+    "validated_payloads" block — no run_history.py changes needed.
+    ui/src/lib/types.ts: ValidatedPayloadsResult gained an optional `comment`
+    field (optional because the console review path, blocks/human_review.py,
+    and pre-existing runs from before this fix never set it).
+    ui/src/components/secpipeline/PayloadReviewView.tsx: the post-submission
+    "Already validated" state now shows the comment under "Reviewer note:"
+    when present.
+    ui/src/components/secpipeline/PastRunsView.tsx: reads the
+    validated_payloads block from a historical run's snapshot and renders it
+    as a "B6 — REVIEWER NOTE" section; also added to the `nothingToShow`
+    check so a run with only a comment and no findings anywhere doesn't get
+    hidden behind the empty-state callout.
+
+
+3. VERIFICATION
+-----------------
+
+Full suite: `python -m unittest discover -s tests` — 112 tests, all passing
+(same count as before this session; test_api.py's
+test_validate_writes_validated_payloads_matching_b7_contract gained a new
+assertion, not a new test method, confirming the comment round-trips to
+results/validated_payloads.json).
+`npx tsc --noEmit` in ui/ — zero errors across every file touched this
+session.
+
+NOT verified live this session: no Docker/Mattermost/browser run to visually
+confirm the landing-page skip actually prevents the redirect in a real
+browser, or that FindingRow's click-to-expand renders/looks right post-
+hydration. The landing-page fix is verified by tracing Mattermost's own
+submodule source (not guessed), and everything else at the unit-test/
+type-check level — same caveat as this project's other backend-only rounds
+(SESSION 3, SESSION 4).
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- The landing-page fix depends on Mattermost's client-side localStorage key
+  (__landingPageSeen__) staying stable across versions — pinned to whatever
+  ships in the v11.7.0 submodule per SESSION 6. A future Mattermost upgrade
+  could rename or restructure this, same category of fragility as the
+  login-selector code documented in prior sessions.
+- match_rationale's "cwe"/"owasp"/"text" tier text is template-generated
+  locally, not LLM-authored — only the "judge" tier includes real
+  model-generated reasoning, since that's the only tier that already spends
+  a token budget deciding the match.
+- B6's comment still isn't captured at all on the console review path
+  (blocks/human_review.py) — its manual input()-based flow has no prompt for
+  it. Only the API/frontend path (the one the actual UI uses) writes one.
+
+
+--------------------------------------------------------------------------------
+SESSION 7 ADDENDUM — B8 "API Error" placeholders crashed the frontend
+(2026-08-06)
+--------------------------------------------------------------------------------
+
+Found live, not by code review: the user reported that opening the
+Correlation tab, or opening a run under Past Runs, showed the app's global
+error page ("This page didn't load"). Reproduced with a throwaway Playwright
+script against the already-running dev server (`ui/`, port 5173) and live
+backend (port 8000) — chose this over guessing from source because
+`npx tsc --noEmit` had already passed clean for this session's changes, so a
+static check wasn't going to explain a runtime crash. `page.on("pageerror")`
+caught the real browser exception directly.
+
+ROOT CAUSE (pre-existing, unrelated to this session's three items above):
+`blocks/analyze_results.py`'s per-finding LLM-call `try` block already
+`setdefault()`s payload_id/target/payload/vulnerability/cwe_id/
+owasp_category/confidence/evidence onto whatever `ask_llm()` returns — but
+never `result`. `main.py`'s `ask_llm()` catches every exception (including
+Groq 429 rate-limit errors) and returns `{"vulnerability": "API Error",
+"evidence": str(e)}` with no `result` key at all. A real run in progress
+during this session hit Groq's 100k-tokens/day cap
+("Used 99471, Requested 643...") on 4 of its 15 B7 findings, so
+results/B8_dynamic.json ended up with 4 entries missing `result` entirely.
+`ui/src/components/secpipeline/mappers.ts`'s `mapB8Finding()` does
+`f.result.toUpperCase()` with no guard — reasonable given `B8Finding.result`
+is typed non-optional in lib/types.ts, but the backend wasn't actually
+honoring that contract on the error path. `blocks/correlate_results.py` (B9)
+was already defensive here (`b8.get("result", b8.get("status", "discarded"))`
+in `_normalize_result_label`'s caller), which is why the crash was specific
+to B8's own section of CorrelationView/PastRunsView and not B9's.
+
+FIX:
+- blocks/analyze_results.py: added `llm_result.setdefault("result",
+  "discarded")` alongside the existing confidence/evidence setdefaults, so
+  every B8 finding written to disk always has a valid result value, matching
+  the type contract instead of relying on downstream consumers to guess.
+  "discarded" chosen deliberately: it's the least consequential bucket (won't
+  inflate a confirmed-findings count), and the "API Error" vulnerability
+  label already marks the entry as not a real classification for every other
+  purpose (`_is_llm_result_usable()` already refuses to reuse it on a re-run,
+  so it'll be retried for real next time B8 runs, not silently accepted).
+- tests/test_analyze_results.py: new
+  test_ask_llm_error_placeholder_still_gets_a_valid_result_field, using a
+  fake ask_llm that returns exactly main.py's real API-Error shape (no
+  result key) and asserting the output result is one of the three valid
+  literals.
+- Data-only, no code: patched the 4 broken entries directly in the live
+  results/B8_dynamic.json (result -> "discarded") so the running UI recovers
+  immediately without needing to burn more Groq tokens re-running B8 while
+  the daily cap is still exhausted. Also patched the one affected historical
+  snapshot in siftpipe_history.db (run_id=4, block_name="B8_dynamic",
+  same 4 entries) — run_history.finish_run() snapshots results/*.json
+  verbatim at run-completion time, so the code fix and the live-file patch
+  alone would NOT have fixed already-persisted Past Runs history; confirmed
+  via direct sqlite3 query that run_id 1-3's B8_dynamic snapshots were
+  unaffected (predate this bug being triggered) and only run_id 4 needed it.
+
+VERIFICATION: `python -m unittest discover -s tests` — 113 tests, all
+passing. Re-ran the Playwright repro after the fix: no console errors,
+Correlation renders its B8/B9 sections (including the "API Error" entry,
+now tagged DISCARDED) instead of the error boundary; Past Runs -> Run #4
+renders its full historical snapshot instead of crashing.
+
+NOT DONE: the underlying Groq 100k-tokens/day cap is still an external
+constraint (unchanged since SESSION 1/4) — this fix stops a capped run's
+error placeholders from crashing the UI, it doesn't avoid hitting the cap
+itself. Any *future* run that hits the same rate limit will still produce
+"API Error" placeholders (by design, for the retry-on-next-run mechanism in
+_is_llm_result_usable()) — they just won't crash the frontend anymore.

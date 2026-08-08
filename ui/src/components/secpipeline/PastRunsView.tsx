@@ -8,6 +8,7 @@ import type {
   B8Result,
   B9Result,
   RunSummary,
+  ValidatedPayloadsResult,
 } from "@/lib/types";
 import {
   mapB3Finding,
@@ -85,6 +86,7 @@ function RunDetailView({ runId }: { runId: number }) {
         const b4Raw = run.blocks["attack_surface"] as B4Raw | undefined;
         const b4Summary = run.blocks["B4_dynamic"] as B4Summary | undefined;
         const b5 = run.blocks["B5_payloads"] as B5Result | undefined;
+        const b6 = run.blocks["validated_payloads"] as ValidatedPayloadsResult | undefined;
         const b8 = run.blocks["B8_dynamic"] as B8Result | undefined;
         const b9 = run.blocks["B9_correlation"] as B9Result | undefined;
 
@@ -93,6 +95,7 @@ function RunDetailView({ runId }: { runId: number }) {
           !b4Raw?.forms.length &&
           !b4Raw?.inputs.length &&
           !b5?.payloads.length &&
+          !b6?.comment &&
           !b8?.findings.length &&
           !b9?.results.length;
 
@@ -133,6 +136,17 @@ function RunDetailView({ runId }: { runId: number }) {
                   findings: b5!.payloads.map(mapB5Group),
                 }}
               />
+            )}
+
+            {Boolean(b6?.comment) && (
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
+                  B6 — REVIEWER NOTE
+                </h3>
+                <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground">
+                  {b6!.comment}
+                </div>
+              </section>
             )}
 
             {Boolean(b8?.findings.length) && (

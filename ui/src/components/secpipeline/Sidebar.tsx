@@ -3,6 +3,7 @@ import { AlertTriangle, Check, Circle, PlayCircle, Loader2, RotateCcw, X } from 
 import {
   useEnvironmentHealth,
   useEnvironmentStatus,
+  useLiveRunVisible,
   usePipelineStatus,
   useResetEnvironment,
   useRunPipeline,
@@ -32,7 +33,13 @@ export function Sidebar() {
 
   const isRunning = status?.running === true;
   const isWaiting = status?.waiting_for_human === true;
-  const isCompleted = status?.completed === true;
+  // Gated by the same sticky session flag the main content panels use — a
+  // "completed" flag inherited from a previous session (pipeline_state.completed
+  // stays true server-side until /api/reset) would otherwise show "Pipeline
+  // completed" and every phase checked off before this session has run
+  // anything, contradicting the "no active run yet" message shown next to it.
+  const liveRunVisible = useLiveRunVisible();
+  const isCompleted = status?.completed === true && liveRunVisible;
 
   // current_block goes back to null once the pipeline finishes or errors out
   // (see api.py), so matching against it alone can't tell "already done" apart
@@ -57,7 +64,7 @@ export function Sidebar() {
 
   const buttonLabel = () => {
     if (runMutation.isPending || isRunning) return "Running...";
-    if (isWaiting) return "Waiting for review (B6)";
+    if (isWaiting) return "Waiting for review";
     if (isCompleted) return "Pipeline completed";
     if (!mattermostUp) return "Prepare environment first";
     return "Run analysis";
@@ -70,8 +77,8 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col justify-between border-r border-border bg-card p-5">
-      <div className="space-y-8">
+    <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-card">
+      <div className="min-h-0 flex-1 space-y-8 overflow-y-auto p-5">
         <section>
           <h2 className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground">
             PREREQUISITES
@@ -195,18 +202,20 @@ export function Sidebar() {
         )}
       </div>
 
-      <button
-        onClick={() => runMutation.mutate()}
-        disabled={buttonDisabled}
-        className="font-button mt-6 flex items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-4 py-3.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {isRunning || runMutation.isPending ? (
-          <Loader2 className="h-8 w-8 animate-spin" />
-        ) : (
-          <PlayCircle className="h-8 w-8" />
-        )}
-        {buttonLabel()}
-      </button>
+      <div className="shrink-0 border-t border-border p-5">
+        <button
+          onClick={() => runMutation.mutate()}
+          disabled={buttonDisabled}
+          className="font-button flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-4 py-3.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isRunning || runMutation.isPending ? (
+            <Loader2 className="h-8 w-8 animate-spin" />
+          ) : (
+            <PlayCircle className="h-8 w-8" />
+          )}
+          {buttonLabel()}
+        </button>
+      </div>
     </aside>
   );
 }

@@ -43,20 +43,27 @@ function B4StatusBanner() {
   );
 }
 
-export function PipelineView() {
+export function PipelineView({ liveVisible }: { liveVisible: boolean }) {
   const { data: status } = usePipelineStatus();
   const b3Query = useB3();
   const b4Query = useB4Raw();
   const b5Query = useB5();
 
-  const hasAnyData = Boolean(b3Query.data || b4Query.data || b5Query.data);
+  if (!liveVisible) {
+    return (
+      <Callout>
+        No active run in this session yet — run the pipeline from the button in the sidebar to see
+        B3-B5 live, or check the Past Runs tab for previous results.
+      </Callout>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <Callout>
-        {hasAnyData || status?.running
+        {status?.running
           ? "What you're seeing here is the pipeline running live against Mattermost."
-          : "No results yet — run the pipeline from the button in the sidebar to see B3-B5 live."}
+          : "This run has finished — see the Past Runs tab to revisit it later."}
       </Callout>
 
       <QueryState

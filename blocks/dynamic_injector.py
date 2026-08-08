@@ -87,6 +87,10 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid)
     }
 
     context = browser.new_context(storage_state=storage_state, record_video_dir="results/videos/")
+    # Same landing-page skip as B4 (blocks/dynamic_analysis.py) — belt-and-suspenders
+    # alongside storage_state, in case a Playwright version doesn't carry
+    # localStorage over in storage_state.
+    context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
     page = context.new_page()
 
     try:
@@ -173,6 +177,7 @@ def run_payloads(validated_payloads_path, pipeline_results):
             # each payload still gets its own isolated context (and thus its own
             # video recording), instead of sharing a single context for the whole run.
             login_context = browser.new_context()
+            login_context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
             login_page = login_context.new_page()
             _login(login_page)
             storage_state = login_context.storage_state()

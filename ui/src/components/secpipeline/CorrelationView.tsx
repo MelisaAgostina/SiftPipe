@@ -1,6 +1,7 @@
 import { useB8, useB9 } from "@/lib/queries";
 import type { B9Entry } from "@/lib/types";
 import { mapB8Finding, mapB9Entry } from "./mappers";
+import { Callout } from "./Callout";
 import { QueryState } from "./QueryState";
 import { Section } from "./Section";
 
@@ -47,9 +48,18 @@ function HighlightedHybridFinding({ entries }: { entries: B9Entry[] }) {
   );
 }
 
-export function CorrelationView() {
+export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
   const b8Query = useB8();
   const b9Query = useB9();
+
+  if (!liveVisible) {
+    return (
+      <Callout>
+        No active run in this session yet — run the pipeline from the button in the sidebar to see
+        B8-B9 live, or check the Past Runs tab for previous results.
+      </Callout>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -351,7 +351,7 @@ def validate_payloads(body: ValidatePayloadsRequest):
     validated_path = RESULTS_DIR / "validated_payloads.json"
     RESULTS_DIR.mkdir(exist_ok=True)
     with open(validated_path, "w", encoding="utf-8") as f:
-        json.dump({"status": "complete", "payloads": approved}, f, indent=4)
+        json.dump({"status": "complete", "payloads": approved, "comment": body.comment}, f, indent=4)
 
     pipeline_results["B6"] = {
         "status": "complete",

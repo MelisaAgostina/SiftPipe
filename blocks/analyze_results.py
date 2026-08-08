@@ -151,6 +151,7 @@ Return ONLY a valid JSON object, no markdown, no extra text:
             llm_result.setdefault("vulnerability", vuln)
             llm_result.setdefault("cwe_id", cwe_id)
             llm_result.setdefault("owasp_category", owasp_cat)
+            llm_result.setdefault("result", "discarded")
             llm_result.setdefault("confidence", "low")
             llm_result.setdefault("evidence", "No evidence provided by LLM")
             llm_result["screenshot_path"] = shot

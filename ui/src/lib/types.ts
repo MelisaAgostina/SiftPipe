@@ -79,7 +79,11 @@ export type B5Result = {
   payloads: B5PayloadGroup[];
 };
 
-export type ValidatedPayloadsResult = { status: "complete"; payloads: B5PayloadGroup[] };
+export type ValidatedPayloadsResult = {
+  status: "complete";
+  payloads: B5PayloadGroup[];
+  comment?: string; // absent on the console review path (blocks/human_review.py) and on runs from before this field existed
+};
 
 export type B7Finding = {
   payload_id: string;
@@ -139,6 +143,8 @@ export type B9Entry = {
   score: number; // 0-1, 3 decimals
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   evidence: string;
+  match_rationale: string; // plain-language why/where this match_tier was picked
+  matched_static_finding: { file: string | null; line: number | null; vulnerability: string | null } | null;
 };
 export type B9Judgment = { verdict: "yes" | "no" | null; rationale: string };
 export type B9Result = {
@@ -182,5 +188,6 @@ export type UIFinding = {
   subtitle: string;
   screenshotUrl?: string | null;
   videoUrl?: string | null;
+  rationale?: string; // click-to-expand "why/where" explanation, B9 entries only
 };
 export type UISection = { id: string; title: string; findings: UIFinding[] };

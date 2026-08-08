@@ -122,6 +122,7 @@ class TestApiRoutes(unittest.TestCase):
         saved = json.loads(Path("results/validated_payloads.json").read_text(encoding="utf-8"))
         self.assertEqual(len(saved["payloads"]), 2)
         self.assertEqual({p["target"] for p in saved["payloads"]}, {"a", "c"})
+        self.assertEqual(saved["comment"], "ok")
 
         self.assertEqual(api.pipeline_results["B6"]["total_validated"], 2)
         self.assertEqual(len(FakeThread.started), 1)

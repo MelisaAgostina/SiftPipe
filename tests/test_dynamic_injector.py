@@ -132,6 +132,9 @@ class FakeBrowser:
     def storage_state(self):
         return {}
 
+    def add_init_script(self, script):
+        pass
+
     def close(self):
         pass
 

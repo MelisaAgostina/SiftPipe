@@ -75,6 +75,7 @@ export function mapB9Entry(e: B9Entry): UIFinding {
     subtitle: `${e.source} · ${e.severity} · score ${e.score.toFixed(3)} · ${e.evidence}`,
     screenshotUrl: mediaUrl(e.screenshot_path),
     videoUrl: mediaUrl(e.video_path),
+    rationale: e.match_rationale,
   };
 }
 

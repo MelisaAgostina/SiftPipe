@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
-import { usePipelineStatus } from "@/lib/queries";
+import { useLiveRunVisible, usePipelineStatus } from "@/lib/queries";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { Tabs } from "./Tabs";
@@ -24,17 +24,19 @@ export function SecPipelineApp() {
     wasWaiting.current = waiting;
   }, [status?.waiting_for_human]);
 
+  const liveRunVisible = useLiveRunVisible();
+
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <Toaster />
       <TopBar />
-      <div className="flex flex-1">
+      <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main className="flex-1 space-y-6 overflow-y-auto p-6">
           <Tabs value={tab} onChange={setTab} />
-          {tab === "pipeline" && <PipelineView />}
+          {tab === "pipeline" && <PipelineView liveVisible={liveRunVisible} />}
           {tab === "revision" && <PayloadReviewView onValidated={() => setTab("logs")} />}
-          {tab === "correlacion" && <CorrelationView />}
+          {tab === "correlacion" && <CorrelationView liveVisible={liveRunVisible} />}
           {tab === "history" && <PastRunsView />}
           {tab === "logs" && <LogsView />}
         </main>
