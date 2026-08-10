@@ -3,19 +3,15 @@
 import json
 import os
 import time
+from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
-from blocks.mattermost_auth import LOGIN_ID_SELECTORS, PASSWORD_SELECTORS, find_working_selector
+from blocks.mattermost_auth import find_working_selector
+from blocks.targets import MATTERMOST
+from blocks.crawler import GENERIC_DENYLIST, DEFAULT_MAX_PAGES, select_links_to_visit
 
 load_dotenv()
 
-# --- Config (same pattern as dynamic_injector.py / B7, set these in .env) ---
-MM_URL           = os.getenv("MM_URL", "http://localhost:8065")
-MM_TEAM          = os.getenv("MM_TEAM", "equipo-tesina")
-MM_CHANNEL       = os.getenv("MM_CHANNEL", "canal-analisis")
-MM_USERNAME      = os.getenv("MM_USERNAME", "victima@test.com")       # login id (email)
-MM_PASSWORD      = os.getenv("MM_PASSWORD", "Password123!")
-MM_SEED_USERNAME = os.getenv("MM_SEED_USERNAME", "usuario_test")      # @username, from seed.py's NEW_USER
 PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
 
 
@@ -123,10 +119,20 @@ def _goto_with_retry(page, url, attempts=2, **kwargs):
     raise last_exc
 
 
-def discover_attack_surface(base_url=None, login_id=None, password=None):
-    base_url = base_url or MM_URL
-    login_id = login_id or MM_USERNAME
-    password = password or MM_PASSWORD
+def discover_attack_surface(target=None, base_url=None, login_id=None, password=None, max_pages=None):
+    """
+    Logs into `target` (a blocks.targets.TargetProfile; defaults to
+    Mattermost for zero behavior change on existing callers) and crawls its
+    authenticated area via a generic breadth-first same-origin walk from the
+    post-login landing page instead of a hardcoded route list — see
+    MULTI_TARGET_PLAN.md Phase 2. `extract_forms()` itself needed no changes,
+    it was already generic DOM querying.
+    """
+    target = target or MATTERMOST
+    base_url = base_url or target.base_url
+    login_id = login_id or target.username
+    password = password or target.password
+    max_pages = max_pages or DEFAULT_MAX_PAGES
 
     attack_surface = {
         "forms": [],
@@ -135,13 +141,7 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
     }
     errors = []
     login_ok = False
-
-    page_routes = [
-        {"label": "home",       "path": f"/{MM_TEAM}/channels/{MM_CHANNEL}"},
-        {"label": "profile",    "path": f"/{MM_TEAM}/messages/@{MM_SEED_USERNAME}"},
-        {"label": "search",     "path": f"/{MM_TEAM}/channels/{MM_CHANNEL}/search"},
-        {"label": "new_post",   "path": f"/{MM_TEAM}/channels/off-topic"}
-    ]
+    denylist = GENERIC_DENYLIST + target.extra_denylist
 
     os.makedirs("results/videos", exist_ok=True)
 
@@ -155,6 +155,10 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
         context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
         page = context.new_page()
 
+        # Mattermost-specific for now — endpoint-sniffing on top of the crawl
+        # isn't part of Phase 2's scope (generalizing the *page* crawl), and
+        # NaViQ has no /api/v4/-shaped routes for this to match anyway, so it
+        # harmlessly stays empty there instead of generalizing prematurely.
         page.on(
             "request",
             lambda request: attack_surface["endpoints"].add(request.url)
@@ -164,37 +168,27 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
         try:
             # --- Login ---
             try:
-                _goto_with_retry(page, f"{base_url}/login", wait_until="domcontentloaded")
+                _goto_with_retry(page, target.login_url, wait_until="domcontentloaded")
 
-                # Mattermost v9 selectors: be robust when button is rendered/different.
-                # Field selectors themselves fall back through blocks/mattermost_auth.py
-                # if the primary ids ever change in a future Mattermost version.
-                login_selector = find_working_selector(page, LOGIN_ID_SELECTORS, timeout=20000)
-                password_selector = find_working_selector(page, PASSWORD_SELECTORS, timeout=20000)
+                login_selector = find_working_selector(page, target.login_id_selectors, timeout=20000)
+                password_selector = find_working_selector(page, target.password_selectors, timeout=20000)
 
                 page.fill(login_selector, login_id)
                 page.fill(password_selector, password)
 
                 login_clicked = False
 
-                # Try primary login button
-                try:
-                    btn = page.locator("button#loginButton")
-                    btn.wait_for(state="visible", timeout=5000)
-                    disabled = btn.get_attribute("disabled")
-                    if not disabled:
-                        btn.click()
-                        login_clicked = True
-                except Exception:
-                    pass
-
-                # Fallback: submit button by type
-                if not login_clicked:
+                # Try each of the target's submit strategies in order.
+                for submit_selector in target.submit_selectors:
                     try:
-                        page.click("button[type='submit']", timeout=5000)
-                        login_clicked = True
+                        btn = page.locator(submit_selector)
+                        btn.wait_for(state="visible", timeout=5000)
+                        if not btn.get_attribute("disabled"):
+                            btn.click()
+                            login_clicked = True
+                            break
                     except Exception:
-                        pass
+                        continue
 
                 # Final fallback: press Enter on password field
                 if not login_clicked:
@@ -220,8 +214,17 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
                         "and results/login_page.html for inspection"
                     )
 
-                page.wait_for_url("**/channels/**", timeout=15000)
-                page.wait_for_selector(".channel-header, #channelHeaderTitle", timeout=10000)
+                # target.authenticated_selectors is the generic replacement for
+                # Mattermost's old hardcoded wait_for_url("**/channels/**") +
+                # ".channel-header" wait — any one of them present confirms a
+                # real logged-in page, for any target. state="attached" (not
+                # the default "visible") deliberately: confirmed live against
+                # NaViQ that its own indicator (a[href='/logout/']) matches
+                # two real elements (desktop dropdown item + mobile nav item)
+                # and neither is visible without further interaction/viewport
+                # — we only need the authenticated shell to have rendered,
+                # not for this specific element to be on-screen.
+                page.wait_for_selector(", ".join(target.authenticated_selectors), timeout=15000, state="attached")
                 login_ok = True
                 print("Login exitoso.")
 
@@ -231,9 +234,11 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
                 errors.append({"stage": "login", "message": msg})
 
             if login_ok:
-                # If Mattermost has no team context, the app redirects to an error page.
-                # Try to detect that and create a temporary team so discovery can continue.
-                if "error?type=team_not_found" in page.url:
+                # Mattermost-only: if it has no team context, the app redirects to
+                # an error page. Try to detect that and create a temporary team so
+                # discovery can continue. Meaningless for other targets, so gated
+                # on target.name rather than generalized.
+                if target.name == "mattermost" and "error?type=team_not_found" in page.url:
                     print("No team found after login — attempting to create a temporary team.")
                     team_name = f"auto-team-{int(time.time())}"
                     created = False
@@ -293,28 +298,38 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
                         except Exception:
                             pass
 
-                try:
-                    attack_surface["forms"].extend(extract_forms(page, "dashboard"))
-                except Exception as e:
-                    errors.append({"stage": "forms:dashboard", "message": str(e)})
+                # Generic breadth-first same-origin crawl from the post-login
+                # landing page, replacing the old hardcoded page_routes list.
+                # select_links_to_visit() (blocks/crawler.py) does the pure
+                # same-origin/denylist/dedup decision; this loop just drives
+                # the actual Playwright navigation, which needs a live page.
+                # `visited` marks a URL as *attempted* (added the moment it's
+                # popped, before the try) rather than only on success — a page
+                # that fails once (e.g. Mattermost's /threads view, which has
+                # no .channel-header) is linked from nearly every other page's
+                # sidebar, so without this it gets re-discovered and re-tried
+                # on every single subsequent page instead of once, wasting a
+                # full timeout each time (confirmed live: 11 wasted retries in
+                # one run before this fix). `pages_visited` in the final
+                # output stays success-only via `successful_pages`.
+                visited = set()
+                successful_pages = []
+                queue = [page.url]
 
-                for route in page_routes:
+                while queue and len(visited) < max_pages:
+                    url = queue.pop(0)
+                    if url in visited:
+                        continue
+                    visited.add(url)
+
                     try:
-                        _goto_with_retry(page, f"{base_url}{route['path']}", wait_until="domcontentloaded")
+                        _goto_with_retry(page, url, wait_until="domcontentloaded")
+                        page.wait_for_selector(", ".join(target.authenticated_selectors), timeout=8000, state="attached")
+                        successful_pages.append(url)
 
-                        # Wait for the SPA router to resolve to the correct URL
-                        try:
-                            page.wait_for_url(f"**{route['path']}**", timeout=8000)
-                        except Exception:
-                            # If URL didn't resolve, force a second goto and wait for any channel
-                            page.goto(f"{base_url}{route['path']}", wait_until="domcontentloaded")
-                            page.wait_for_url("**/channels/**", timeout=8000)
-
-                        # Wait for the channel view to actually render
-                        page.wait_for_selector(".channel-header, #channelHeaderTitle", timeout=8000)
-
-                        print(f"Analizando página: {route['label']} ({page.url})")
-                        attack_surface["forms"].extend(extract_forms(page, route["label"]))
+                        label = urlsplit(url).path or url
+                        print(f"Analizando página: {label} ({page.url})")
+                        attack_surface["forms"].extend(extract_forms(page, label))
 
                         for field in page.query_selector_all("input:visible, textarea:visible"):
                             attack_surface["inputs"].append({
@@ -324,26 +339,18 @@ def discover_attack_surface(base_url=None, login_id=None, password=None):
                                 "page_url": page.url
                             })
 
+                        remaining_budget = max_pages - len(visited) - len(queue)
+                        hrefs = [a.get_attribute("href") or "" for a in page.query_selector_all("a[href]")]
+                        queue.extend(select_links_to_visit(
+                            hrefs, page.url, base_url, visited, denylist, remaining_budget
+                        ))
+
                     except Exception as page_error:
-                        msg = f"Could not review {route['label']}: {page_error}"
+                        msg = f"Could not review {url}: {page_error}"
                         print(f"Advertencia: {msg}")
-                        errors.append({"stage": f"route:{route['label']}", "message": msg})
+                        errors.append({"stage": f"crawl:{url}", "message": msg})
 
-                try:
-                    for field in page.query_selector_all("input, textarea"):
-                        field_id = field.get_attribute("id") or "unknown"
-                        field_name = field.get_attribute("name") or "unknown"
-                        field_type = field.get_attribute("type") or field.evaluate("el => el.tagName.toLowerCase()")
-
-                        if field_type not in ["hidden", "submit"]:
-                            attack_surface["inputs"].append({
-                                "id": field_id,
-                                "name": field_name,
-                                "type": field_type,
-                                "page_url": page.url
-                            })
-                except Exception as e:
-                    errors.append({"stage": "inputs:final_page", "message": str(e)})
+                attack_surface["pages_visited"] = sorted(successful_pages)
 
         finally:
             # Video only finalizes to disk once the browser (and its contexts) are

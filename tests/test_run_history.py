@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -93,6 +94,69 @@ class TestRunHistory(unittest.TestCase):
 
         runs = run_history.list_runs()
         self.assertEqual([r["id"] for r in runs], [second, first])
+
+    def test_start_run_records_the_given_target(self):
+        run_id = run_history.start_run(mode="restore", target="naviq")
+        runs = run_history.list_runs()
+
+        self.assertEqual(runs[0]["id"], run_id)
+        self.assertEqual(runs[0]["target"], "naviq")
+
+    def test_start_run_defaults_target_to_mattermost(self):
+        run_history.start_run(mode="restore")
+        runs = run_history.list_runs()
+
+        self.assertEqual(runs[0]["target"], "mattermost")
+
+    def test_get_run_includes_target(self):
+        run_id = run_history.start_run(mode="fresh", target="naviq")
+        run_history.finish_run(run_id, "completed")
+
+        self.assertEqual(run_history.get_run(run_id)["target"], "naviq")
+
+    def test_two_runs_against_different_targets_stay_distinguishable(self):
+        mm_run = run_history.start_run(mode="restore", target="mattermost")
+        naviq_run = run_history.start_run(mode="restore", target="naviq")
+
+        runs = {r["id"]: r["target"] for r in run_history.list_runs()}
+        self.assertEqual(runs[mm_run], "mattermost")
+        self.assertEqual(runs[naviq_run], "naviq")
+
+    def test_pre_existing_db_without_target_column_is_migrated_safely(self):
+        """
+        A real concern, not hypothetical: this project's own
+        siftpipe_history.db already had rows before the `target` column
+        existed. _connect() must ALTER TABLE onto a runs table that
+        predates this column without crashing, and old rows should read
+        back as target=None rather than erroring.
+        """
+        conn = sqlite3.connect(run_history.DB_PATH)
+        conn.execute(
+            """
+            CREATE TABLE runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                mode TEXT,
+                status TEXT NOT NULL DEFAULT 'running',
+                total_findings INTEGER,
+                confirmed_findings INTEGER
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO runs (started_at, mode, status) VALUES ('2026-01-01T00:00:00', 'fresh', 'completed')"
+        )
+        conn.commit()
+        conn.close()
+
+        runs = run_history.list_runs()
+        self.assertEqual(len(runs), 1)
+        self.assertIsNone(runs[0]["target"])
+
+        # And the migrated table must still accept new target-aware inserts.
+        new_id = run_history.start_run(mode="restore", target="naviq")
+        self.assertEqual(run_history.get_run(new_id)["target"], "naviq")
 
     def test_a_second_run_does_not_see_the_first_runs_blocks(self):
         """Two runs against the same results/ folder over time must stay

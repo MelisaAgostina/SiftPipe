@@ -27,3 +27,9 @@ ui/.tanstack/
 # Playwright
 playwright-report/
 test-results/
+
+# NaVi-Q source (private repo) — plain local clone, not a submodule, so
+# SiftPipe's own repo never depends on NaVi-Q repo access (see
+# MULTI_TARGET_PLAN.md's "Open questions" for why this isn't a submodule
+# like mattermost-src/mattermost)
+naviq-src/

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle, Check, Circle, PlayCircle, Loader2, RotateCcw, X } from "lucide-react";
 import {
+  useActiveTarget,
   useEnvironmentHealth,
   useEnvironmentStatus,
   useLiveRunVisible,
@@ -19,6 +20,7 @@ export function Sidebar() {
   const { data: envHealth } = useEnvironmentHealth();
   const { data: envStatus } = useEnvironmentStatus();
   const resetMutation = useResetEnvironment();
+  const { data: activeTarget } = useActiveTarget();
 
   // There's no backend concept of "mode" beyond whether /api/environment/reset
   // was called — restore mode is just "skip that and run against whatever's
@@ -57,22 +59,46 @@ export function Sidebar() {
     return "pending";
   };
 
-  const mattermostUp = envHealth?.mattermost_up === true;
+  // Real bug found live 2026-08-10: right after switching targets,
+  // useSetTarget() invalidates envHealth but React Query keeps rendering
+  // the *previous* target's cached value until the refetch lands - a brief
+  // window where e.g. Mattermost's real "up" status could flash as NaViQ's.
+  // /api/environment/health echoes back which target it actually checked
+  // (added in Phase 5 for exactly this) - only trust target_up when it
+  // matches the currently active target, otherwise treat it as unknown.
+  const targetUp = envHealth?.target_up === true && envHealth?.target === activeTarget?.name;
   const envResetting = envStatus?.running === true || resetMutation.isPending;
 
-  const buttonDisabled = isRunning || isWaiting || runMutation.isPending || !mattermostUp;
+  const targetName = activeTarget?.display_name ?? "Target";
+  const supportsFreshReset = activeTarget?.supports_fresh_reset ?? true;
+
+  // Task 5.2 (MULTI_TARGET_PLAN.md Phase 5): both current profiles happen to
+  // support fresh reset, so this has never actually forced "restore" yet —
+  // still wired for real so a future target with supports_fresh_reset=False
+  // doesn't silently show a Fresh Reset button that does nothing useful.
+  const effectiveEnvMode: EnvMode = supportsFreshReset ? envMode : "restore";
+
+  // envResetting is required here, not just targetUp - real bug found live
+  // 2026-08-10: ensure_naviq_server_running() (blocks/environment.py) can
+  // report the dev server "already up" almost instantly on a repeat reset,
+  // flipping targetUp true while naviq_fresh_reset()'s DB wipe/migrate/
+  // reseed steps are still running in the background. Without this guard,
+  // a jury clicking Run analysis right after Fresh reset could start B3-B9
+  // against a database that's still mid-reset.
+  const buttonDisabled = isRunning || isWaiting || runMutation.isPending || !targetUp || envResetting;
 
   const buttonLabel = () => {
     if (runMutation.isPending || isRunning) return "Running...";
     if (isWaiting) return "Waiting for review";
     if (isCompleted) return "Pipeline completed";
-    if (!mattermostUp) return "Prepare environment first";
+    if (envResetting) return "Preparing environment...";
+    if (!targetUp) return "Prepare environment first";
     return "Run analysis";
   };
 
   const resetButtonLabel = () => {
     if (envResetting) return "Preparing environment...";
-    if (mattermostUp) return "Reset environment (fresh)";
+    if (targetUp) return "Reset environment (fresh)";
     return "Prepare environment (fresh)";
   };
 
@@ -85,8 +111,8 @@ export function Sidebar() {
           </h2>
           <ul className="space-y-2 text-sm">
             <li className="flex items-center justify-between text-foreground/90">
-              <span>Mattermost running</span>
-              {mattermostUp ? (
+              <span>{targetName} running</span>
+              {targetUp ? (
                 <Check className="h-4 w-4 text-primary" />
               ) : (
                 <X className="h-4 w-4 text-destructive" />
@@ -103,24 +129,41 @@ export function Sidebar() {
           </ul>
 
           <div className="mt-4 flex rounded-lg border border-border bg-background/60 p-1 text-xs">
-            {(["fresh", "restore"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setEnvMode(m)}
-                disabled={envResetting || isRunning || isWaiting}
-                className={
-                  "flex-1 rounded-md px-2 py-1.5 font-medium capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
-                  (envMode === m
-                    ? "bg-accent text-foreground ring-1 ring-border"
-                    : "text-muted-foreground hover:text-foreground")
-                }
-              >
-                {m === "fresh" ? "Fresh reset" : "Restore existing"}
-              </button>
-            ))}
+            {(["fresh", "restore"] as const).map((m) => {
+              const disabled =
+                envResetting || isRunning || isWaiting || (m === "fresh" && !supportsFreshReset);
+              return (
+                <button
+                  key={m}
+                  onClick={() => setEnvMode(m)}
+                  disabled={disabled}
+                  title={
+                    m === "fresh" && !supportsFreshReset
+                      ? `${targetName} doesn't support an automated fresh reset yet`
+                      : undefined
+                  }
+                  className={
+                    "flex-1 rounded-md px-2 py-1.5 font-medium capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
+                    (effectiveEnvMode === m
+                      ? "bg-accent text-foreground ring-1 ring-border"
+                      : "text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  {m === "fresh" ? "Fresh reset" : "Restore existing"}
+                </button>
+              );
+            })}
           </div>
 
-          {envMode === "fresh" ? (
+          {!supportsFreshReset && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {targetName} doesn't support an automated fresh reset yet — only "Restore existing" is
+              available for this target.
+            </p>
+          )}
+
+          {effectiveEnvMode === "fresh" ? (
             <>
               <button
                 onClick={() => resetMutation.mutate()}
@@ -134,10 +177,12 @@ export function Sidebar() {
                 )}
                 {resetButtonLabel()}
               </button>
-              {!mattermostUp && !envResetting && (
+              {!targetUp && !envResetting && (
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  Requires Docker Desktop running. Delete existing data and seed a new instance.
+                  {activeTarget?.name === "naviq"
+                    ? "Starts NaViQ's dev server automatically if it isn't already running. Deletes existing data and reseeds the test account."
+                    : "Requires Docker Desktop running. Delete existing data and seed a new instance."}
                 </p>
               )}
               {envStatus?.error && (
@@ -146,7 +191,7 @@ export function Sidebar() {
                 </p>
               )}
             </>
-          ) : mattermostUp ? (
+          ) : targetUp ? (
             <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-xs text-muted-foreground">
               <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
               Reusing the existing environment as-is, no reset — same data as your last session. Run
@@ -155,8 +200,17 @@ export function Sidebar() {
           ) : (
             <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-xs text-muted-foreground">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              No environment detected. Restore mode won't start one for you — start it manually
-              (docker compose up -d in mattermost/), or switch to Fresh reset above.
+              {activeTarget?.name === "naviq" ? (
+                <>
+                  No environment detected. Restore mode won't start it for you — use Fresh reset above,
+                  which also starts NaViQ's dev server automatically (no command line needed).
+                </>
+              ) : (
+                <>
+                  No environment detected. Restore mode won't start one for you — start it manually
+                  (docker compose up -d in mattermost/), or switch to Fresh reset above.
+                </>
+              )}
             </p>
           )}
         </section>

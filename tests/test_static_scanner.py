@@ -64,6 +64,50 @@ class TestScanAndSaveFiles(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].endswith("main.go"))
 
+    def test_relevant_dirs_none_disables_the_directory_filter(self):
+        """
+        MULTI_TARGET_PLAN.md: NaViQ's real application code (users/, blog/,
+        evaluation/, ...) doesn't follow Mattermost's api/handlers/store
+        naming convention at all - relevant_dirs=None means "extension +
+        exclude_dirs only", no fake allowlist invented for a Django project.
+        """
+        self._touch("users/views.py")
+        self._touch("blog/models.py")
+
+        output_file = self.source_dir / "files_list.txt"
+        found = scan_and_save_files(
+            str(self.source_dir),
+            output_file=str(output_file),
+            extensions=(".py",),
+            relevant_dirs=None,
+        )
+
+        found_normalized = {Path(f).as_posix() for f in found}
+        self.assertIn((self.source_dir / "users/views.py").as_posix(), found_normalized)
+        self.assertIn((self.source_dir / "blog/models.py").as_posix(), found_normalized)
+        self.assertEqual(len(found), 2)
+
+    def test_custom_exclude_dirs_keeps_a_real_venv_out_of_the_scan(self):
+        """
+        Real gap found live: NaViQ's own Python venv lives inside its source
+        tree (naviq-src/naviq/.venv310). Without excluding it, a .py scan
+        would walk into Django's own third-party dependency code.
+        """
+        self._touch(".venv310/Lib/site-packages/django/db/models/base.py")
+        self._touch("users/models.py")
+
+        output_file = self.source_dir / "files_list.txt"
+        found = scan_and_save_files(
+            str(self.source_dir),
+            output_file=str(output_file),
+            extensions=(".py",),
+            exclude_dirs={".venv310", "__pycache__", "migrations", ".git"},
+            relevant_dirs=None,
+        )
+
+        found_normalized = {Path(f).as_posix() for f in found}
+        self.assertEqual(found_normalized, {(self.source_dir / "users/models.py").as_posix()})
+
 
 class TestLoadFilesList(unittest.TestCase):
 
@@ -85,6 +129,21 @@ class TestGetAnalysisPrompt(unittest.TestCase):
         self.assertIn("Injection", prompt)
         self.assertIn("Broken Access Control", prompt)
         self.assertIn("JSON array", prompt)
+
+    def test_prompt_tells_the_llm_not_to_flag_env_var_secret_reads_as_hardcoded(self):
+        """
+        Real false positive found live against NaViQ's actual code
+        (2026-08-10): the LLM flagged
+        'ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")' - the correct,
+        secure pattern - as a high-confidence hardcoded API key, purely from
+        pattern-matching the variable name. OWASP_SCOPE's A02 description
+        now explicitly distinguishes a literal secret value from an
+        env-var/settings lookup.
+        """
+        prompt = get_analysis_prompt("ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')")
+        self.assertIn("os.getenv", prompt)
+        self.assertIn("Do NOT flag", prompt)
+        self.assertIn("literal", prompt)
 
     def test_prompt_requests_a_cwe_id_alongside_the_owasp_category(self):
         prompt = get_analysis_prompt("os.system(user_input)")

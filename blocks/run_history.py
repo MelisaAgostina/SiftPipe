@@ -15,6 +15,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from blocks.targets import DEFAULT_TARGET
+
 DB_PATH = os.getenv("SIFTPIPE_HISTORY_DB", "siftpipe_history.db")
 
 
@@ -27,12 +29,25 @@ def _connect():
             started_at TEXT NOT NULL,
             finished_at TEXT,
             mode TEXT,
+            target TEXT,
             status TEXT NOT NULL DEFAULT 'running',
             total_findings INTEGER,
             confirmed_findings INTEGER
         )
         """
     )
+    # Lightweight migration for any runs.db that predates the `target`
+    # column (this project's own siftpipe_history.db included) —
+    # CREATE TABLE IF NOT EXISTS doesn't alter an already-existing table's
+    # columns. Pre-existing rows are left with target=NULL rather than
+    # guessed at (MULTI_TARGET_PLAN.md: this project's own history was
+    # corrected by hand once, from known session context, not by a blind
+    # heuristic backfill baked into this migration).
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN target TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS run_blocks (
@@ -46,14 +61,14 @@ def _connect():
     return conn
 
 
-def start_run(mode="unknown"):
+def start_run(mode="unknown", target=DEFAULT_TARGET):
     """Call at the start of a pipeline run. Returns the new run's id."""
     conn = _connect()
     try:
         now = datetime.now(timezone.utc).isoformat()
         cur = conn.execute(
-            "INSERT INTO runs (started_at, mode, status) VALUES (?, ?, 'running')",
-            (now, mode),
+            "INSERT INTO runs (started_at, mode, target, status) VALUES (?, ?, ?, 'running')",
+            (now, mode, target),
         )
         conn.commit()
         return cur.lastrowid
@@ -119,7 +134,7 @@ def list_runs():
     try:
         rows = conn.execute(
             """
-            SELECT id, started_at, finished_at, mode, status, total_findings, confirmed_findings
+            SELECT id, started_at, finished_at, mode, target, status, total_findings, confirmed_findings
             FROM runs ORDER BY id DESC
             """
         ).fetchall()
@@ -131,9 +146,10 @@ def list_runs():
             "started_at": r[1],
             "finished_at": r[2],
             "mode": r[3],
-            "status": r[4],
-            "total_findings": r[5],
-            "confirmed_findings": r[6],
+            "target": r[4],
+            "status": r[5],
+            "total_findings": r[6],
+            "confirmed_findings": r[7],
         }
         for r in rows
     ]
@@ -147,7 +163,7 @@ def get_run(run_id):
     try:
         run_row = conn.execute(
             """
-            SELECT id, started_at, finished_at, mode, status, total_findings, confirmed_findings
+            SELECT id, started_at, finished_at, mode, target, status, total_findings, confirmed_findings
             FROM runs WHERE id = ?
             """,
             (run_id,),
@@ -166,8 +182,9 @@ def get_run(run_id):
         "started_at": run_row[1],
         "finished_at": run_row[2],
         "mode": run_row[3],
-        "status": run_row[4],
-        "total_findings": run_row[5],
-        "confirmed_findings": run_row[6],
+        "target": run_row[4],
+        "status": run_row[5],
+        "total_findings": run_row[6],
+        "confirmed_findings": run_row[7],
         "blocks": {name: json.loads(data) for name, data in block_rows},
     }

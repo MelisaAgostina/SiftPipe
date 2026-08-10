@@ -39,15 +39,23 @@ class TestApiRoutes(unittest.TestCase):
 
         api.pipeline_state.update({
             "running": False, "current_block": None, "waiting_for_human": False,
-            "completed": False, "error": None, "logs": [],
+            "completed": False, "error": None, "logs": [], "run_id": None,
         })
+        api.env_state.update({"running": False, "completed": False, "error": None, "logs": []})
         api.pipeline_results.clear()
+
+        # ACTIVE_TARGET is a module-level global that POST /api/target
+        # reassigns at runtime (MULTI_TARGET_PLAN.md Phase 5) — save/restore
+        # it so a test that switches targets can't leak "naviq" into
+        # whichever test runs next.
+        self._active_target = api.ACTIVE_TARGET
 
         self._thread_patch = patch.object(api.threading, "Thread", FakeThread)
         self._thread_patch.start()
 
     def tearDown(self):
         self._thread_patch.stop()
+        api.ACTIVE_TARGET = self._active_target
         os.chdir(self._cwd)
         self._tmp.cleanup()
 
@@ -133,6 +141,67 @@ class TestApiRoutes(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             api.validate_payloads(api.ValidatePayloadsRequest(approved_indices=[0]))
         self.assertEqual(ctx.exception.status_code, 404)
+
+    # ── /api/target (MULTI_TARGET_PLAN.md Phase 5 Task 5.3) ────────────────
+
+    def test_get_active_target_lists_both_profiles(self):
+        result = api.get_active_target()
+        self.assertEqual(result["name"], self._active_target.name)
+        self.assertEqual({t["name"] for t in result["available"]}, {"mattermost", "naviq"})
+
+    def test_set_active_target_switches_and_clears_state(self):
+        api.pipeline_state["error"] = "leftover from the previous target"
+        api.pipeline_state["logs"] = ["stale"]
+
+        result = api.set_active_target(api.SetTargetRequest(name="naviq"))
+
+        self.assertEqual(result["name"], "naviq")
+        self.assertEqual(api.ACTIVE_TARGET.name, "naviq")
+        self.assertIsNone(api.pipeline_state["error"])
+        self.assertEqual(api.pipeline_state["logs"], [])
+
+    def test_set_active_target_rejects_unknown_name(self):
+        with self.assertRaises(HTTPException) as ctx:
+            api.set_active_target(api.SetTargetRequest(name="not-a-real-target"))
+        self.assertEqual(ctx.exception.status_code, 400)
+        # Rejected switch must not leave a partially-applied ACTIVE_TARGET behind.
+        self.assertEqual(api.ACTIVE_TARGET.name, self._active_target.name)
+
+    def test_set_active_target_rejects_while_running(self):
+        api.pipeline_state["running"] = True
+        with self.assertRaises(HTTPException) as ctx:
+            api.set_active_target(api.SetTargetRequest(name="naviq"))
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_set_active_target_rejects_while_waiting_for_human(self):
+        api.pipeline_state["waiting_for_human"] = True
+        with self.assertRaises(HTTPException) as ctx:
+            api.set_active_target(api.SetTargetRequest(name="naviq"))
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_set_active_target_rejects_while_env_resetting(self):
+        api.env_state["running"] = True
+        with self.assertRaises(HTTPException) as ctx:
+            api.set_active_target(api.SetTargetRequest(name="naviq"))
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_environment_health_pings_active_targets_base_url(self):
+        """Mattermost has a real ping endpoint; a generic (non-Mattermost)
+        target has none, so environment_health() falls back to a plain GET
+        on its base_url instead (api.py's own comment on this)."""
+        api.set_active_target(api.SetTargetRequest(name="naviq"))
+
+        with patch.object(api.requests, "get") as mock_get:
+            mock_get.return_value.status_code = 200
+            result = api.environment_health()
+
+        mock_get.assert_called_once_with(api.ACTIVE_TARGET.base_url, timeout=3)
+        self.assertEqual(result, {"target_up": True, "target": "naviq"})
+
+    def test_environment_health_down_on_connection_error(self):
+        with patch.object(api.requests, "get", side_effect=api.requests.exceptions.ConnectionError):
+            result = api.environment_health()
+        self.assertFalse(result["target_up"])
 
 
 if __name__ == "__main__":

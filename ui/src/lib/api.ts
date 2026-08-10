@@ -1,4 +1,5 @@
 import type {
+  ActiveTarget,
   EnvironmentHealth,
   EnvironmentResetResponse,
   EnvironmentStatus,
@@ -9,6 +10,8 @@ import type {
   RunDetail,
   RunResponse,
   RunsListResponse,
+  SetTargetRequest,
+  SetTargetResponse,
   ValidateRequest,
   ValidateResponse,
 } from "./types";
@@ -77,6 +80,14 @@ export const getResultsAll = () => request<ResultsBulk>("/api/results");
 export const getRuns = () => request<RunsListResponse>("/api/runs");
 export const getRun = (runId: number) => request<RunDetail>(`/api/runs/${runId}`);
 export const resetPipeline = () => request<ResetResponse>("/api/reset", { method: "POST" });
+
+export const getActiveTarget = () => request<ActiveTarget>("/api/target");
+export const setActiveTarget = (body: SetTargetRequest) =>
+  request<SetTargetResponse>("/api/target", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
 export const getEnvironmentHealth = () => request<EnvironmentHealth>("/api/environment/health");
 export const getEnvironmentStatus = () => request<EnvironmentStatus>("/api/environment/status");

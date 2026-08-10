@@ -32,8 +32,9 @@ from blocks.human_review import run_human_review
 from blocks.dynamic_injector import run_payloads
 from blocks.analyze_results import analyze_results
 from blocks.correlate_results import correlate_results
-from blocks.environment import fresh_reset
+from blocks.environment import ensure_naviq_server_running, fresh_reset, naviq_fresh_reset
 from blocks import run_history
+from blocks.targets import MATTERMOST, get_target
 
 def ask_llm(prompt):
     try:
@@ -54,10 +55,22 @@ def ask_llm(prompt):
     except Exception as e:
         return {"vulnerability": "API Error", "evidence": str(e)}
 
-def run_static_analysis(pipeline_results):
-    print("\nExecuting B3: Static Analysis...")
+def run_static_analysis(pipeline_results, target_profile=None):
+    target_profile = target_profile or MATTERMOST
+    print(f"\nExecuting B3: Static Analysis (target={target_profile.name})...")
 
-    files = load_files_list("results/files_list.txt") or scan_and_save_files("mattermost-src/mattermost")
+    # Target-scoped cache filename - a real bug found live 2026-08-10:
+    # a single shared "results/files_list.txt" meant whichever target ran
+    # B3 first got cached forever, and every other target silently reused
+    # its (wrong-tech-stack) file list instead of ever scanning its own.
+    files_list_path = f"results/{target_profile.name}_files_list.txt"
+    files = load_files_list(files_list_path) or scan_and_save_files(
+        target_profile.source_dir,
+        output_file=files_list_path,
+        extensions=target_profile.source_extensions,
+        exclude_dirs=target_profile.source_exclude_dirs,
+        relevant_dirs=target_profile.source_relevant_dirs,
+    )
     print(f"Total files listed: {len(files)}")
 
     results = []
@@ -81,6 +94,19 @@ def run_static_analysis(pipeline_results):
                 for finding in llm_response:
                     # Filtro 1: Que haya detectado una vulnerabilidad válida
                     if finding.get("vulnerability") not in ["None", "None/Detected", None]:
+
+                        # Filtro 1b: a genuine finding always cites a real line number
+                        # (the prompt's own format spec requires it). "line": 0/missing
+                        # means the model fabricated a "not found" placeholder entry
+                        # instead of omitting the category, despite the prompt saying
+                        # not to - real bug found live 2026-08-10 against NaViQ's
+                        # run_batch_evaluations.py: {"vulnerability": "Broken Access
+                        # Control", "evidence": "No clear authorization checks found...",
+                        # "line": 0, "confidence": "medium"} - a real vulnerability name/
+                        # confidence pair that's actually describing its own absence.
+                        if not finding.get("line"):
+                            print(f"[-] Skipped placeholder 'not found' entry: {finding.get('vulnerability')}")
+                            continue
 
                         # Filtro 2: Solo guardar confidence 'high' o 'medium'
                         confianza = finding.get("confidence", "").lower()
@@ -113,10 +139,10 @@ def run_static_analysis(pipeline_results):
 
 
 #block 4 dynamic discovery
-def run_dynamic_discovery(pipeline_results):
+def run_dynamic_discovery(pipeline_results, target=None):
     print("Executing B4: Dynamic Discovery...")
 
-    attack_surface = discover_attack_surface()
+    attack_surface = discover_attack_surface(target=target)
     summary = {
         "status": attack_surface.get("status", "complete"),
         "forms_found": len(attack_surface.get("forms", [])),
@@ -133,12 +159,12 @@ def run_dynamic_discovery(pipeline_results):
 
     print("B4 dynamic completed and stored in results/attack_surface.json")
 
-def execute_attacks():
+def execute_attacks(target=None):
     print("Executing B7: Executing Attacks...")
     # Cargar los payloads validados por B6 y ejecutar las inyecciones dinámicas
     validated_path = "results/validated_payloads.json"
     try:
-        b7 = run_payloads(validated_path, pipeline_results)
+        b7 = run_payloads(validated_path, pipeline_results, target)
         # Guardar el objeto completo retornado por run_payloads para que B9 pueda correlacionar
         save_result("B7_dynamic_attacks", b7)
     except FileNotFoundError as e:
@@ -154,24 +180,39 @@ def execute_attacks():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["fresh", "restore"], default="restore")
+    parser.add_argument("--target", default="mattermost", help="Target profile to use (see blocks/targets.py)")
     args = parser.parse_args()
 
-    print(f"Initiating pipeline in mode: {args.mode.upper()}")
+    target = get_target(args.target)
+    print(f"Initiating pipeline in mode: {args.mode.upper()} | target: {target.name} ({target.base_url})")
 
     # Lógica de Inicialización
     if args.mode == "fresh":
-        fresh_reset()
+        if target.name == "mattermost":
+            fresh_reset()
+        elif target.name == "naviq":
+            # naviq_fresh_reset() also ensures the dev server itself is
+            # running now (ensure_naviq_server_running, blocks/environment.py)
+            # — reversed from Phase 4 Task 4.3's original "manual
+            # prerequisite only" decision once a real no-CLI requirement
+            # (a jury operating the pipeline from the frontend only) made
+            # that a hard blocker instead of a developer convenience trade-off.
+            naviq_fresh_reset()
+        else:
+            raise SystemExit(f"[main] --mode fresh has no implementation for target={target.name!r}.")
     else:
-        print("Restore mode: using container and existing volumes.")
+        print(f"Restore mode: assuming target={target.name!r} is already up and reachable.")
+        if target.name == "naviq":
+            ensure_naviq_server_running()
 
     # Ejecución de bloques
-    run_id = run_history.start_run(mode=args.mode)
+    run_id = run_history.start_run(mode=args.mode, target=target.name)
     try:
-        run_static_analysis(pipeline_results)
-        run_dynamic_discovery(pipeline_results)
+        run_static_analysis(pipeline_results, target)
+        run_dynamic_discovery(pipeline_results, target)
         generate_payloads(client=client)
         run_human_review(pipeline_results)
-        execute_attacks()
+        execute_attacks(target)
         analyze_results(pipeline_results, ask_llm)
         correlate_results(pipeline_results, ask_llm)
     except Exception:

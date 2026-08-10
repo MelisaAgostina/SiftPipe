@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from blocks import run_history
-from blocks.environment import MM_PING_URL, fresh_reset
+from blocks.environment import MM_PING_URL, ensure_naviq_server_running, fresh_reset, naviq_fresh_reset, stop_naviq_server
+from blocks.targets import TARGETS, get_target
 from main import (
     analyze_results,
     ask_llm,
@@ -44,6 +45,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("shutdown")
+def _on_shutdown():
+    """Best-effort: don't leave a NaViQ dev server this process spawned
+    (ensure_naviq_server_running) orphaned after a clean API shutdown."""
+    stop_naviq_server()
+
 # ── Auth on destructive endpoints ───────────────────────────────────────────
 # Unset (local dev) means no check at all — every request is accepted, same as
 # before this existed. Once deployed, set SIFTPIPE_API_KEY and the matching
@@ -52,6 +60,16 @@ app.add_middleware(
 # just to stop a stray bot from hitting an open reset endpoint on an unlisted
 # demo link nobody's advertising.
 SIFTPIPE_API_KEY = os.getenv("SIFTPIPE_API_KEY")
+
+# ── Active target profile (MULTI_TARGET_PLAN.md Phase 1/5) ─────────────────
+# SIFTPIPE_TARGET only picks the *initial* value now — resolved eagerly so a
+# typo'd env var fails fast at startup instead of surfacing later as a
+# confusing 500. From here on ACTIVE_TARGET is a plain module global that
+# POST /api/target reassigns at runtime (Phase 5 Task 5.3): every function
+# below reads the name `ACTIVE_TARGET` from this module's namespace at call
+# time, not at def time, so a reassignment is picked up by all of them
+# without needing a mutable wrapper object.
+ACTIVE_TARGET = get_target(os.getenv("SIFTPIPE_TARGET", "mattermost"))
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)):
@@ -103,16 +121,23 @@ def env_log(message: str):
 
 
 def run_environment_reset():
-    """Corre fresh_reset() en background. No interactivo: si la creación
-    automática del admin falla, levanta un error en vez de bloquear el
-    thread esperando un input() que nunca va a llegar desde la API."""
+    """Corre el fresh reset del target activo en background. La rama
+    Mattermost es no interactiva: si la creación automática del admin
+    falla, levanta un error en vez de bloquear el thread esperando un
+    input() que nunca va a llegar desde la API. La rama NaViQ nunca
+    necesitó ese fallback — su creación de cuenta ya es 100% scripted."""
     env_state["running"] = True
     env_state["completed"] = False
     env_state["error"] = None
     env_state["logs"] = []
 
     try:
-        fresh_reset(log_fn=env_log, interactive=False)
+        if ACTIVE_TARGET.name == "mattermost":
+            fresh_reset(log_fn=env_log, interactive=False)
+        elif ACTIVE_TARGET.name == "naviq":
+            naviq_fresh_reset(log_fn=env_log)
+        else:
+            raise RuntimeError(f"No fresh-reset implementation for target={ACTIVE_TARGET.name!r}.")
         env_state["completed"] = True
     except Exception as e:
         env_state["error"] = str(e)
@@ -128,17 +153,23 @@ def run_pipeline_until_b6():
     pipeline_state["error"] = None
     pipeline_state["logs"] = []
     pipeline_state["waiting_for_human"] = False
-    pipeline_state["run_id"] = run_history.start_run(mode="api")
+    pipeline_state["run_id"] = run_history.start_run(mode="api", target=ACTIVE_TARGET.name)
 
     try:
+        # Safety net, not the primary path (that's naviq_fresh_reset() via
+        # "Prepare environment") — covers restore mode, or any run started
+        # without clicking Prepare environment first. A no-op if already up.
+        if ACTIVE_TARGET.name == "naviq":
+            ensure_naviq_server_running(log_fn=log)
+
         pipeline_state["current_block"] = "B3"
         log(">> B3 - Static analysis started")
-        run_static_analysis(pipeline_results)
+        run_static_analysis(pipeline_results, ACTIVE_TARGET)
         log("OK B3 completed")
 
         pipeline_state["current_block"] = "B4"
         log(">> B4 - Dynamic discovery started")
-        run_dynamic_discovery(pipeline_results)
+        run_dynamic_discovery(pipeline_results, ACTIVE_TARGET)
         log("OK B4 completed")
 
         pipeline_state["current_block"] = "B5"
@@ -169,7 +200,7 @@ def run_pipeline_from_b7():
     try:
         pipeline_state["current_block"] = "B7"
         log(">> B7 - Attack execution")
-        execute_attacks()
+        execute_attacks(ACTIVE_TARGET)
         log("OK B7 completed")
 
         pipeline_state["current_block"] = "B8"
@@ -202,6 +233,10 @@ class ValidatePayloadsRequest(BaseModel):
     comment: str = ""
 
 
+class SetTargetRequest(BaseModel):
+    name: str   # must match a key in blocks.targets.TARGETS ("mattermost" | "naviq")
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -209,21 +244,91 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/target")
+def get_active_target():
+    """Active target + the closed set the picker in TopBar.tsx can switch
+    between (MULTI_TARGET_PLAN.md Phase 5 Task 5.3) — not a generic
+    "add any site" list, just the two profiles blocks/targets.py defines."""
+    return {
+        "name": ACTIVE_TARGET.name,
+        "display_name": ACTIVE_TARGET.display_name,
+        "stack_label": ACTIVE_TARGET.stack_label,
+        "supports_fresh_reset": ACTIVE_TARGET.supports_fresh_reset,
+        "available": [
+            {"name": t.name, "display_name": t.display_name}
+            for t in TARGETS.values()
+        ],
+    }
+
+
+@app.post("/api/target", dependencies=[Depends(require_api_key)])
+def set_active_target(body: SetTargetRequest):
+    """Switches the active target at runtime. Blocked while a run or an
+    environment reset is in flight — ACTIVE_TARGET is a single process-wide
+    global (see the comment above its declaration), so swapping it mid-run
+    would attribute B3-B9 output for one target to whichever was active when
+    each block started. pipeline_state/env_state are cleared on a successful
+    switch so the UI doesn't show a stale "completed"/"error" banner left
+    over from the target that was active before."""
+    global ACTIVE_TARGET
+
+    if pipeline_state["running"] or pipeline_state["waiting_for_human"]:
+        raise HTTPException(status_code=409, detail="Cannot switch target while the pipeline is running")
+    if env_state["running"]:
+        raise HTTPException(status_code=409, detail="Cannot switch target while the environment is being prepared")
+
+    try:
+        ACTIVE_TARGET = get_target(body.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    pipeline_state.update({
+        "running": False,
+        "current_block": None,
+        "waiting_for_human": False,
+        "completed": False,
+        "error": None,
+        "logs": [],
+        "run_id": None,
+    })
+    env_state.update({"running": False, "completed": False, "error": None, "logs": []})
+
+    return {
+        "name": ACTIVE_TARGET.name,
+        "display_name": ACTIVE_TARGET.display_name,
+        "stack_label": ACTIVE_TARGET.stack_label,
+        "supports_fresh_reset": ACTIVE_TARGET.supports_fresh_reset,
+    }
+
+
 @app.get("/api/environment/health")
 def environment_health():
-    """Chequeo rápido y no bloqueante: ¿Mattermost ya está arriba y respondiendo?
-    Permite que la UI decida si hace falta un fresh reset antes de correr B3-B9."""
+    """Chequeo rápido y no bloqueante: ¿el target activo ya está arriba y
+    respondiendo? Permite que la UI decida si hace falta un fresh reset antes
+    de correr B3-B9. Mattermost has a real ping endpoint (/api/v4/system/ping);
+    NaViQ (and any future non-Mattermost target) doesn't, so a plain GET on
+    its base_url is the generic equivalent — a dev server that's down refuses
+    the connection, one that's up returns 200 for its login page."""
+    ping_url = MM_PING_URL if ACTIVE_TARGET.name == "mattermost" else ACTIVE_TARGET.base_url
     try:
-        resp = requests.get(MM_PING_URL, timeout=3)
-        return {"mattermost_up": resp.status_code == 200}
+        resp = requests.get(ping_url, timeout=3)
+        target_up = resp.status_code == 200
     except requests.exceptions.RequestException:
-        return {"mattermost_up": False}
+        target_up = False
+    return {"target_up": target_up, "target": ACTIVE_TARGET.name}
 
 
 @app.post("/api/environment/reset", dependencies=[Depends(require_api_key)])
 def reset_environment():
-    """Corre fresh_reset() (Docker down, wipe de volúmenes, up, seed) en background.
-    Reemplaza a `python main.py --mode fresh` para quien solo usa la UI."""
+    """Corre el fresh reset del target activo en background — Mattermost
+    (Docker down, wipe de volúmenes, up, seed) o NaViQ (borra db.sqlite3,
+    migrate, seed, recrea la cuenta de test). Reemplaza a
+    `python main.py --mode fresh` para quien solo usa la UI."""
+    if ACTIVE_TARGET.name not in ("mattermost", "naviq"):
+        raise HTTPException(
+            status_code=501,
+            detail=f"No fresh-reset implementation for target={ACTIVE_TARGET.name!r}.",
+        )
     if env_state["running"]:
         raise HTTPException(status_code=409, detail="The environment is already being prepared")
     if pipeline_state["running"] or pipeline_state["waiting_for_human"]:

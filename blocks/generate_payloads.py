@@ -40,6 +40,20 @@ def build_dynamic_targets(attack_surface):
         method = form.get("method", "get")
 
         for field in form.get("fields", []):
+            # Real bug found live during Phase 4 Task 4.2's verification
+            # against NaViQ (MULTI_TARGET_PLAN.md): extract_forms()
+            # (blocks/dynamic_analysis.py) captures every field of a form
+            # unconditionally, hidden ones included. A CSRF token or a
+            # redirect field can never be filled/submitted meaningfully —
+            # injecting into one just times out waiting for it to become
+            # visible. Barely mattered for Mattermost (a React SPA with no
+            # server-rendered CSRF hidden inputs on every page), but NaViQ's
+            # `{% csrf_token %}` + i18n language-switcher form appears on
+            # literally every page, so hidden fields dominated (15/20
+            # targets in the run that caught this — genuinely interesting
+            # ones like the contact form's email/message got crowded out).
+            if field.get("type") == "hidden":
+                continue
             targets.append({
                 "type":       "form_field",
                 "target":     f"form field '{field.get('name') or field.get('id') or 'unknown'}' on page '{page}'",

@@ -40,6 +40,52 @@ class TestBuildDynamicTargets(unittest.TestCase):
         self.assertEqual(targets[1]["field_name"], "search")
         self.assertTrue(all(t["type"] == "form_field" for t in targets))
 
+    def test_hidden_fields_are_excluded(self):
+        """
+        Real bug found live during Phase 4 Task 4.2's verification against
+        NaViQ (MULTI_TARGET_PLAN.md): a hidden csrfmiddlewaretoken/redirect
+        field can never be usefully injected into (it never becomes
+        "visible" for B7 to fill), and NaViQ's csrf-token-on-every-page
+        pattern let these crowd out real fields almost entirely.
+        """
+        attack_surface = {
+            "forms": [{
+                "page": "home",
+                "action": "http://x/contact/send/",
+                "page_url": "http://x/home",
+                "fields": [
+                    {"id": None, "name": "csrfmiddlewaretoken", "type": "hidden"},
+                    {"id": None, "name": "message", "type": "textarea"},
+                ],
+            }],
+            "inputs": [],
+            "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["field_name"], "message")
+
+    def test_form_with_only_hidden_fields_contributes_no_targets(self):
+        attack_surface = {
+            "forms": [{
+                "page": "every_page",
+                "action": "http://x/i18n/setlang/",
+                "page_url": "http://x/home",
+                "fields": [
+                    {"id": None, "name": "csrfmiddlewaretoken", "type": "hidden"},
+                    {"id": None, "name": "next", "type": "hidden"},
+                ],
+            }],
+            "inputs": [],
+            "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(targets, [])
+
     def test_inputs_become_targets_when_no_forms(self):
         attack_surface = {
             "forms": [],

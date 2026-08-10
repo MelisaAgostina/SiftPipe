@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  getActiveTarget,
   getBlockResult,
   getEnvironmentHealth,
   getEnvironmentStatus,
@@ -11,6 +12,7 @@ import {
   resetEnvironment,
   resetPipeline,
   runPipeline,
+  setActiveTarget,
   validatePayloads,
 } from "./api";
 import type {
@@ -21,6 +23,7 @@ import type {
   B7Result,
   B8Result,
   B9Result,
+  SetTargetRequest,
   ValidatedPayloadsResult,
   ValidateRequest,
 } from "./types";
@@ -31,6 +34,7 @@ export const queryKeys = {
   result: (block: string) => ["results", block] as const,
   envHealth: ["environment-health"] as const,
   envStatus: ["environment-status"] as const,
+  activeTarget: ["active-target"] as const,
 };
 
 export function usePipelineStatus() {
@@ -55,10 +59,34 @@ export function useLiveRunVisible() {
   return visible;
 }
 
-// Whether Mattermost is already up — polled at a slower cadence than pipeline
-// status since it barely changes outside of an active environment reset.
+// Whether the active target is already up — polled at a slower cadence than
+// pipeline status since it barely changes outside of an active environment reset.
 export function useEnvironmentHealth() {
   return useQuery({ queryKey: queryKeys.envHealth, queryFn: getEnvironmentHealth, refetchInterval: 5000 });
+}
+
+// The active target + the closed set the TopBar picker can switch between
+// (MULTI_TARGET_PLAN.md Phase 5). Rarely changes on its own, so no polling —
+// useSetTarget below invalidates this directly on a successful switch.
+export function useActiveTarget() {
+  return useQuery({ queryKey: queryKeys.activeTarget, queryFn: getActiveTarget });
+}
+
+export function useSetTarget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SetTargetRequest) => setActiveTarget(body),
+    onSuccess: () => {
+      // Target-scoped backend state (pipeline_state/env_state) was reset
+      // server-side by this call — refetch everything that reads either, so
+      // the UI doesn't keep showing the previous target's run/env status.
+      qc.invalidateQueries({ queryKey: queryKeys.activeTarget });
+      qc.invalidateQueries({ queryKey: queryKeys.envHealth });
+      qc.invalidateQueries({ queryKey: queryKeys.envStatus });
+      qc.invalidateQueries({ queryKey: queryKeys.status });
+      qc.invalidateQueries({ queryKey: queryKeys.logs });
+    },
+  });
 }
 
 export function useEnvironmentStatus() {

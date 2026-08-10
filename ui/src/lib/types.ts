@@ -15,9 +15,25 @@ export type PipelineStatus = {
 
 export type LogsResponse = { logs: string[] };
 
-export type EnvironmentHealth = { mattermost_up: boolean };
+export type EnvironmentHealth = { target_up: boolean; target: string };
 export type EnvironmentStatus = { running: boolean; completed: boolean; error: string | null };
 export type EnvironmentResetResponse = { message: string };
+
+export type TargetOption = { name: string; display_name: string };
+export type ActiveTarget = {
+  name: string;
+  display_name: string;
+  stack_label: string;
+  supports_fresh_reset: boolean;
+  available: TargetOption[];
+};
+export type SetTargetRequest = { name: string };
+export type SetTargetResponse = {
+  name: string;
+  display_name: string;
+  stack_label: string;
+  supports_fresh_reset: boolean;
+};
 
 export type B3Finding = {
   vulnerability: string;
