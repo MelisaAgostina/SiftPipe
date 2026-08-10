@@ -1,9 +1,12 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getBlockResult,
   getEnvironmentHealth,
   getEnvironmentStatus,
   getLogs,
+  getRun,
+  getRuns,
   getStatus,
   resetEnvironment,
   resetPipeline,
@@ -32,6 +35,24 @@ export const queryKeys = {
 
 export function usePipelineStatus() {
   return useQuery({ queryKey: queryKeys.status, queryFn: getStatus, refetchInterval: 2000 });
+}
+
+// results/*.json (and pipeline_state.completed itself) persist on the backend
+// across dev-server restarts and between browser sessions, so a fresh page
+// load can otherwise present a previous session's leftover run as if it were
+// current. Sticky and one-way: once this page session has actually observed
+// an active run (started here, or already in progress on load), stays true —
+// including after it finishes — since that result is genuinely relevant to
+// what's on screen. Shared by SecPipelineApp (gates the live result panels)
+// and Sidebar (gates the "Pipeline completed" label / done phase icons) so
+// both tell the same story instead of drifting out of sync.
+export function useLiveRunVisible() {
+  const { data: status } = usePipelineStatus();
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (status?.running || status?.waiting_for_human) setVisible(true);
+  }, [status?.running, status?.waiting_for_human]);
+  return visible;
 }
 
 // Whether Mattermost is already up — polled at a slower cadence than pipeline
@@ -114,6 +135,18 @@ export function useValidatePayloads() {
       qc.invalidateQueries({ queryKey: queryKeys.result("B5_payloads") });
       qc.invalidateQueries({ queryKey: queryKeys.result("validated_payloads") });
     },
+  });
+}
+
+export function usePastRuns() {
+  return useQuery({ queryKey: ["past-runs"], queryFn: getRuns });
+}
+
+export function useRunDetail(runId: number | null) {
+  return useQuery({
+    queryKey: ["run-detail", runId],
+    queryFn: () => getRun(runId as number),
+    enabled: runId !== null,
   });
 }
 

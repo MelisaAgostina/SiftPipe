@@ -79,7 +79,11 @@ export type B5Result = {
   payloads: B5PayloadGroup[];
 };
 
-export type ValidatedPayloadsResult = { status: "complete"; payloads: B5PayloadGroup[] };
+export type ValidatedPayloadsResult = {
+  status: "complete";
+  payloads: B5PayloadGroup[];
+  comment?: string; // absent on the console review path (blocks/human_review.py) and on runs from before this field existed
+};
 
 export type B7Finding = {
   payload_id: string;
@@ -95,6 +99,7 @@ export type B7Finding = {
   detections: string[];
   evidence: string;
   screenshot_path: string | null;
+  video_path: string | null;
   error: string | null;
 };
 export type B7Result = {
@@ -116,6 +121,7 @@ export type B8Finding = {
   confidence: "high" | "medium" | "low";
   evidence: string;
   screenshot_path?: string; // may be absent on entries reused from an older run
+  video_path?: string | null; // absent on entries reused from a run predating this field
 };
 export type B8Result = { status: "complete"; total_analyzed: number; findings: B8Finding[] };
 
@@ -129,6 +135,7 @@ export type B9Entry = {
   target: string;
   payload_id?: string;
   screenshot_path?: string | null;
+  video_path?: string | null;
   classification: B9Classification;
   confidence: string; // real observed value includes "MEDIUM " with a trailing space — don't silently trim
   source: B9Source;
@@ -136,6 +143,8 @@ export type B9Entry = {
   score: number; // 0-1, 3 decimals
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   evidence: string;
+  match_rationale: string; // plain-language why/where this match_tier was picked
+  matched_static_finding: { file: string | null; line: number | null; vulnerability: string | null } | null;
 };
 export type B9Judgment = { verdict: "yes" | "no" | null; rationale: string };
 export type B9Result = {
@@ -145,6 +154,25 @@ export type B9Result = {
   judgments: Record<string, B9Judgment>;
 };
 
+export type RunStatus = "running" | "completed" | "error";
+export type RunSummary = {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  mode: string | null;
+  status: RunStatus;
+  total_findings: number | null;
+  confirmed_findings: number | null;
+};
+export type RunDetail = RunSummary & {
+  // Same {block_name: json} shape as GET /api/results (e.g. "B3_static",
+  // "attack_surface", "B4_dynamic", "B5_payloads", "B8_dynamic",
+  // "B9_correlation") — cast to the matching *Result/*Raw/*Summary type
+  // per key when consuming this, same as the live queries already do.
+  blocks: Record<string, unknown>;
+};
+export type RunsListResponse = { runs: RunSummary[] };
+
 export type ValidateRequest = { approved_indices: number[]; comment?: string };
 export type ValidateResponse = { message: string };
 export type RunResponse = { message: string };
@@ -153,5 +181,13 @@ export type ResultsBulk = Record<string, unknown | null>;
 
 // ── shared UI-level types, used by Section/FindingRow/Tag ──────────────────
 export type BadgeTone = "posible" | "form" | "input" | "confirmada" | "descartada";
-export type UIFinding = { tone: BadgeTone; label: string; title: string; subtitle: string };
+export type UIFinding = {
+  tone: BadgeTone;
+  label: string;
+  title: string;
+  subtitle: string;
+  screenshotUrl?: string | null;
+  videoUrl?: string | null;
+  rationale?: string; // click-to-expand "why/where" explanation, B9 entries only
+};
 export type UISection = { id: string; title: string; findings: UIFinding[] };

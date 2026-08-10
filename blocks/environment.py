@@ -214,12 +214,16 @@ def run_seed_script(log_fn=print):
     log_fn("[env] Seed completed.")
 
 
-def clear_results_folder(path="results", retries=5, retry_delay=1, log_fn=print):
+def clear_results_folder(path="results", retries=10, retry_delay=1.5, log_fn=print):
     """Wipes old results so no stale JSON survives across runs.
 
     Retries briefly on Windows PermissionError — an editor/indexer holding a
     transient handle on the folder right after its contents are deleted is
-    common (e.g. VS Code's file watcher) and normally clears within a second.
+    common (e.g. VS Code's file watcher) and normally clears within a few
+    seconds. B7 (dynamic_injector.py) now always closes its browser in a
+    `finally`, so a lingering headless=False Chromium process shouldn't be
+    the cause anymore — but the retry stays as a safety net for AV/indexer
+    locks on the screenshot files it wrote to results/dynamic/.
     """
     if os.path.exists(path):
         log_fn(f"[env] Clearing folder '{path}'...")
@@ -227,8 +231,14 @@ def clear_results_folder(path="results", retries=5, retry_delay=1, log_fn=print)
             try:
                 shutil.rmtree(path)
                 break
-            except PermissionError:
+            except PermissionError as e:
                 if attempt == retries:
+                    log_fn(
+                        f"[env] Could not clear '{path}' after {retries} attempts: {e}. "
+                        "Close any process that might have a file open in that folder "
+                        "(image viewer, Explorer preview pane, or a leftover chromium.exe "
+                        "from a previous B7 run) and try again."
+                    )
                     raise
                 time.sleep(retry_delay)
     os.makedirs(path, exist_ok=True)

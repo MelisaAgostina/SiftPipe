@@ -100,6 +100,12 @@ function AlreadyPastB6({
           <Callout>
             Already validated — {validated.payloads.length} target(s) approved in this run.
           </Callout>
+          {validated.comment && (
+            <div className="rounded border border-border bg-muted/40 px-3 py-2 text-xs text-foreground">
+              <span className="font-semibold text-muted-foreground">Reviewer note: </span>
+              {validated.comment}
+            </div>
+          )}
           <div className="grid gap-3">
             {validated.payloads.map((g, i) => (
               <Card key={i}>

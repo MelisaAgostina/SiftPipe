@@ -1,0 +1,6 @@
+[submodule "mattermost-src/mattermost"]
+	path = mattermost-src/mattermost
+	url = https://github.com/mattermost/mattermost.git
+	# v11.7.0 is a tag, not a branch — `git submodule update --remote` won't
+	# follow it. To refresh: cd mattermost-src/mattermost && git fetch --depth 1
+	# origin <new-tag> && git checkout <new-tag>, then `git add` it from the root.

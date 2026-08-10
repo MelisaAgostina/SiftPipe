@@ -146,6 +146,23 @@ class TestAnalyzeResults(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(out["B8"]["findings"][0]["result"], "possible")
 
+    def test_ask_llm_error_placeholder_still_gets_a_valid_result_field(self):
+        # main.py's ask_llm() catches every exception (including Groq 429 rate
+        # limits) and returns {"vulnerability": "API Error", "evidence": ...}
+        # with no "result" key at all — analyze_results() must still write a
+        # valid result value, since the frontend's B8Finding.result is typed
+        # as non-optional and un-guarded (f.result.toUpperCase()).
+        pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
+
+        def fake_ask_llm(prompt):
+            return {"vulnerability": "API Error", "evidence": "Error code: 429 - rate limit reached"}
+
+        out = analyze_results(pipeline_results, fake_ask_llm)
+
+        finding = out["B8"]["findings"][0]
+        self.assertIn(finding["result"], ("confirmed", "possible", "discarded"))
+        self.assertEqual(finding["vulnerability"], "API Error")
+
     def test_no_b7_findings_produces_empty_b8_without_calling_llm(self):
         pipeline_results = {"B7": {"findings": []}}
 

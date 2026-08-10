@@ -33,6 +33,7 @@ from blocks.dynamic_injector import run_payloads
 from blocks.analyze_results import analyze_results
 from blocks.correlate_results import correlate_results
 from blocks.environment import fresh_reset
+from blocks import run_history
 
 def ask_llm(prompt):
     try:
@@ -164,14 +165,20 @@ def main():
         print("Restore mode: using container and existing volumes.")
 
     # Ejecución de bloques
-    run_static_analysis(pipeline_results)
-    run_dynamic_discovery(pipeline_results)
-    generate_payloads(client=client)
-    run_human_review(pipeline_results)
-    execute_attacks()
-    analyze_results(pipeline_results, ask_llm)
-    correlate_results(pipeline_results, ask_llm)
+    run_id = run_history.start_run(mode=args.mode)
+    try:
+        run_static_analysis(pipeline_results)
+        run_dynamic_discovery(pipeline_results)
+        generate_payloads(client=client)
+        run_human_review(pipeline_results)
+        execute_attacks()
+        analyze_results(pipeline_results, ask_llm)
+        correlate_results(pipeline_results, ask_llm)
+    except Exception:
+        run_history.finish_run(run_id, "error")
+        raise
 
+    run_history.finish_run(run_id, "completed")
     print("\nPipeline completed. Results available in /results.")
 
 if __name__ == "__main__":

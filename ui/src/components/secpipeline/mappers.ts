@@ -10,6 +10,7 @@ import type {
   B9Entry,
   UIFinding,
 } from "@/lib/types";
+import { mediaUrl } from "@/lib/api";
 
 export function mapB3Finding(f: B3Finding): UIFinding {
   return {
@@ -55,6 +56,8 @@ export function mapB8Finding(f: B8Finding): UIFinding {
     label: f.result.toUpperCase(),
     title: `${f.vulnerability} — ${f.target}`,
     subtitle: `${f.evidence} · confidence: ${f.confidence}`,
+    screenshotUrl: mediaUrl(f.screenshot_path),
+    videoUrl: mediaUrl(f.video_path),
   };
 }
 
@@ -70,6 +73,9 @@ export function mapB9Entry(e: B9Entry): UIFinding {
     label: e.classification,
     title: `${e.vulnerability} — ${e.target}`,
     subtitle: `${e.source} · ${e.severity} · score ${e.score.toFixed(3)} · ${e.evidence}`,
+    screenshotUrl: mediaUrl(e.screenshot_path),
+    videoUrl: mediaUrl(e.video_path),
+    rationale: e.match_rationale,
   };
 }
 

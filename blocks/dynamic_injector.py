@@ -1,6 +1,7 @@
 import os
 import json
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from blocks.mattermost_auth import LOGIN_ID_SELECTORS, PASSWORD_SELECTORS, find_working_selector
 from blocks.taxonomy import infer_taxonomy
 
 # --- Config (set these in your .env or environment) ---
@@ -8,19 +9,21 @@ MM_URL      = os.getenv("MM_URL",      "http://localhost:8065")
 MM_TEAM     = os.getenv("MM_TEAM",     "equipo-tesina")
 MM_USERNAME = os.getenv("MM_USERNAME", "victima@test.com")
 MM_PASSWORD = os.getenv("MM_PASSWORD", "Password123!")
+PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
 
 
 def _login(page):
     """
-    Authenticate into Mattermost using the same selectors as B4 (dynamic_analysis.py).
+    Authenticate into Mattermost using the selectors shared with B4 in
+    blocks/mattermost_auth.py, with fallbacks if the primary ids ever change.
     """
-    page.goto(f"{MM_URL}/login", wait_until="networkidle")
+    page.goto(f"{MM_URL}/login", wait_until="domcontentloaded")
 
-    page.wait_for_selector("input[id='input_loginId']", timeout=30000)
-    page.wait_for_selector("input[id='input_password-input']", timeout=10000)
+    login_selector = find_working_selector(page, LOGIN_ID_SELECTORS, timeout=30000)
+    password_selector = find_working_selector(page, PASSWORD_SELECTORS, timeout=10000)
 
-    page.fill("input[id='input_loginId']", MM_USERNAME)
-    page.fill("input[id='input_password-input']", MM_PASSWORD)
+    page.fill(login_selector, MM_USERNAME)
+    page.fill(password_selector, MM_PASSWORD)
 
     login_clicked = False
 
@@ -41,7 +44,7 @@ def _login(page):
             pass
 
     if not login_clicked:
-        page.press("input[id='input_password-input']", "Enter")
+        page.press(password_selector, "Enter")
 
     page.wait_for_url("**/channels/**", timeout=15000)
     print("[B7] Login exitoso.")
@@ -61,13 +64,17 @@ def _is_submission_response(response):
     return url.endswith("/api/v4/posts") or url.endswith("/api/v4/commands/execute")
 
 
-def _execute_one(page, page_url, input_selector, payload, pid):
+def _execute_one(browser, storage_state, page_url, input_selector, payload, pid):
     """
-    Navigate to page_url, inject payload into input_selector, submit via Enter,
-    and capture the resulting API response. Uses page.expect_response() scoped
-    to the submit action itself, instead of a page-wide listener + fixed sleep —
-    that gave no real correlation between "this payload's submission" and
-    "whatever /api/v4/posts-ish response happened to arrive in the next 2s".
+    Runs one payload in its own browser context — logged in via `storage_state`
+    captured once at the start of the run, instead of a fresh login — so each
+    payload gets its own video recording alongside its own screenshot, instead
+    of one shared clip for the whole run. Navigate to page_url, inject payload
+    into input_selector, submit via Enter, and capture the resulting API
+    response. Uses page.expect_response() scoped to the submit action itself,
+    instead of a page-wide listener + fixed sleep — that gave no real
+    correlation between "this payload's submission" and "whatever
+    /api/v4/posts-ish response happened to arrive in the next 2s".
     Returns a result dict.
     """
     result = {
@@ -75,11 +82,19 @@ def _execute_one(page, page_url, input_selector, payload, pid):
         "status_code":     None,
         "response_body":   "",
         "screenshot_path": f"results/dynamic/screenshot_{pid}.png",
+        "video_path":      None,
         "error":           None,
     }
 
+    context = browser.new_context(storage_state=storage_state, record_video_dir="results/videos/")
+    # Same landing-page skip as B4 (blocks/dynamic_analysis.py) — belt-and-suspenders
+    # alongside storage_state, in case a Playwright version doesn't carry
+    # localStorage over in storage_state.
+    context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
+    page = context.new_page()
+
     try:
-        page.goto(page_url, wait_until="networkidle", timeout=15000)
+        page.goto(page_url, wait_until="domcontentloaded", timeout=15000)
         page.wait_for_selector(input_selector, timeout=8000)
         page.fill(input_selector, payload)
 
@@ -105,6 +120,26 @@ def _execute_one(page, page_url, input_selector, payload, pid):
     except Exception as e:
         result["error"] = str(e)
         print(f"[B7]   Error en payload {pid}: {e}")
+
+    finally:
+        # Video only finalizes to disk once the context is closed, so resolve
+        # page.video.path() after context.close() and give it this payload's
+        # id instead of Playwright's generated UUID filename — same naming
+        # scheme as the screenshot above.
+        context.close()
+        try:
+            video_path = page.video.path() if page.video else None
+        except Exception:
+            video_path = None
+        if video_path and os.path.exists(video_path):
+            final_path = f"results/videos/{pid}.webm"
+            try:
+                if os.path.exists(final_path):
+                    os.remove(final_path)
+                os.rename(video_path, final_path)
+                result["video_path"] = final_path
+            except Exception as e:
+                print(f"[B7]   Could not save video for {pid}: {e}")
 
     return result
 
@@ -132,131 +167,146 @@ def run_payloads(validated_payloads_path, pipeline_results):
     total     = 0
     anomalies = 0
 
+    os.makedirs("results/videos", exist_ok=True)
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
-        page    = context.new_page()
+        browser = p.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
+        try:
+            # Authenticate once in a throwaway context, then hand its cookies/session
+            # to every per-payload context below via storage_state — one login, but
+            # each payload still gets its own isolated context (and thus its own
+            # video recording), instead of sharing a single context for the whole run.
+            login_context = browser.new_context()
+            login_context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
+            login_page = login_context.new_page()
+            _login(login_page)
+            storage_state = login_context.storage_state()
+            login_context.close()
 
-        # Authenticate once
-        _login(page)
+            for idx, item in enumerate(validated, start=1):
 
-        for idx, item in enumerate(validated, start=1):
+                # ── FIX: guard against flat string items (B6 format mismatch) ──
+                if not isinstance(item, dict):
+                    print(f"[B7] Advertencia: ítem {idx} es string, no dict. Se omite. "
+                          f"Verifica el formato de {validated_payloads_path}.")
+                    continue
 
-            # ── FIX: guard against flat string items (B6 format mismatch) ──
-            if not isinstance(item, dict):
-                print(f"[B7] Advertencia: ítem {idx} es string, no dict. Se omite. "
-                      f"Verifica el formato de {validated_payloads_path}.")
-                continue
+                page_url     = item.get("page_url") or item.get("action") or item.get("target") or ""
+                target       = item.get("target")   or page_url
+                field_id     = item.get("field_id")
+                field_name   = item.get("field_name")
+                payload_list = item.get("payloads") or []
 
-            page_url     = item.get("page_url") or item.get("action") or item.get("target") or ""
-            target       = item.get("target")   or page_url
-            field_id     = item.get("field_id")
-            field_name   = item.get("field_name")
-            payload_list = item.get("payloads") or []
+                # ── Skip file inputs — needs set_input_files(), deferred to later sprint ──
+                if field_id == "fileUploadInput":
+                    print(f"[B7] Saltando fileUploadInput en {page_url} (requiere set_input_files)")
+                    continue
 
-            # ── Skip file inputs — needs set_input_files(), deferred to later sprint ──
-            if field_id == "fileUploadInput":
-                print(f"[B7] Saltando fileUploadInput en {page_url} (requiere set_input_files)")
-                continue
-
-            # Build selector
-            if field_id:
-                selector = f"#{field_id}"
-            elif field_name and field_name != "unknown":
-                selector = f"[name='{field_name}']"
-            else:
-                selector = "textarea"
-
-            for subidx, payload in enumerate(payload_list, start=1):
-                if not isinstance(payload, str):
-                    payload = str(payload)
-
-                total += 1
-                pid = f"{idx}_{subidx}"
-                print(f"[B7] [{pid}] {field_id or selector} @ {page_url} | {repr(payload)[:60]}")
-
-                raw_r = _execute_one(page, page_url, selector, payload, pid)
-
-                # ── Detection rules ──
-                detections = []
-                body       = raw_r.get("response_body", "") or ""
-                status     = raw_r.get("status_code")
-                bl         = body.lower()
-
-                if status == 500 or any(k in bl for k in ("syntax error", "sqlstate", "sql error", "database error")):
-                    detections.append("SQLi")
-
-                if payload and payload in body:
-                    detections.append("XSS_reflected")
-
-                shell_syms   = [";", "&&", "|", "`", "$()"]
-                cmd_markers  = ["command not found", "sh:", "/bin/", "uid=", "root:", "permission denied", "no such file"]
-                if any(s in payload for s in shell_syms) and any(m in bl for m in cmd_markers):
-                    detections.append("Command_Injection")
-
-                if ".." in payload and any(m in bl for m in ["root:x:", "etc/passwd", "document"]):
-                    detections.append("Path_Traversal")
-
-                if status == 401:
-                    detections.append("Broken_Authentication")
-                if status == 403 or any(k in bl for k in ("not authorized", "forbidden")):
-                    detections.append("Broken_Access_Control")
-
-                misconf_markers = ["traceback", "exception", "stack trace", "ora-", "server error"]
-                if any(m in bl for m in misconf_markers):
-                    detections.append("Security_Misconfiguration")
-                    detections.append("Information_Disclosure")
-
-                detections = list(dict.fromkeys(detections))  # dedup, preserve order
-                if detections:
-                    anomalies += 1
-
-                # Map to vulnerability label for B8/B9 matching
-                if "SQLi" in detections:
-                    vuln = "Injection"
-                elif "XSS_reflected" in detections:
-                    vuln = "XSS"
-                elif detections:
-                    vuln = detections[0]
+                # Build selector
+                if field_id:
+                    selector = f"#{field_id}"
+                elif field_name and field_name != "unknown":
+                    selector = f"[name='{field_name}']"
                 else:
-                    vuln = "Unknown"
+                    selector = "textarea"
 
-                vuln_taxonomy = infer_taxonomy({"vulnerability": vuln})
+                for subidx, payload in enumerate(payload_list, start=1):
+                    if not isinstance(payload, str):
+                        payload = str(payload)
 
-                # Short evidence snippet
-                evidence = ""
-                if status == 500:
-                    evidence = "HTTP 500 returned by target"
-                elif "syntax error" in bl:
-                    i = bl.find("syntax error")
-                    evidence = body[max(0, i - 80): i + 200]
-                elif body:
-                    evidence = body[:200]
+                    total += 1
+                    pid = f"{idx}_{subidx}"
+                    print(f"[B7] [{pid}] {field_id or selector} @ {page_url} | {repr(payload)[:60]}")
 
-                finding = {
-                    "payload_id":       pid,
-                    "target":           target,
-                    "endpoint":         page_url,
-                    "field_id":         field_id,
-                    "payload":          payload,
-                    "vulnerability":    vuln,
-                    "cwe_id":           vuln_taxonomy["cwe_id"],
-                    "owasp_category":   vuln_taxonomy["owasp_category"],
-                    "status_code":      status,
-                    "anomaly_detected": bool(detections),
-                    "detections":       detections,
-                    "evidence":         evidence,
-                    "screenshot_path":  raw_r.get("screenshot_path"),
-                    "error":            raw_r.get("error"),
-                }
+                    raw_r = _execute_one(browser, storage_state, page_url, selector, payload, pid)
 
-                findings.append(finding)
+                    # ── Detection rules ──
+                    detections = []
+                    body       = raw_r.get("response_body", "") or ""
+                    status     = raw_r.get("status_code")
+                    bl         = body.lower()
 
-                # Partial save per payload for inspection
-                with open(f"results/dynamic/b7_{pid}.json", "w", encoding="utf-8") as fh:
-                    json.dump(finding, fh, indent=4)
+                    if status == 500 or any(k in bl for k in ("syntax error", "sqlstate", "sql error", "database error")):
+                        detections.append("SQLi")
 
-        browser.close()
+                    if payload and payload in body:
+                        detections.append("XSS_reflected")
+
+                    shell_syms   = [";", "&&", "|", "`", "$()"]
+                    cmd_markers  = ["command not found", "sh:", "/bin/", "uid=", "root:", "permission denied", "no such file"]
+                    if any(s in payload for s in shell_syms) and any(m in bl for m in cmd_markers):
+                        detections.append("Command_Injection")
+
+                    if ".." in payload and any(m in bl for m in ["root:x:", "etc/passwd", "document"]):
+                        detections.append("Path_Traversal")
+
+                    if status == 401:
+                        detections.append("Broken_Authentication")
+                    if status == 403 or any(k in bl for k in ("not authorized", "forbidden")):
+                        detections.append("Broken_Access_Control")
+
+                    misconf_markers = ["traceback", "exception", "stack trace", "ora-", "server error"]
+                    if any(m in bl for m in misconf_markers):
+                        detections.append("Security_Misconfiguration")
+                        detections.append("Information_Disclosure")
+
+                    detections = list(dict.fromkeys(detections))  # dedup, preserve order
+                    if detections:
+                        anomalies += 1
+
+                    # Map to vulnerability label for B8/B9 matching
+                    if "SQLi" in detections:
+                        vuln = "Injection"
+                    elif "XSS_reflected" in detections:
+                        vuln = "XSS"
+                    elif detections:
+                        vuln = detections[0]
+                    else:
+                        vuln = "Unknown"
+
+                    vuln_taxonomy = infer_taxonomy({"vulnerability": vuln})
+
+                    # Short evidence snippet
+                    evidence = ""
+                    if status == 500:
+                        evidence = "HTTP 500 returned by target"
+                    elif "syntax error" in bl:
+                        i = bl.find("syntax error")
+                        evidence = body[max(0, i - 80): i + 200]
+                    elif body:
+                        evidence = body[:200]
+
+                    finding = {
+                        "payload_id":       pid,
+                        "target":           target,
+                        "endpoint":         page_url,
+                        "field_id":         field_id,
+                        "payload":          payload,
+                        "vulnerability":    vuln,
+                        "cwe_id":           vuln_taxonomy["cwe_id"],
+                        "owasp_category":   vuln_taxonomy["owasp_category"],
+                        "status_code":      status,
+                        "anomaly_detected": bool(detections),
+                        "detections":       detections,
+                        "evidence":         evidence,
+                        "screenshot_path":  raw_r.get("screenshot_path"),
+                        "video_path":       raw_r.get("video_path"),
+                        "error":            raw_r.get("error"),
+                    }
+
+                    findings.append(finding)
+
+                    # Partial save per payload for inspection
+                    with open(f"results/dynamic/b7_{pid}.json", "w", encoding="utf-8") as fh:
+                        json.dump(finding, fh, indent=4)
+        finally:
+            # Guarantees the Chromium process always exits, even if a
+            # payload/selector error interrupts the loop — otherwise it lingers holding
+            # file handles on results/dynamic/*, which then blocks the next
+            # "Reset environment" from deleting that folder (WinError 5 on Windows).
+            # Each payload's own context (and video) is already closed inside
+            # _execute_one, so there's nothing left to finalize here.
+            browser.close()
 
     final = {
         "status":          "complete",

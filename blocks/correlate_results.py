@@ -178,13 +178,13 @@ def correlate_results(pipeline_results=None, ask_llm=None):
         return verdict
 
     def find_match(b8, dyn_taxonomy, vuln_type):
-        """Returns (matched_index|None, match_tier)."""
+        """Returns (matched_index|None, match_tier, judge_rationale|None)."""
         # Tier 1: exact CWE match
         if dyn_taxonomy["cwe_id"]:
             for i, b3 in enumerate(b3_findings):
                 stat_taxonomy = infer_taxonomy(b3)
                 if stat_taxonomy["cwe_id"] and stat_taxonomy["cwe_id"] == dyn_taxonomy["cwe_id"]:
-                    return i, "cwe"
+                    return i, "cwe", None
 
         # Tier 2/3: same OWASP category, different or missing CWE — ambiguous
         if dyn_taxonomy["owasp_category"]:
@@ -195,19 +195,39 @@ def correlate_results(pipeline_results=None, ask_llm=None):
                 pair_key = f"{b8.get('payload_id', '?')}|{b3.get('file', '?')}|{i}"
                 verdict = judge(b3, b8, pair_key)
                 if verdict == "yes":
-                    return i, "judge"
+                    rationale = judgments.get(pair_key, {}).get("rationale", "")
+                    return i, "judge", rationale
                 if verdict == "no":
                     continue
                 # verdict is None: no judge available/inconclusive/budget spent —
                 # a shared OWASP category is still meaningful signal on its own.
-                return i, "owasp"
+                return i, "owasp", None
 
         # Tier 4: legacy free-text fallback for findings with no taxonomy at all
         for i, b3 in enumerate(b3_findings):
             if _legacy_text_match(b3, vuln_type):
-                return i, "text"
+                return i, "text", None
 
-        return None, "none"
+        return None, "none", None
+
+    def _explain_match(match_tier, b3, b8, judge_rationale, dyn_target):
+        """One or two plain-language sentences for the UI's click-to-expand
+        popover: which static finding this correlated against (the "where")
+        and why the match tier landed where it did (the "why")."""
+        if match_tier == "none" or b3 is None:
+            return "No static finding correlated with this dynamic attempt — evaluated on dynamic evidence alone."
+
+        where = f"{b3.get('file', 'unknown file')}:{b3.get('line', '?')}"
+        if match_tier == "cwe":
+            return f"Matched static finding at {where} on an exact CWE match ({b3.get('cwe_id')})."
+        if match_tier == "judge":
+            reason = judge_rationale or "the LLM judge found no distinguishing evidence between the two."
+            return f"Matched static finding at {where}: same OWASP category, different/missing CWE — an LLM judge concluded it's the same issue against {dyn_target}. {reason}"
+        if match_tier == "owasp":
+            return f"Matched static finding at {where} only by shared OWASP category ({b3.get('category', '?')}) — CWE differs or is missing, and no LLM judge was available or conclusive."
+        if match_tier == "text":
+            return f"Matched static finding at {where} by legacy free-text label similarity — neither side had a usable CWE/OWASP taxonomy."
+        return f"Matched static finding at {where}."
 
     correlated = []
     b3_matched_indices = set()
@@ -219,9 +239,10 @@ def correlate_results(pipeline_results=None, ask_llm=None):
         evidence = b8.get("evidence", "No dynamic evidence provided")
         payload_id = b8.get("payload_id")
         screenshot_path = b8.get("screenshot_path")
+        video_path = b8.get("video_path")
 
         dyn_taxonomy = infer_taxonomy(b8)
-        matched_index, match_tier = find_match(b8, dyn_taxonomy, vuln_type)
+        matched_index, match_tier, judge_rationale = find_match(b8, dyn_taxonomy, vuln_type)
         match_found = matched_index is not None
         matched_b3 = b3_findings[matched_index] if match_found else None
 
@@ -263,13 +284,19 @@ def correlate_results(pipeline_results=None, ask_llm=None):
             "target": target,
             "payload_id": payload_id,
             "screenshot_path": screenshot_path,
+            "video_path": video_path,
             "classification": status,
             "confidence": conf,
             "source": source,
             "match_tier": match_tier,
             "score": score,
             "severity": severity,
-            "evidence": evidence
+            "evidence": evidence,
+            "match_rationale": _explain_match(match_tier, matched_b3, b8, judge_rationale, target),
+            "matched_static_finding": (
+                {"file": matched_b3.get("file"), "line": matched_b3.get("line"), "vulnerability": matched_b3.get("vulnerability")}
+                if matched_b3 else None
+            ),
         })
 
     for i, b3 in enumerate(b3_findings):
@@ -287,13 +314,16 @@ def correlate_results(pipeline_results=None, ask_llm=None):
             "cwe_id": stat_taxonomy["cwe_id"],
             "owasp_category": stat_taxonomy["owasp_category"],
             "target": b3.get("file", "unknown"),
+            "video_path": None,
             "classification": "POSSIBLE",
             "confidence": "MEDIUM",
             "source": "Static",
             "match_tier": "none",
             "score": score,
             "severity": severity,
-            "evidence": b3.get("evidence", "Static detection only")
+            "evidence": b3.get("evidence", "Static detection only"),
+            "match_rationale": f"No dynamic attempt has correlated with this static finding yet ({b3.get('file', 'unknown file')}:{b3.get('line', '?')}).",
+            "matched_static_finding": None,
         })
 
     output = {
