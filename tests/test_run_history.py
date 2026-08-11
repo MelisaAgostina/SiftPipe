@@ -30,8 +30,8 @@ class TestRunHistory(unittest.TestCase):
         os.chdir(self._cwd)
         self._tmp.cleanup()
 
-    def _write_b9(self, entries):
-        with open("results/B9_correlation.json", "w", encoding="utf-8") as f:
+    def _write_b9(self, entries, target="mattermost"):
+        with open(f"results/{target}_B9_correlation.json", "w", encoding="utf-8") as f:
             json.dump({"status": "complete", "total_correlated": len(entries), "results": entries}, f)
 
     def test_start_run_creates_a_running_row(self):
@@ -71,9 +71,9 @@ class TestRunHistory(unittest.TestCase):
 
     def test_finish_run_snapshots_every_json_file_in_results_dir(self):
         run_id = run_history.start_run(mode="fresh")
-        with open("results/B3_static.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"status": "complete", "findings": []}, f)
-        with open("results/B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
             json.dump({"status": "complete", "findings": [{"payload_id": "1_1"}]}, f)
 
         run_history.finish_run(run_id, "completed")
@@ -162,17 +162,43 @@ class TestRunHistory(unittest.TestCase):
         """Two runs against the same results/ folder over time must stay
         distinguishable — each run's snapshot is keyed by its own run_id."""
         first = run_history.start_run(mode="fresh")
-        with open("results/B3_static.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"marker": "first-run"}, f)
         run_history.finish_run(first, "completed")
 
         second = run_history.start_run(mode="restore")
-        with open("results/B3_static.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"marker": "second-run"}, f)
         run_history.finish_run(second, "completed")
 
         self.assertEqual(run_history.get_run(first)["blocks"]["B3_static"]["marker"], "first-run")
         self.assertEqual(run_history.get_run(second)["blocks"]["B3_static"]["marker"], "second-run")
+
+    def test_two_different_targets_run_back_to_back_do_not_cross_contaminate_snapshots(self):
+        """
+        The real bug found live 2026-08-10: block output files on disk are
+        target-scoped (results/{target}_{block}.json — result_path() in
+        blocks/targets.py), and BOTH targets' files coexist in results/ at
+        once by design (that's the whole point of the fix). Before
+        finish_run() filtered by the run's own target, glob("*.json") would
+        pull the *other* target's leftover files into this run's snapshot
+        too, on top of overwriting concerns already covered above.
+        """
+        naviq_run = run_history.start_run(mode="restore", target="naviq")
+        with open("results/naviq_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"marker": "naviq-static"}, f)
+        # Mattermost's own leftover files from an earlier run, still sitting
+        # in results/ — must NOT leak into the NaViQ run's snapshot below.
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"marker": "mattermost-static"}, f)
+        with open("results/mattermost_B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
+            json.dump({"marker": "mattermost-dynamic"}, f)
+
+        run_history.finish_run(naviq_run, "completed")
+        detail = run_history.get_run(naviq_run)
+
+        self.assertEqual(detail["blocks"]["B3_static"]["marker"], "naviq-static")
+        self.assertNotIn("B7_dynamic_attacks", detail["blocks"])
 
 
 if __name__ == "__main__":

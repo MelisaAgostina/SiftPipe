@@ -312,8 +312,8 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
 
     def test_output_is_persisted_to_disk(self):
         self._run([None, None])
-        self.assertTrue(Path("results/B7_dynamic_attacks.json").exists())
-        self.assertTrue(Path("results/dynamic/b7_1_1.json").exists())
+        self.assertTrue(Path("results/mattermost_B7_dynamic_attacks.json").exists())
+        self.assertTrue(Path("results/dynamic/mattermost/b7_1_1.json").exists())
 
     def test_no_matching_response_is_recorded_as_an_explicit_error(self):
         """

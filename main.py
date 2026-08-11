@@ -13,12 +13,15 @@ import argparse
 # Repositorio central de resultados
 pipeline_results = {}
 
-def save_result(block_name, data):
-    """Guarda el resultado de un bloque en el diccionario central y en disco."""
+def save_result(block_name, data, target_name=None):
+    """Guarda el resultado de un bloque en el diccionario central y en disco,
+    scoped to target_name so two targets run back-to-back don't overwrite
+    each other's output (see blocks/targets.py's result_path())."""
+    target_name = target_name or DEFAULT_TARGET
     pipeline_results[block_name] = data
     if not os.path.exists("results"):
         os.makedirs("results")
-    with open(f"results/{block_name}.json", "w") as f:
+    with open(result_path(target_name, f"{block_name}.json"), "w") as f:
         json.dump(data, f, indent=4)
     print(f"-> {block_name} completado y guardado.")
 
@@ -34,7 +37,7 @@ from blocks.analyze_results import analyze_results
 from blocks.correlate_results import correlate_results
 from blocks.environment import ensure_naviq_server_running, fresh_reset, naviq_fresh_reset
 from blocks import run_history
-from blocks.targets import MATTERMOST, get_target
+from blocks.targets import MATTERMOST, get_target, result_path, DEFAULT_TARGET
 
 def ask_llm(prompt):
     try:
@@ -131,7 +134,7 @@ def run_static_analysis(pipeline_results, target_profile=None):
 
     # Persistir output JSON en /results para la UI (Streamlit)
     os.makedirs("results", exist_ok=True)
-    with open("results/B3_static.json", "w", encoding="utf-8") as f:
+    with open(result_path(target_profile.name, "B3_static.json"), "w", encoding="utf-8") as f:
         json.dump(pipeline_results["B3"], f, indent=4)
 
     print(f"B3 finalized. Findings detected: {len(results)}\n")
@@ -140,6 +143,7 @@ def run_static_analysis(pipeline_results, target_profile=None):
 
 #block 4 dynamic discovery
 def run_dynamic_discovery(pipeline_results, target=None):
+    target = target or MATTERMOST
     print("Executing B4: Dynamic Discovery...")
 
     attack_surface = discover_attack_surface(target=target)
@@ -151,28 +155,30 @@ def run_dynamic_discovery(pipeline_results, target=None):
         "errors": attack_surface.get("errors", []),
     }
 
-    save_result("B4_dynamic", summary)
+    save_result("B4_dynamic", summary, target.name)
 
     os.makedirs("results", exist_ok=True)
-    with open("results/attack_surface.json", "w", encoding="utf-8") as f:
+    attack_surface_path = result_path(target.name, "attack_surface.json")
+    with open(attack_surface_path, "w", encoding="utf-8") as f:
         json.dump(attack_surface, f, indent=4)
 
-    print("B4 dynamic completed and stored in results/attack_surface.json")
+    print(f"B4 dynamic completed and stored in {attack_surface_path}")
 
 def execute_attacks(target=None):
+    target = target or MATTERMOST
     print("Executing B7: Executing Attacks...")
     # Cargar los payloads validados por B6 y ejecutar las inyecciones dinámicas
-    validated_path = "results/validated_payloads.json"
+    validated_path = result_path(target.name, "validated_payloads.json")
     try:
         b7 = run_payloads(validated_path, pipeline_results, target)
         # Guardar el objeto completo retornado por run_payloads para que B9 pueda correlacionar
-        save_result("B7_dynamic_attacks", b7)
+        save_result("B7_dynamic_attacks", b7, target.name)
     except FileNotFoundError as e:
         print(f"[-] B7 canceled: {e}")
-        save_result("B7_dynamic_attacks", {"status": "skipped", "reason": str(e)})
+        save_result("B7_dynamic_attacks", {"status": "skipped", "reason": str(e)}, target.name)
     except Exception as e:
         print(f"[-] Error executing B7: {e}")
-        save_result("B7_dynamic_attacks", {"status": "error", "reason": str(e)})
+        save_result("B7_dynamic_attacks", {"status": "error", "reason": str(e)}, target.name)
 
 
 # --- Orquestador Principal ---
@@ -210,11 +216,11 @@ def main():
     try:
         run_static_analysis(pipeline_results, target)
         run_dynamic_discovery(pipeline_results, target)
-        generate_payloads(client=client)
-        run_human_review(pipeline_results)
+        generate_payloads(client=client, target_profile=target)
+        run_human_review(pipeline_results, target)
         execute_attacks(target)
-        analyze_results(pipeline_results, ask_llm)
-        correlate_results(pipeline_results, ask_llm)
+        analyze_results(pipeline_results, ask_llm, target)
+        correlate_results(pipeline_results, ask_llm, target)
     except Exception:
         run_history.finish_run(run_id, "error")
         raise

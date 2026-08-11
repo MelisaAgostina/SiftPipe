@@ -28,7 +28,24 @@ class TestCorrelateResultsMatching(unittest.TestCase):
     "Broken Access Control"). Before the label normalization fix, these were
     compared with strict string equality and could never match, so B9 could
     never produce a "Hybrid (Static + Dynamic)" CONFIRMED result.
+
+    Isolated by chdir into a temp directory: every case here supplies both
+    B3 and B8 findings directly via pipeline_results, so the disk-fallback
+    reads are never hit, but correlate_results() unconditionally writes its
+    own B9_correlation.json output (target-scoped, defaults to Mattermost —
+    see result_path() in blocks/targets.py) at the end regardless — without
+    this isolation these tests were silently writing into the real
+    project's results/ directory on every run.
     """
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        os.chdir(self._tmp.name)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
 
     def test_confirmed_dynamic_matches_related_static_finding_as_hybrid(self):
         pipeline_results = {

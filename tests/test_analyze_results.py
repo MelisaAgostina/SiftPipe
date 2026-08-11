@@ -55,8 +55,9 @@ class TestLoadPreviousAnalysis(unittest.TestCase):
 
 class TestAnalyzeResults(unittest.TestCase):
     """
-    analyze_results() hardcodes results/B8_dynamic.json, so tests run inside
-    an isolated temp cwd.
+    analyze_results() reads/writes target-scoped paths under results/ (see
+    result_path() in blocks/targets.py; defaults to Mattermost here since no
+    target_profile is passed), so tests run inside an isolated temp cwd.
     """
 
     def setUp(self):
@@ -105,7 +106,7 @@ class TestAnalyzeResults(unittest.TestCase):
 
         finding = out["B8"]["findings"][0]
         self.assertEqual(finding["result"], "confirmed")
-        self.assertTrue(Path("results/B8_dynamic.json").exists())
+        self.assertTrue(Path("results/mattermost_B8_dynamic.json").exists())
         # cwe_id/owasp_category aren't part of the LLM's response shape here —
         # they must be carried through from the B7 finding via setdefault().
         self.assertEqual(finding["cwe_id"], "CWE-89")
@@ -113,7 +114,7 @@ class TestAnalyzeResults(unittest.TestCase):
 
     def test_rerun_reuses_prior_successful_classification_without_calling_llm(self):
         os.makedirs("results", exist_ok=True)
-        with open("results/B8_dynamic.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B8_dynamic.json", "w", encoding="utf-8") as f:
             json.dump({"findings": [{"payload_id": "1_1", "result": "confirmed", "vulnerability": "Injection"}]}, f)
 
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
@@ -130,7 +131,7 @@ class TestAnalyzeResults(unittest.TestCase):
 
     def test_rerun_retries_a_prior_api_error_placeholder(self):
         os.makedirs("results", exist_ok=True)
-        with open("results/B8_dynamic.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B8_dynamic.json", "w", encoding="utf-8") as f:
             json.dump({"findings": [{"payload_id": "1_1", "result": "confirmed", "vulnerability": "API Error"}]}, f)
 
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
@@ -175,7 +176,7 @@ class TestAnalyzeResults(unittest.TestCase):
 
     def test_falls_back_to_disk_when_b7_missing_from_pipeline_results(self):
         os.makedirs("results", exist_ok=True)
-        with open("results/B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
             json.dump({"findings": [self._b7_finding("1_1", anomaly=False)]}, f)
 
         out = analyze_results({}, lambda prompt: (_ for _ in ()).throw(AssertionError("no LLM call expected")))

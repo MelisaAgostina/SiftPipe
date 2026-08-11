@@ -76,11 +76,11 @@ def start_run(mode="unknown", target=DEFAULT_TARGET):
         conn.close()
 
 
-def _b9_summary(results_dir):
+def _b9_summary(results_dir, prefix=""):
     """Best-effort (total, confirmed) counts from this run's B9 output, so
     the Past Runs list can show something more useful than a bare timestamp
     without the frontend having to fetch every run's full detail up front."""
-    b9_path = Path(results_dir) / "B9_correlation.json"
+    b9_path = Path(results_dir) / f"{prefix}B9_correlation.json"
     if not b9_path.exists():
         return None, None
     try:
@@ -96,13 +96,28 @@ def _b9_summary(results_dir):
 def finish_run(run_id, status, results_dir="results"):
     """
     Call once a run reaches a terminal state (completed or error). Snapshots
-    every JSON file currently in results_dir against this run_id, so a past
-    run can be viewed later even after the next run overwrites those files.
-    """
-    total_findings, confirmed_findings = _b9_summary(results_dir)
+    this run's own block output files against run_id, so a past run can be
+    viewed later even after the next run overwrites those files.
 
+    Block files on disk are target-scoped (results/{target}_{block}.json —
+    see result_path() in blocks/targets.py), so this looks up the run's own
+    target from the runs table and only globs/snapshots that target's files,
+    storing them under their canonical block_name (prefix stripped) so
+    get_run()/list_runs() consumers don't need to know about the on-disk
+    naming convention. Real bug this fixes: two targets run back to back
+    used to both get glob("*.json")'d into the same run_id's snapshot,
+    silently mixing one target's block data into the other's Past Run.
+    A run predating the `target` column (target is NULL) falls back to the
+    old glob-everything behavior, matching its original semantics exactly.
+    """
     conn = _connect()
     try:
+        target_row = conn.execute("SELECT target FROM runs WHERE id = ?", (run_id,)).fetchone()
+        target = target_row[0] if target_row else None
+        prefix = f"{target}_" if target else ""
+
+        total_findings, confirmed_findings = _b9_summary(results_dir, prefix)
+
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """
@@ -113,14 +128,16 @@ def finish_run(run_id, status, results_dir="results"):
             (now, status, total_findings, confirmed_findings, run_id),
         )
 
-        for path in sorted(Path(results_dir).glob("*.json")):
+        pattern = f"{prefix}*.json" if prefix else "*.json"
+        for path in sorted(Path(results_dir).glob(pattern)):
+            block_name = path.stem[len(prefix):] if prefix else path.stem
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
             conn.execute(
                 "INSERT INTO run_blocks (run_id, block_name, data) VALUES (?, ?, ?)",
-                (run_id, path.stem, json.dumps(data)),
+                (run_id, block_name, json.dumps(data)),
             )
 
         conn.commit()

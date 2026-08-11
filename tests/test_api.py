@@ -95,13 +95,28 @@ class TestApiRoutes(unittest.TestCase):
 
     def test_get_results_merges_all_json_files(self):
         os.makedirs("results", exist_ok=True)
-        with open("results/B3_static.json", "w", encoding="utf-8") as f:
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"status": "complete"}, f)
 
         data = api.get_results()
 
         self.assertIn("B3_static", data)
         self.assertEqual(data["B3_static"]["status"], "complete")
+
+    def test_get_results_only_returns_active_targets_files(self):
+        """Real bug fixed 2026-08-10: this endpoint used to glob every JSON
+        in results/ regardless of which target wrote it, so switching
+        targets in the UI could still show a stale, different target's data."""
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "owner": "active"}, f)
+        other_name = next(t for t in api.TARGETS if t != api.ACTIVE_TARGET.name)
+        with open(f"results/{other_name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "owner": "other"}, f)
+
+        data = api.get_results()
+
+        self.assertEqual(data["B3_static"]["owner"], "active")
 
     def test_validate_rejects_when_not_waiting_for_human(self):
         with self.assertRaises(HTTPException) as ctx:
@@ -119,7 +134,7 @@ class TestApiRoutes(unittest.TestCase):
                 {"target": "c", "page_url": "http://x/c", "field_id": "c", "payloads": ["p3"]},
             ],
         }
-        with open("results/B5_payloads.json", "w", encoding="utf-8") as f:
+        with open(f"results/{api.ACTIVE_TARGET.name}_B5_payloads.json", "w", encoding="utf-8") as f:
             json.dump(b5, f)
 
         # Index 99 is out of range and must be silently dropped, not crash the request.
@@ -127,7 +142,7 @@ class TestApiRoutes(unittest.TestCase):
 
         self.assertIn("Validation received", response["message"])
 
-        saved = json.loads(Path("results/validated_payloads.json").read_text(encoding="utf-8"))
+        saved = json.loads(Path(f"results/{api.ACTIVE_TARGET.name}_validated_payloads.json").read_text(encoding="utf-8"))
         self.assertEqual(len(saved["payloads"]), 2)
         self.assertEqual({p["target"] for p in saved["payloads"]}, {"a", "c"})
         self.assertEqual(saved["comment"], "ok")

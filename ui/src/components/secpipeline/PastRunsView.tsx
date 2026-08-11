@@ -28,6 +28,22 @@ const STATUS_TONE: Record<RunSummary["status"], string> = {
   running: "text-[var(--status-form)]",
 };
 
+// Display labels for the same closed 2-profile set TopBar.tsx's picker
+// offers (blocks/targets.py's TARGETS) — kept as a small local map rather
+// than fetching GET /api/target's `available` list just for a label, since
+// a past run's own target string is already exact. Falls back to the raw
+// value for a run predating the `target` column (null) or any future
+// target name this map hasn't been updated for yet.
+const TARGET_LABELS: Record<string, string> = {
+  mattermost: "Mattermost",
+  naviq: "NaViQ",
+};
+
+function targetLabel(target: string | null): string {
+  if (!target) return "unknown target";
+  return TARGET_LABELS[target] ?? target;
+}
+
 function RunRow({
   run,
   selected,
@@ -53,13 +69,15 @@ function RunRow({
           {run.status.toUpperCase()}
         </span>
       </div>
-      <div className="mt-1 text-xs text-muted-foreground">
-        {new Date(run.started_at).toLocaleString()}
+      <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground">
+          {targetLabel(run.target)}
+        </span>
+        <span>{new Date(run.started_at).toLocaleString()}</span>
         {run.total_findings != null && (
-          <>
-            {" "}
+          <span>
             · {run.confirmed_findings}/{run.total_findings} confirmed
-          </>
+          </span>
         )}
       </div>
     </button>

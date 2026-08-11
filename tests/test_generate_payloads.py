@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -151,26 +152,34 @@ class TestTryExtractPartialJson(unittest.TestCase):
 
 
 class TestGeneratePayloads(unittest.TestCase):
+    """
+    Isolated by chdir into a temp directory, same as every other block's
+    tests (blocks/generate_payloads.py's B3/attack_surface/B5 paths are all
+    target-scoped via result_path(), e.g. "results/mattermost_B3_static.json"
+    — a plain "results/" string, not RESULTS_DIR-relative — so patching
+    gp.RESULTS_DIR alone no longer isolates these reads/writes).
+    """
 
     def setUp(self):
+        self._cwd = os.getcwd()
         self._tmp = tempfile.TemporaryDirectory()
-        self._results_dir_patch = patch.object(gp, "RESULTS_DIR", self._tmp.name)
-        self._results_dir_patch.start()
+        os.chdir(self._tmp.name)
+        os.makedirs("results", exist_ok=True)
 
         attack_surface = {
             "forms": [],
             "inputs": [{"id": "q", "name": "query", "type": "text", "page_url": "http://x/search"}],
             "endpoints": [],
         }
-        with open(Path(self._tmp.name) / "attack_surface.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_attack_surface.json", "w", encoding="utf-8") as f:
             json.dump(attack_surface, f)
 
     def tearDown(self):
-        self._results_dir_patch.stop()
+        os.chdir(self._cwd)
         self._tmp.cleanup()
 
     def test_raises_without_attack_surface_file(self):
-        (Path(self._tmp.name) / "attack_surface.json").unlink()
+        Path("results/mattermost_attack_surface.json").unlink()
         with self.assertRaises(FileNotFoundError):
             gp.generate_payloads(client=object())
 
@@ -189,12 +198,12 @@ class TestGeneratePayloads(unittest.TestCase):
         # written in this fixture) -> taxonomy fields default to None.
         self.assertIsNone(item["cwe_id"])
 
-        saved = json.loads((Path(self._tmp.name) / "B5_payloads.json").read_text(encoding="utf-8"))
+        saved = json.loads(Path("results/mattermost_B5_payloads.json").read_text(encoding="utf-8"))
         self.assertEqual(saved, output)
 
     @patch.object(gp, "ask_llm")
     def test_target_is_tagged_with_taxonomy_from_related_static_finding(self, mock_ask_llm):
-        with open(Path(self._tmp.name) / "B3_static.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"findings": [
                 {"file": "query.go", "vulnerability": "Injection", "confidence": "high",
                  "evidence": "raw SQL built from request.query"},

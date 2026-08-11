@@ -3,7 +3,7 @@ import json
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from blocks.mattermost_auth import find_working_selector
-from blocks.targets import MATTERMOST
+from blocks.targets import MATTERMOST, result_path
 from blocks.crawler import is_same_origin
 from blocks.taxonomy import infer_taxonomy
 
@@ -272,7 +272,7 @@ def _submit(page, input_selector):
     page.keyboard.press("Enter")
 
 
-def _execute_one(browser, storage_state, page_url, input_selector, payload, pid, base_url):
+def _execute_one(browser, storage_state, page_url, input_selector, payload, pid, target_profile):
     """
     Runs one payload in its own browser context — logged in via `storage_state`
     captured once at the start of the run, instead of a fresh login — so each
@@ -288,6 +288,10 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
     of a page-wide listener + fixed sleep — that gave no real correlation
     between "this payload's submission" and "whatever same-origin response
     happened to arrive in the next 2s".
+    Screenshot/video paths are scoped under target_profile.name (see
+    result_path() in blocks/targets.py) so running two targets back to back
+    doesn't overwrite one's evidence files with the other's — pid alone
+    (e.g. "1_1") isn't unique across targets.
     Returns a result dict.
     """
     result = {
@@ -295,12 +299,12 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
         "status_code":     None,
         "response_body":   "",
         "content_type":    "",
-        "screenshot_path": f"results/dynamic/screenshot_{pid}.png",
+        "screenshot_path": f"results/dynamic/{target_profile.name}/screenshot_{pid}.png",
         "video_path":      None,
         "error":           None,
     }
 
-    context = browser.new_context(storage_state=storage_state, record_video_dir="results/videos/")
+    context = browser.new_context(storage_state=storage_state, record_video_dir=f"results/videos/{target_profile.name}/")
     # Same landing-page skip as B4 (blocks/dynamic_analysis.py) — belt-and-suspenders
     # alongside storage_state, in case a Playwright version doesn't carry
     # localStorage over in storage_state.
@@ -314,7 +318,7 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
         _fill_sibling_fields(page, input_selector)
 
         try:
-            with page.expect_response(lambda r: _is_submission_response(r, base_url), timeout=8000) as response_info:
+            with page.expect_response(lambda r: _is_submission_response(r, target_profile.base_url), timeout=8000) as response_info:
                 _submit(page, input_selector)
             response = response_info.value
             result["status_code"] = response.status
@@ -332,7 +336,7 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
             result["error"] = "No matching same-origin POST response observed within 8s"
 
         page.wait_for_timeout(500)  # let the UI settle before the screenshot
-        os.makedirs("results/dynamic", exist_ok=True)
+        os.makedirs(f"results/dynamic/{target_profile.name}", exist_ok=True)
         page.screenshot(path=result["screenshot_path"])
 
     except Exception as e:
@@ -350,7 +354,7 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
         except Exception:
             video_path = None
         if video_path and os.path.exists(video_path):
-            final_path = f"results/videos/{pid}.webm"
+            final_path = f"results/videos/{target_profile.name}/{pid}.webm"
             try:
                 if os.path.exists(final_path):
                     os.remove(final_path)
@@ -450,13 +454,13 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
     else:
         validated = raw
 
-    os.makedirs("results/dynamic", exist_ok=True)
+    os.makedirs(f"results/dynamic/{target_profile.name}", exist_ok=True)
 
     findings  = []
     total     = 0
     anomalies = 0
 
-    os.makedirs("results/videos", exist_ok=True)
+    os.makedirs(f"results/videos/{target_profile.name}", exist_ok=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
@@ -501,7 +505,7 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
                     pid = f"{idx}_{subidx}"
                     print(f"[B7] [{pid}] {field_id or selector} @ {page_url} | {repr(payload)[:60]}")
 
-                    raw_r = _execute_one(browser, storage_state, page_url, selector, payload, pid, target_profile.base_url)
+                    raw_r = _execute_one(browser, storage_state, page_url, selector, payload, pid, target_profile)
 
                     # ── Detection rules ──
                     detections   = []
@@ -585,7 +589,7 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
                     findings.append(finding)
 
                     # Partial save per payload for inspection
-                    with open(f"results/dynamic/b7_{pid}.json", "w", encoding="utf-8") as fh:
+                    with open(f"results/dynamic/{target_profile.name}/b7_{pid}.json", "w", encoding="utf-8") as fh:
                         json.dump(finding, fh, indent=4)
         finally:
             # Guarantees the Chromium process always exits, even if a
@@ -604,7 +608,7 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
     }
 
     pipeline_results["B7"] = final
-    with open("results/B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
+    with open(result_path(target_profile.name, "B7_dynamic_attacks.json"), "w", encoding="utf-8") as f:
         json.dump(final, f, indent=4)
 
     print(f"[B7] Finalized - executed: {total} | anomalies: {anomalies}")

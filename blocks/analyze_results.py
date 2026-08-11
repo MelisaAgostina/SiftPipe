@@ -1,6 +1,8 @@
 import json
 import os
 
+from blocks.targets import MATTERMOST, result_path
+
 
 def _load_previous_analysis(path):
     """Index a prior B8_dynamic.json by payload_id so a re-run can skip
@@ -30,7 +32,8 @@ def _is_llm_result_usable(entry):
     return entry.get("result") in ("confirmed", "possible", "discarded")
 
 
-def analyze_results(pipeline_results, ask_llm):
+def analyze_results(pipeline_results, ask_llm, target_profile=None):
+    target_profile = target_profile or MATTERMOST
     print("\nExecuting block B8: Intelligent analysis of dynamic results...")
 
     # Load B7 results — handle both in-memory and file fallback
@@ -38,7 +41,7 @@ def analyze_results(pipeline_results, ask_llm):
 
     # Fall back to disk if B7 wasn't run this session or returned an error
     if not b7_results or b7_results.get("status") == "error":
-        b7_path = "results/B7_dynamic_attacks.json"
+        b7_path = result_path(target_profile.name, "B7_dynamic_attacks.json")
         if os.path.exists(b7_path):
             print(f"[B8] Cargando B7 desde disco: {b7_path}")
             with open(b7_path, "r", encoding="utf-8") as f:
@@ -53,7 +56,7 @@ def analyze_results(pipeline_results, ask_llm):
         pipeline_results["B8"] = {"status": "complete", "total_analyzed": 0, "findings": []}
         return pipeline_results
 
-    b8_output_path = "results/B8_dynamic.json"
+    b8_output_path = result_path(target_profile.name, "B8_dynamic.json")
     previous = _load_previous_analysis(b8_output_path)
 
     analyzed = []

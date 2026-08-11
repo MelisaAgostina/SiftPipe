@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from blocks import run_history
 from blocks.environment import MM_PING_URL, ensure_naviq_server_running, fresh_reset, naviq_fresh_reset, stop_naviq_server
-from blocks.targets import TARGETS, get_target
+from blocks.targets import TARGETS, get_target, result_path
 from main import (
     analyze_results,
     ask_llm,
@@ -174,7 +174,7 @@ def run_pipeline_until_b6():
 
         pipeline_state["current_block"] = "B5"
         log(">> B5 - Payload generation")
-        generate_payloads(client=client)
+        generate_payloads(client=client, target_profile=ACTIVE_TARGET)
         log("OK B5 completed")
 
         # Pauses here — the UI shows the payloads for human review
@@ -205,12 +205,12 @@ def run_pipeline_from_b7():
 
         pipeline_state["current_block"] = "B8"
         log(">> B8 - Intelligent results analysis")
-        analyze_results(pipeline_results, ask_llm)
+        analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET)
         log("OK B8 completed")
 
         pipeline_state["current_block"] = "B9"
         log(">> B9 - Static + dynamic correlation")
-        correlate_results(pipeline_results, ask_llm)
+        correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET)
         log("OK B9 completed")
 
         pipeline_state["current_block"] = None
@@ -390,25 +390,34 @@ def get_logs():
 
 @app.get("/api/results")
 def get_results():
-    """Lee todos los JSONs de /results/ y los devuelve juntos."""
+    """Lee los JSONs de /results/ que pertenecen al target activo y los
+    devuelve juntos, bajo su block_name canónico (sin el prefijo de target
+    en disco — ver result_path() en blocks/targets.py). Real bug fixed
+    2026-08-10: this used to glob *every* JSON in results/ regardless of
+    which target wrote it, so running NaViQ then Mattermost back to back
+    made this endpoint (and the "Hybrid pipeline" tabs it feeds) silently
+    show whichever target ran most recently, not the one currently active."""
     if not RESULTS_DIR.exists():
         return {}
 
+    prefix = f"{ACTIVE_TARGET.name}_"
     data = {}
-    for file in RESULTS_DIR.glob("*.json"):
+    for file in RESULTS_DIR.glob(f"{prefix}*.json"):
+        block_name = file.stem[len(prefix):]
         try:
             with open(file) as f:
-                data[file.stem] = json.load(f)
+                data[block_name] = json.load(f)
         except Exception:
-            data[file.stem] = None
+            data[block_name] = None
 
     return data
 
 
 @app.get("/api/results/{block_name}")
 def get_block_result(block_name: str):
-    """Devuelve el resultado de un bloque específico. Ej: /api/results/B3_static"""
-    file = RESULTS_DIR / f"{block_name}.json"
+    """Devuelve el resultado de un bloque específico del target activo. Ej:
+    /api/results/B3_static -> results/{ACTIVE_TARGET.name}_B3_static.json"""
+    file = RESULTS_DIR / f"{ACTIVE_TARGET.name}_{block_name}.json"
     if not file.exists():
         raise HTTPException(status_code=404, detail=f"{block_name} has no results yet")
     with open(file) as f:
@@ -441,7 +450,7 @@ def validate_payloads(body: ValidatePayloadsRequest):
         raise HTTPException(status_code=409, detail="The pipeline is not waiting for review")
 
     # Leer payloads generados por B5
-    payloads_file = RESULTS_DIR / "B5_payloads.json"
+    payloads_file = Path(result_path(ACTIVE_TARGET.name, "B5_payloads.json"))
     if not payloads_file.exists():
         raise HTTPException(status_code=404, detail="B5_payloads.json not found")
 
@@ -453,7 +462,7 @@ def validate_payloads(body: ValidatePayloadsRequest):
 
     # B7 (execute_attacks -> dynamic_injector.run_payloads) reads this exact
     # file/shape — same contract as the console path (human_review.py).
-    validated_path = RESULTS_DIR / "validated_payloads.json"
+    validated_path = Path(result_path(ACTIVE_TARGET.name, "validated_payloads.json"))
     RESULTS_DIR.mkdir(exist_ok=True)
     with open(validated_path, "w", encoding="utf-8") as f:
         json.dump({"status": "complete", "payloads": approved, "comment": body.comment}, f, indent=4)

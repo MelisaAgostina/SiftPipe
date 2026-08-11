@@ -13,9 +13,10 @@ from blocks.human_review import run_human_review
 
 class TestRunHumanReview(unittest.TestCase):
     """
-    run_human_review() hardcodes relative paths ("results/B5_payloads.json",
-    "results/validated_payloads.json"), so tests run inside an isolated temp
-    cwd rather than the real project results/ directory.
+    run_human_review() reads/writes target-scoped paths under results/ (see
+    result_path() in blocks/targets.py; defaults to Mattermost here since no
+    target_profile is passed), so tests run inside an isolated temp cwd
+    rather than the real project results/ directory.
     """
 
     def setUp(self):
@@ -39,7 +40,7 @@ class TestRunHumanReview(unittest.TestCase):
     def test_validated_file_present_populates_pipeline_results(self, _mock_input):
         os.makedirs("results", exist_ok=True)
         validated = [{"target": "post_textbox", "payloads": ["<script>alert(1)</script>"]}]
-        with open("results/validated_payloads.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_validated_payloads.json", "w", encoding="utf-8") as f:
             json.dump(validated, f)
 
         pipeline_results = {}

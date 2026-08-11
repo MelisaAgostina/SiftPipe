@@ -176,6 +176,7 @@ export type RunSummary = {
   started_at: string;
   finished_at: string | null;
   mode: string | null;
+  target: string | null; // "mattermost" | "naviq" | null for runs predating this column
   status: RunStatus;
   total_findings: number | null;
   confirmed_findings: number | null;

@@ -3,6 +3,7 @@ import os
 
 from blocks.taxonomy import infer_taxonomy
 from blocks.scoring import compute_score
+from blocks.targets import MATTERMOST, result_path
 
 # Safety cap on LLM-judge calls per run, same rationale as B3's MAX_FILES:
 # protects Groq's daily token cap on a large correlation run. Ambiguous pairs
@@ -101,7 +102,7 @@ or
 """
 
 
-def correlate_results(pipeline_results=None, ask_llm=None):
+def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
     """
     Correlates B3 (static) and B8 (dynamic) findings.
 
@@ -118,6 +119,7 @@ def correlate_results(pipeline_results=None, ask_llm=None):
     blocks/scoring.py) and a derived "severity", in addition to the existing
     CONFIRMED/POSSIBLE/DESCARTED classification.
     """
+    target_profile = target_profile or MATTERMOST
     print("\n[B9] Executing static + dynamic correlation...")
 
     b3_findings = []
@@ -131,23 +133,23 @@ def correlate_results(pipeline_results=None, ask_llm=None):
 
     if not b3_findings:
         try:
-            with open("results/B3_static.json", "r", encoding="utf-8") as f:
+            with open(result_path(target_profile.name, "B3_static.json"), "r", encoding="utf-8") as f:
                 b3_findings = json.load(f).get("findings", [])
         except FileNotFoundError:
             b3_findings = []
 
     if not b8_findings:
         try:
-            with open("results/B8_dynamic.json", "r", encoding="utf-8") as f:
+            with open(result_path(target_profile.name, "B8_dynamic.json"), "r", encoding="utf-8") as f:
                 b8_findings = _normalize_dynamic_findings(json.load(f))
         except FileNotFoundError:
             try:
-                with open("results/B8_dynamic_analysis.json", "r", encoding="utf-8") as f:
+                with open(result_path(target_profile.name, "B8_dynamic_analysis.json"), "r", encoding="utf-8") as f:
                     b8_findings = _normalize_dynamic_findings(json.load(f))
             except FileNotFoundError:
                 b8_findings = []
 
-    judgments = _load_previous_judgments("results/B9_correlation.json")
+    judgments = _load_previous_judgments(result_path(target_profile.name, "B9_correlation.json"))
     judge_calls_made = 0
 
     def judge(b3, b8, pair_key):
@@ -334,7 +336,7 @@ def correlate_results(pipeline_results=None, ask_llm=None):
     }
 
     os.makedirs("results", exist_ok=True)
-    with open("results/B9_correlation.json", "w", encoding="utf-8") as f:
+    with open(result_path(target_profile.name, "B9_correlation.json"), "w", encoding="utf-8") as f:
         json.dump(output, f, indent=4)
 
     if pipeline_results is not None:

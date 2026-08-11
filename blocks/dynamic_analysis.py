@@ -143,11 +143,11 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
     login_ok = False
     denylist = GENERIC_DENYLIST + target.extra_denylist
 
-    os.makedirs("results/videos", exist_ok=True)
+    os.makedirs(f"results/videos/{target.name}", exist_ok=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
-        context = browser.new_context(record_video_dir="results/videos/")
+        context = browser.new_context(record_video_dir=f"results/videos/{target.name}/")
         # Mattermost redirects every first-ever page load to /landing (the
         # "View in Browser" vs. "View in Desktop App" interstitial) unless
         # localStorage already has this flag — set before any Mattermost JS
@@ -363,7 +363,7 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
             except Exception:
                 video_path = None
             if video_path and os.path.exists(video_path):
-                final_path = "results/videos/b4_discovery.webm"
+                final_path = f"results/videos/{target.name}/b4_discovery.webm"
                 try:
                     if os.path.exists(final_path):
                         os.remove(final_path)

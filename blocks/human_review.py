@@ -2,12 +2,15 @@ import json
 import os
 import time
 
-def run_human_review(pipeline_results):
+from blocks.targets import MATTERMOST, result_path
+
+def run_human_review(pipeline_results, target_profile=None):
+    target_profile = target_profile or MATTERMOST
     print("\n[B6] REVISIÓN DE PAYLOADS - Pausa intencional del sistema.")
-    
+
     # Ruta donde B5 dejó los payloads y donde B6 espera los validados
-    b5_output = "results/B5_payloads.json"
-    b6_input = "results/validated_payloads.json"
+    b5_output = result_path(target_profile.name, "B5_payloads.json")
+    b6_input = result_path(target_profile.name, "validated_payloads.json")
     
     # Simulación de la espera del frontend en consola
     input(f"-> Por favor, revisa {b5_output}, filtra los ataques que consideres necesarios, guárdalos como {b6_input} y presiona Enter para continuar...")

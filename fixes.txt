@@ -1309,3 +1309,310 @@ error placeholders from crashing the UI, it doesn't avoid hitting the cap
 itself. Any *future* run that hits the same rate limit will still produce
 "API Error" placeholders (by design, for the retry-on-next-run mechanism in
 _is_llm_result_usable()) — they just won't crash the frontend anymore.
+
+
+================================================================================
+SESSION 8 — Multi-target support: NaViQ as a second real target
+(2026-08-08 to 2026-08-10)
+================================================================================
+
+Scope: over three separate days, generalized the pipeline from a single
+hardcoded Mattermost target to also support NaViQ — a second real,
+authorized local instance — via a per-target profile system (Approach A:
+a closed set of 2 known profiles, explicitly NOT a general "any user adds
+any site" product; see MULTI_TARGET_PLAN.md's "Non-goals" section). This
+entry is the condensed technical record in fixes.txt's usual format —
+full task-by-task detail, including every decision and every phase's own
+live-verification writeup, lives in MULTI_TARGET_PLAN.md and is not
+repeated here. Two same-day follow-ups on 2026-08-10 close out the work:
+a real, user-reported UI bug (results/ files colliding across targets)
+and a small UX addition (showing each Past Run's target).
+
+
+1. REAL BUGS FOUND
+-----------------------------------
+
+Each of these was found live — either by running the pipeline against
+NaViQ for real and hitting a concrete failure, or by inspecting actual
+historical run data — not by code review alone.
+
+1.1 B7's selector-building treated NaViQ's "no id" sentinel as a real id
+    blocks/dynamic_analysis.py's extract_forms() uses the literal string
+    "unknown" for any field with no id/name attribute; the old inline
+    selector-building in dynamic_injector.py guarded field_name != "unknown"
+    but not field_id != "unknown", so any id-less field built the
+    unmatchable selector "#unknown". Nearly every NaViQ form field lacks an
+    id — 15/15 payloads timed out in the run that caught this, all against
+    "#unknown". Fixed with a small extracted _build_selector(field_id,
+    field_name) function, both sentinels guarded.
+
+1.2 B5 let hidden CSRF/language-switcher fields crowd out real targets
+    build_dynamic_targets() captured every form field unconditionally,
+    hidden ones included. Barely mattered for Mattermost (no server-
+    rendered hidden inputs on its React SPA), but NaViQ's {% csrf_token %}
+    + i18n language-switcher form appears on literally every page — hidden
+    fields dominated 15/20 targets in the run that caught this, crowding
+    out genuinely interesting ones (the contact form's email/message).
+    Fixed by skipping field.get("type") == "hidden" in build_dynamic_targets().
+
+1.3 NaViQ's contact form has a spam honeypot Playwright's own is_visible()
+    doesn't catch
+    Built while closing a related gap (a required-but-unfilled sibling
+    field getting the whole submission rejected before the payload field
+    was ever processed): _fill_sibling_fields() auto-fills a form's other
+    empty fields with plausible placeholders before submit. NaViQ's contact
+    form has a honeypot (name="website", ordinary type="text") kept
+    off-screen via `position:absolute; left:-9999px` + `aria-hidden="true"`
+    rather than `type="hidden"` — confirmed live that is_visible() returns
+    True for it (it doesn't catch off-screen positioning), so a naive
+    version would have filled it and gotten every submission treated as bot
+    traffic. Fixed by also skipping any field under an
+    `aria-hidden="true"` ancestor.
+
+1.4 XSS_reflected false-positives on non-XSS payloads and JSON responses
+    Found by checking this project's own real historical run data
+    (siftpipe_history.db, runs 6 and 8), not just code review: SQLi/
+    command-injection test payloads ('SELECT * FROM users WHERE id = 1',
+    "ls -l; echo 'Command Injection'") got tagged XSS_reflected purely for
+    being echoed back — Mattermost's own chat API returns your post
+    verbatim in its JSON response, which every payload triggers regardless
+    of shape, and isn't reflected XSS in any meaningful sense. Fixed with
+    two required gates in blocks/dynamic_injector.py:
+    _looks_like_xss_payload() (the payload must contain real HTML/JS
+    syntax — "<", ">", "javascript:", "onerror=", etc.) and
+    _looks_like_html_response() (the response must actually look like
+    HTML, not JSON — _execute_one() now captures Content-Type, falling
+    back to sniffing the body's first character when the header is
+    missing/unhelpful).
+
+1.5 B3 never ran against NaViQ at all — wrong tech-stack assumptions, not
+    just a wrong path
+    Prompted by "why is it not running block 3 on naviq?". static_scanner.py's
+    extensions/directory filter was hardcoded to Mattermost's own Go/
+    TypeScript stack (.go/.ts/.tsx/.js/.jsx, directory names like api/
+    handlers/store) — zero overlap with NaViQ's real Django/Python code.
+    On top of that, results/files_list.txt was a single shared cache with
+    no target in its name, so whichever target ran B3 first won the cache
+    forever. Fixed by giving TargetProfile its own source_dir/
+    source_extensions/source_exclude_dirs/source_relevant_dirs per target,
+    and scoping the cache filename by target.
+
+1.6 A02 hardcoded-secret prompt flagged a correct env-var read as a real
+    secret, and the LLM emitted "not found" placeholder entries
+    OWASP_SCOPE's A02 description didn't distinguish a literal secret value
+    from an env-var read, so `X = os.getenv("X")` (the correct pattern) got
+    flagged "hardcoded, confidence: high". Fixed the prompt; verifying that
+    fix against NaViQ's real run_batch_evaluations.py surfaced a second,
+    independent bug: the LLM returning "not found" placeholder entries
+    ({"vulnerability": "Broken Access Control", "evidence": "No clear
+    authorization checks found...", "line": 0, "confidence": "medium"})
+    instead of an empty array, despite the prompt already forbidding it —
+    3 of 5 were medium-confidence and would have been saved as real
+    findings. Fixed both in the prompt (explicit anti-example) and as a
+    code-level backstop in main.py (reject any finding with no real line
+    number), since prompt compliance alone wasn't reliable enough to trust.
+
+1.7 NaViQ dev-server automation: three bugs found live while building it
+    Prompted by a hard new requirement (a jury operating the pipeline from
+    the frontend only, no terminal access), reversing an earlier deliberate
+    decision that the dev server stays a manual prerequisite — correct for
+    a developer with terminal access, a hard blocker for this one.
+    ensure_naviq_server_running()/stop_naviq_server() (blocks/environment.py)
+    spawn/manage `manage.py runserver` as a background subprocess,
+    idempotent via a real HTTP check, not a flag. (a) the server's own log
+    file lived under results/, colliding with every reset's own results-wipe
+    (WinError 32) — moved to the already-gitignored naviq-src/; (b) a
+    leaked file descriptor, caught by a unit test's own cleanup failing,
+    not by inspection; (c) the significant one — the "Run analysis" button
+    in the UI could enable while the database was still mid-reset, since
+    targetUp alone doesn't mean the reset finished — found via live
+    Playwright testing sampling the button's disabled state across an
+    entire real reset run, not something reading the code would ever catch.
+    Also fixed a related staleness bug found along the way: the "{target}
+    running" indicator could briefly show the *previous* target's cached
+    status right after switching — fixed by only trusting
+    envHealth.target_up when envHealth.target === activeTarget.name.
+
+1.8 results/ per-target file collision (2026-08-10, closing this session)
+    Every block wrote a single fixed results/{block}.json regardless of
+    active target, so running NaViQ then Mattermost back to back (Phase 6's
+    own end-to-end validation runs) silently overwrote NaViQ's
+    results/B7_dynamic_attacks.json with Mattermost's — a live, visible UI
+    bug, not theoretical: confirmed the exact symptom, then fixed it (full
+    detail in section 2.7 below).
+
+1.9 Past Runs' RunSummary silently dropped a field the backend already sent
+    blocks/run_history.py's list_runs() already selected and returned
+    `target` per row — no backend change needed. The gap was purely
+    frontend: ui/src/lib/types.ts's RunSummary type never declared a
+    `target` field, so it was silently dropped on the way into the
+    component instead of rendered.
+
+
+2. FIXES
+-----------------------
+
+2.1 blocks/targets.py — TargetProfile abstraction (new)
+    A single frozen dataclass per target: base URL, login selectors/
+    strategy, credentials (env-var + default), which authenticated-page
+    selector proves a real login, whether B1 can fresh-reset it, B4's
+    extra crawl denylist, and B3's source_dir/extensions/exclude_dirs/
+    relevant_dirs. MATTERMOST and NAVIQ are the only two instances;
+    get_target(name) is the single lookup point, TARGETS the closed set
+    TopBar.tsx's picker and api.py's /api/target both read from.
+
+2.2 blocks/dynamic_analysis.py + blocks/crawler.py — B4 generalized to a
+    real crawl
+    discover_attack_surface(target=None) takes a TargetProfile (defaults
+    to Mattermost for zero behavior change on existing callers — the same
+    convention every generalized function in this session follows).
+    Replaced a hardcoded Mattermost route list with a genuine breadth-first
+    same-origin crawl from the post-login landing page
+    (blocks/crawler.py's select_links_to_visit()/GENERIC_DENYLIST/
+    DEFAULT_MAX_PAGES), combined with each target's own extra_denylist
+    (NaViQ: /webhooks/, /buy/ — real MercadoPago/PayPal payment
+    infrastructure that must stay out of scope even locally).
+    extract_forms() needed no changes — already generic DOM querying.
+
+2.3 blocks/mattermost_auth.py's find_working_selector() reused, B7
+    generalized (blocks/dynamic_injector.py)
+    _login(page, target=None) authenticates via the target's own
+    login_url/selectors/submit strategy instead of Mattermost-only calls.
+    _is_submission_response() replaced the old Mattermost-only URL-suffix
+    check (POST to a URL ending in /api/v4/posts or
+    /api/v4/commands/execute) with a target-agnostic predicate: same-origin,
+    method == POST, not a static-asset path — covers both Mattermost's
+    fetch/XHR chat API and NaViQ's classic Django full-page POST-redirect
+    forms without knowing either target's specific endpoint shapes.
+    _fill_sibling_fields()/_disable_client_validation() (new) close the gap
+    from bug 1.3/1.2 above. _looks_like_xss_payload()/
+    _looks_like_html_response() (new) close bug 1.4.
+
+2.4 blocks/environment.py — B1 target dispatch + NaViQ automation
+    main.py's --mode fresh/restore and api.py's reset endpoint both
+    dispatch on target.name: Mattermost keeps fresh_reset() (Docker)
+    unchanged; NaViQ gets naviq_fresh_reset() (wipe db.sqlite3, migrate,
+    reseed, recreate the test account) plus ensure_naviq_server_running()/
+    stop_naviq_server() (bug 1.7 above).
+
+2.5 blocks/static_scanner.py + main.py — B3 target-aware (bug 1.5/1.6 above)
+    run_static_analysis() now takes a target_profile; both real call
+    sites (main.py's CLI, api.py's run_pipeline_until_b6()) updated.
+    Cache file target-scoped (results/{target}_files_list.txt) — the same
+    naming convention later generalized to every other block's output in
+    2.7 below.
+
+2.6 Frontend — TopBar target picker, target-aware Sidebar copy, Past Runs
+    badge
+    api.py exposes GET/POST /api/target; ACTIVE_TARGET is a runtime-
+    switchable module global (not just env-var-set-once), reassigned by
+    POST /api/target and read at call time by every function below it, so
+    a reassignment is picked up everywhere without a mutable wrapper
+    object. TopBar.tsx got a real 2-way picker — the closed set of 2 known
+    profiles, not a free-text "any site" input (that line is what would
+    make this Approach B). Sidebar.tsx's Fresh/Restore toggle now respects
+    supports_fresh_reset and shows target-specific copy. /api/environment/
+    health generalized (mattermost_up -> target_up, target-aware ping —
+    Mattermost has a real /api/v4/system/ping, NaViQ and any future non-
+    Mattermost target fall back to a plain GET on base_url). Bug 1.9 above:
+    RunSummary gained `target: string | null`; PastRunsView.tsx's RunRow
+    renders it via a small local TARGET_LABELS map (mattermost ->
+    "Mattermost", naviq -> "NaViQ") rather than fetching /api/target's
+    `available` list just for a label.
+
+2.7 results/ per-target separation (bug 1.8 above) — the main fix closing
+    this session
+    New shared helper, result_path(target_name, filename) in
+    blocks/targets.py, generalizing the same {target}_files_list.txt
+    convention (2.5 above) to every block: "results/{target}_{filename}".
+    Threaded a target_profile parameter through every function that
+    previously hardcoded a results/... path — main.py (save_result,
+    run_static_analysis, run_dynamic_discovery, execute_attacks),
+    blocks/generate_payloads.py, blocks/human_review.py,
+    blocks/analyze_results.py, blocks/correlate_results.py, and
+    blocks/dynamic_injector.py — all defaulting to Mattermost when omitted
+    (same convention as every other generalized function this session),
+    but every real call site in main.py's main() and api.py's
+    run_pipeline_until_b6()/run_pipeline_from_b7() now passes the actual
+    active target explicitly. Went further than just the block JSONs:
+    B7's per-payload screenshots/videos (results/dynamic/, results/videos/)
+    were keyed only by payload id ("1_1"), which resets every run and
+    isn't unique across targets — scoped both directories per target
+    (results/dynamic/{target}/, results/videos/{target}/) in
+    dynamic_injector.py's _execute_one()/run_payloads() and
+    dynamic_analysis.py's discover_attack_surface() (B4's own discovery
+    video). No frontend change needed for the media half — ui/src/lib/
+    api.ts's mediaUrl() already strips a generic "results/" prefix and
+    forwards whatever's left to the /media mount.
+    api.py's GET /api/results/GET /api/results/{block_name} now glob/read
+    only ACTIVE_TARGET-scoped files, stripping the prefix back off so the
+    frontend still sees canonical keys ("B3_static", not
+    "naviq_B3_static") — no frontend contract change. POST /api/validate's
+    own file writes updated the same way.
+    blocks/run_history.py's finish_run() needed a real fix, not just a
+    path swap: it used to glob("*.json") unconditionally, snapshotting
+    *every* JSON file in results/ into whichever run just finished —
+    meaning once both targets' files started coexisting on disk (the
+    entire point of this fix), a NaViQ run's snapshot would also silently
+    absorb Mattermost's leftover files. Fixed by looking up the run's own
+    `target` from the runs table (already recorded by start_run()) and
+    filtering the glob to that target's prefix, stripping it back off
+    before storing each row's block_name — so get_run()/list_runs()
+    consumers see the exact same shape as before. A run predating the
+    `target` column (target IS NULL — e.g. this project's own orphaned
+    row id 5) falls back to the old glob-everything behavior, matching its
+    original semantics exactly rather than silently snapshotting nothing.
+
+
+3. VERIFICATION
+-----------------
+
+Test count progression across the session: 158 (baseline before Phase 0/1)
+-> 166 (Phase 5, frontend target-awareness) -> 171 (B7 auto-fill) -> 180
+(XSS fix) -> 186 (B3 target-awareness) -> 188 (B3 prompt precision) -> 195
+(NaViQ server automation) -> 197 (results/ separation + Past Runs badge).
+197/197 green at the close of this session.
+
+Live, not simulated, at every major step — the discipline held throughout:
+Phase 6 ran a real `python main.py --target naviq --mode restore` (B6's
+blocking input() monkeypatched in-process, same fix as an earlier Windows/
+Git-Bash stdin issue) and a real `python main.py --target mattermost
+--mode fresh` (destructive reset, confirmed with the user first since
+Mattermost's Docker container held real unrelated data) — both saved as
+real Past Runs, one finding a genuine real hardcoded secret (a live Giphy
+SDK key in Mattermost's own default_config.ts) correctly kept while
+several "not found" placeholders on the same file were correctly
+suppressed. This session's own closing fix (2.7) was verified the same
+way: cleared the local results/ folder, ran NaViQ then Mattermost back to
+back for real, and confirmed both targets' full output sets (8 JSON files
+each, plus their own dynamic/videos subdirectories) coexisted afterward
+with zero overwrite — naviq_B7_dynamic_attacks.json showed
+total_executed: 15 and mattermost_B7_dynamic_attacks.json showed
+total_executed: 10, each matching its own real run. Started api.py live
+and hit the real endpoints: GET /api/results returned NaViQ's
+total_executed: 15 while NaViQ was active, switched to Mattermost via
+POST /api/target, and the same endpoint immediately returned 10 — the
+literal symptom the user reported, confirmed fixed live. The Past Runs
+badge (2.6) was verified the same way: a headless-Chromium session driven
+through the real running app (landing page -> Past Runs tab) confirmed all
+17 real historical runs show the correct target badge.
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- Rules of engagement for NaViQ (any hours/rate limits the owner wants) —
+  the one open question from this session's very first phase, still
+  genuinely unanswered; needs the owner's input, not resolvable in-session.
+- run_history row id 5 has been stuck at status='running' since a much
+  older, unrelated session — orphaned, noticed but not touched (it
+  predates the `target` column and any of this session's work).
+- Approach B (a general "any user adds any site" product — accounts,
+  credential onboarding, consent/domain-verification gating, a target
+  picker with no closed set) remains deliberately out of scope — two
+  targets is the proof this pattern works, not a general system. See
+  MULTI_TARGET_PLAN.md's "Non-goals" section for the full reasoning.
+- Groq's ~100k-tokens/day quota (unchanged since SESSION 1/4) stayed a
+  real, partially-spent constraint throughout — live-run payload approval
+  counts were kept deliberately small (2-3) rather than approving
+  everything on every verification run.

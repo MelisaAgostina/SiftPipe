@@ -169,3 +169,18 @@ def get_target(name: str = DEFAULT_TARGET) -> TargetProfile:
         return TARGETS[name]
     except KeyError:
         raise ValueError(f"Unknown target {name!r}. Available: {', '.join(sorted(TARGETS))}")
+
+
+def result_path(target_name: str, filename: str) -> str:
+    """
+    Target-scoped path for a pipeline block's output file under results/,
+    e.g. result_path("naviq", "B3_static.json") -> "results/naviq_B3_static.json".
+    Generalizes the same convention run_static_analysis() already used ad
+    hoc for its files_list.txt cache (see "B3 target-awareness" in
+    MULTI_TARGET_PLAN.md) to every block's output — real bug found live
+    2026-08-10: running NaViQ then Mattermost back to back silently
+    overwrote results/B7_dynamic_attacks.json with Mattermost's data,
+    corrupting the frontend's live "Hybrid pipeline" tabs for whichever
+    target wasn't the most recent one to run.
+    """
+    return f"results/{target_name}_{filename}"

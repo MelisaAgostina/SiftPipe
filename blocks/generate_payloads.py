@@ -4,6 +4,7 @@ import os
 import re
 
 from blocks.taxonomy import infer_taxonomy
+from blocks.targets import MATTERMOST, result_path
 
 
 RESULTS_DIR = "results"
@@ -229,21 +230,24 @@ def ask_llm(prompt, client=None):
         return {"error": "LLM request failed", "message": str(e)}
 
 
-def generate_payloads(client=None):
+def generate_payloads(client=None, target_profile=None):
+    target_profile = target_profile or MATTERMOST
+
     if client is None:
         from dotenv import load_dotenv
         load_dotenv()
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-    static_data    = load_json_file(os.path.join(RESULTS_DIR, "B3_static.json"))
-    attack_surface = load_json_file(os.path.join(RESULTS_DIR, "attack_surface.json"))
+    static_data    = load_json_file(result_path(target_profile.name, "B3_static.json"))
+    attack_surface_path = result_path(target_profile.name, "attack_surface.json")
+    attack_surface = load_json_file(attack_surface_path)
 
     static_findings = []
     if static_data and isinstance(static_data, dict):
         static_findings = static_data.get("findings", [])
 
     if attack_surface is None:
-        raise FileNotFoundError("results/attack_surface.json not found. Run dynamic discovery first.")
+        raise FileNotFoundError(f"{attack_surface_path} not found. Run dynamic discovery first.")
 
     dynamic_targets = build_dynamic_targets(attack_surface)
     if not dynamic_targets:
@@ -299,7 +303,7 @@ def generate_payloads(client=None):
         "payloads":          payload_outputs,
     }
 
-    save_json_file(os.path.join(RESULTS_DIR, "B5_payloads.json"), output)
+    save_json_file(result_path(target_profile.name, "B5_payloads.json"), output)
 
     print(f"B5 finalized, generated payloads: {len(payload_outputs)}")
     return output

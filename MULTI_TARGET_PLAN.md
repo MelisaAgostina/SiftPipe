@@ -1121,34 +1121,227 @@ not the unit tests).
 
 **Goal:** prove it, don't just believe it.
 
-- [ ] **Task 6.1** — Full `python main.py --target naviq --mode restore`
-      run, B3→B9 (B3 is now genuinely in scope for NaViQ, not a hedge — see
-      "B3 target-awareness" above), producing a real `B9_correlation.json`
-      for NaviQ. Reviewed by hand — same expectation as Mattermost: most
-      findings will likely be `discarded`/`possible`, that's a correct
-      result, not a failure (NaviQ is presumably not intentionally
-      vulnerable either).
-      **Expected result:** a completed run, saved as a Past Run, visible
-      and correct in the frontend.
-- [ ] **Task 6.2** — Full regression: `python main.py --target mattermost
-      --mode fresh` still works exactly as before, and the entire backend
-      test suite still passes (113 tests today — this number moves as
-      Phases 1-3 add tests).
-      **Expected result:** green test suite, unchanged Mattermost behavior,
-      confirmed side by side with the NaviQ run in Past Runs.
+- [x] **Task 6.1 (done 2026-08-10)** — Ran for real. `main.py`'s B6
+      blocks on a bare `input()` expecting a human to have hand-written
+      `results/validated_payloads.json` — same Windows/Git-Bash stdin
+      issue hit earlier this session, same fix (monkeypatch `input()`
+      in-process). The patched function did real work, not a stub: read
+      B5's actual output and auto-approved the first 3 non-empty
+      candidates (1 payload each — real Groq-quota discipline, B3 alone
+      had already been run live against NaViQ twice earlier today), same
+      JSON shape `/api/validate` itself writes.
+
+      **Real result, run id 14, `restore` mode, 71s total:**
+      `ensure_naviq_server_running()`'s restore-mode safety net fired for
+      real (server was down, started in 12.7s) — first live proof that
+      exact code path actually works, not just its unit tests. B3: 119
+      real `.py` files found, 10 scanned, 0 findings saved — every "not
+      found" placeholder the LLM returned was correctly caught by today's
+      filter (confirms that fix generalizes past the files it was built
+      against). B4: real login, 14 real pages crawled. B5: 20 real
+      payloads generated. B7: all 3 approved targets were on the contact
+      form (email/name/message) — confirms `_fill_sibling_fields()` is
+      working in the full real pipeline, not just the earlier isolated
+      test: all 3 got genuine `302`s (not the pre-fix "Something went
+      wrong" rejection), meaning the *other* two fields were correctly
+      auto-filled each time. 0 anomalies (Django's auto-escaping, already
+      established). B9: 0 correlated findings — correct given 0 static
+      + 0 dynamic anomalies, nothing to correlate. Saved as Past Run id 14,
+      visible in the frontend.
+- [x] **Task 6.2 (done 2026-08-10)** — Full test suite: 195/195 green,
+      confirmed both before and after the live runs. For the Mattermost
+      run itself, Mattermost's Docker container turned out to hold real
+      data unrelated to this session (running since 2026-08-08) — checked
+      with the user before wiping it via `--mode fresh` rather than
+      assuming; confirmed destructive reset was fine.
+
+      **Real result, run id 15, `fresh` mode, ~2m16s total:** full
+      teardown → bind-mount volume wipe → rebuild → boot (70.4s) →
+      automated System Admin creation (no manual fallback needed) → seed
+      → pipeline, exactly the sequence this mechanic has always run,
+      unmodified by anything done this session. B3: 2057 real files found
+      (Mattermost's actual size, vs. NaViQ's 119), 10 scanned, 6 findings
+      saved — including a **genuine, real hardcoded secret**
+      (`GiphySdkKey: 's0glxvzVg9azvPipKxcPLpXV0q1x1fVP'` in Mattermost's
+      own `default_config.ts`) correctly *not* suppressed by today's A02
+      prompt fix, alongside several correctly-suppressed "not found"
+      placeholders on the same file — real, side-by-side proof that fix
+      discriminates true positives from false ones rather than just
+      suppressing the whole category. (Worth being precise, not
+      oversold: a Giphy SDK key is typically a client-facing, low-sensitivity
+      credential by design, not necessarily a severe finding on its own —
+      what matters here is the detection was accurate, not that this
+      specific key is a serious vulnerability.) B7: 2 of 3 approved
+      targets executed (the third was `fileUploadInput`, already and
+      correctly skipped — pre-existing behavior, not new), both
+      `post_textbox` XSS payloads reflected in Mattermost's own JSON API
+      response — **0 anomalies, which is the real, live, first-time proof
+      that today's `XSS_reflected` false-positive fix works against
+      actual live Mattermost**, not just replayed historical data. B9: 6
+      correlated findings, all `POSSIBLE` (the static findings, none
+      matched by a dynamic anomaly since B7 tested different code paths
+      than what B3 flagged) — matches this task's own stated expectation
+      exactly. Saved as Past Run id 15, confirmed side by side with the
+      NaViQ run in Past Runs.
+
+      Also noticed, not a new issue: B4 logged one non-fatal timeout
+      warning crawling a thread-view page
+      (`Page.wait_for_selector: Timeout 8000ms exceeded` on
+      `.channel-header, #channelHeaderTitle`) — handled gracefully by
+      B4's existing per-page error collection, didn't stop the crawl.
+
+## `results/` per-target separation (done 2026-08-10, ahead of Phase 7)
+
+Not one of the original numbered tasks — flagged by the user as the top
+priority right after Phase 6 landed, once running the NaViQ run (Task 6.1)
+then the Mattermost run (Task 6.2) back to back made it a live, visible UI
+bug rather than a theoretical risk: `results/B7_dynamic_attacks.json`
+(and every other block's output) is a single fixed filename regardless of
+which target wrote it, so run 15 (Mattermost) silently overwrote run 14's
+(NaViQ) output. Every block (B3 static, B4/`attack_surface`, B5 payloads, B6/
+`validated_payloads`, B7 dynamic attacks, B8 dynamic, B9 correlation) wrote
+to a fixed `results/{block}.json` path, and `api.py`'s `GET /api/results`/
+`GET /api/results/{block_name}` read those same fixed paths directly — so
+the live "Hybrid pipeline" tabs (not Past Runs, which was already correctly
+isolated via SQLite) could show a completely different target's stale data
+than whatever was currently selected in the TopBar picker.
+
+Precedent already existed for the fix: B3's own file-list cache had
+already gotten this treatment (`results/{target}_files_list.txt`, see "B3
+target-awareness" above) after an identical collision. Generalized that
+same convention to every block via one shared helper,
+`result_path(target_name, filename)` in `blocks/targets.py`
+(`results/{target}_{filename}`), and threaded a `target_profile` parameter
+through every function that previously hardcoded a `results/...` path:
+`main.py` (`save_result`, `run_static_analysis`, `run_dynamic_discovery`,
+`execute_attacks`), `blocks/generate_payloads.py`, `blocks/human_review.py`,
+`blocks/analyze_results.py`, `blocks/correlate_results.py`, and
+`blocks/dynamic_injector.py`. All default to Mattermost when omitted (same
+"zero behavior change for existing callers" convention used throughout this
+plan), but every real call site in `main.py`'s `main()` and `api.py`'s
+`run_pipeline_until_b6()`/`run_pipeline_from_b7()` now passes the actual
+active target explicitly.
+
+Went further than just the block JSONs once it was clear the same
+collision applied to per-payload evidence: B7's screenshots/videos
+(`results/dynamic/`, `results/videos/`) were keyed only by payload id
+(e.g. `"1_1"`), which resets every run and isn't unique across targets —
+two targets run back to back could silently overwrite each other's
+screenshots too, corrupting a Past Run's image links even though the JSON
+referencing them was itself safely snapshotted in SQLite. Fixed by scoping
+both directories per target (`results/dynamic/{target}/`,
+`results/videos/{target}/`) in `dynamic_injector.py`'s `_execute_one()`/
+`run_payloads()` and `dynamic_analysis.py`'s `discover_attack_surface()`
+(B4's own discovery video). No frontend change needed for this half — the
+UI's `mediaUrl()` (`ui/src/lib/api.ts`) already strips a generic
+`results/` prefix and forwards whatever's left to the `/media` mount, so a
+deeper nested path works with zero changes there.
+
+`api.py`'s `GET /api/results`/`GET /api/results/{block_name}` now glob/read
+only `ACTIVE_TARGET`-scoped files, stripping the prefix back off so the
+frontend still sees canonical keys (`"B3_static"`, not
+`"naviq_B3_static"`) — no frontend contract change. `POST /api/validate`
+and `POST /api/target`'s own file writes updated the same way.
+
+`blocks/run_history.py`'s `finish_run()` needed a real fix, not just a
+path swap: it used to `glob("*.json")` unconditionally, snapshotting
+*every* JSON file in `results/` into whichever run just finished — meaning
+once both targets' files started coexisting on disk (the entire point of
+this fix), a NaViQ run's snapshot would also silently absorb Mattermost's
+leftover files. Fixed by looking up the run's own `target` from the `runs`
+table (already recorded by `start_run()`) and filtering the glob to that
+target's prefix, stripping it back off before storing each row's
+`block_name` — so `get_run()`/`list_runs()` consumers see the exact same
+shape as before. A run predating the `target` column (`target IS NULL`,
+e.g. this project's own orphaned row id 5) falls back to the old
+glob-everything behavior, matching its original semantics exactly rather
+than silently snapshotting nothing.
+
+**Verified against real two-target runs, not fixtures**: cleared the local
+`results/` folder (gitignored, disposable) of stale pre-fix files, then ran
+`python main.py --target naviq --mode restore` followed by
+`python main.py --target mattermost --mode restore` back to back — the
+exact sequence that exposed the bug in Task 6.1/6.2. Real result: both
+targets' full JSON output sets (`naviq_B3_static.json` through
+`naviq_B9_correlation.json`, and the same eight files prefixed
+`mattermost_`) coexisted afterward with no overwrite — `naviq_B7_dynamic_
+attacks.json` still showed `total_executed: 15` and `mattermost_B7_
+dynamic_attacks.json` showed `total_executed: 10`, matching each run's own
+real execution count exactly. `results/dynamic/naviq/` and `results/dynamic/
+mattermost/` (and the `videos/` equivalents) each held their own distinct
+15/10 screenshots and videos with zero cross-target overwrite. Started
+`api.py` live and hit the real endpoints: `GET /api/results` returned
+NaViQ's `B7_dynamic_attacks.total_executed: 15` while NaViQ was active,
+switched to Mattermost via `POST /api/target`, and the same endpoint
+immediately returned `10` — the literal symptom the user reported, now
+fixed and confirmed live. `GET /api/runs/17` (Mattermost) and
+`GET /api/runs/16` (NaViQ) each returned canonical block names with the
+correct target's own data, no leakage either direction. 197/197 tests
+green throughout (2 new: one proving `run_history.finish_run()` doesn't
+cross-contaminate when both targets' files coexist, one proving
+`GET /api/results` only returns the active target's files).
+
+## Past Runs target display (done 2026-08-10, ahead of Phase 7)
+
+A small follow-up idea from the user once the separation fix above landed:
+show which target each Past Run actually used, directly in the Past Runs
+list, so the "which target produced this" question is answered by the UI
+itself instead of requiring cross-referencing. Mostly already there on the
+backend — `blocks/run_history.py`'s `list_runs()` already selected and
+returned `target` per row, no backend change needed. The gap was entirely
+frontend: `ui/src/lib/types.ts`'s `RunSummary` didn't declare a `target`
+field at all (so it was silently dropped even though the API already sent
+it), and `PastRunsView.tsx` never rendered it. Fixed by adding
+`target: string | null` to `RunSummary` and a small badge in `RunRow`
+next to each run's timestamp, using a local `TARGET_LABELS` map
+(`mattermost` → "Mattermost", `naviq` → "NaViQ") rather than fetching
+`GET /api/target`'s `available` list just for a label — a past run's own
+target string is already exact, and this mirrors the same "closed set of
+2 known profiles" design TopBar.tsx's picker already uses. Falls back to
+the raw string for a run predating the `target` column.
+
+**Verified live in the real running app, not just `tsc`**: started
+`api.py` + the Vite dev server, drove a headless Chromium through the
+landing page into the Past Runs tab, and confirmed every real historical
+run (ids 1-17) shows the correct badge — alternating "Mattermost"/"NaViQ"
+exactly matching each run's actual `target` column, including runs 14/16
+(NaViQ) sitting right next to 15/17 (Mattermost) from the results-
+separation verification above. `tsc --noEmit` clean; the one `eslint`
+finding on `types.ts` is pre-existing formatting debt on an unrelated line
+(`matched_static_finding`), not something this change introduced.
 
 ## Phase 7 — Docs
 
-- [ ] **Task 7.1** — `readme.md`: new dated entry (same style as SESSION
-      1-7 entries in `fixes.txt`) documenting the target-profile system,
-      what's generic now vs. still target-specific, and NaviQ's status as
-      the second validated target.
-- [ ] **Task 7.2** — `fixes.txt`: a new SESSION documenting what was
-      actually found/fixed during this work — especially anything in Phase
-      3 that didn't generalize as cleanly as hoped, since that's exactly
-      the kind of finding worth being honest about in a thesis writeup.
-- [ ] **Task 7.3** — `todo.md` §D: already being updated alongside this
-      plan's creation to stop contradicting it.
+- [x] **Task 7.1 (done 2026-08-10)** — `readme.md` updated: a new dated
+      paragraph in the intro changelog (2026-08-08 to 2026-08-10) plus
+      dated bullets/Estado-line updates on B1, B3, B4, B7, and B13
+      documenting the target-profile system, what's generic now (B1/B3/B4/
+      B7 login+injection, the frontend picker) vs. still target-specific
+      (concrete DOM selectors for anything beyond login), and NaViQ's
+      status as the second validated target — including today's `results/`
+      separation and Past Runs target-badge follow-ups. Section 8's
+      roadmap point 1 ("soportar más de un sitio/target") marked
+      superseded-in-part, same phrasing convention as `todo.md`'s own
+      superseded entries. Test count updated 113 → 197 throughout. New
+      closing paragraph added to "Resumen ejecutivo".
+- [x] **Task 7.2 (done 2026-08-10)** — `fixes.txt`: added SESSION 8,
+      covering the real bugs found across all of Phases 0-6 plus the two
+      2026-08-10 follow-ups (the "#unknown" selector bug, hidden-field
+      crowding in B5, the NaViQ honeypot, the XSS_reflected false
+      positives, B3 never running against NaViQ, the A02 prompt fix + LLM
+      placeholder bug, three NaViQ dev-server-automation bugs, the
+      `results/` per-target collision, and the missing `target` field on
+      `RunSummary`) — honest about what didn't generalize as cleanly as
+      hoped (Phase 3's login/injection generalization was the highest-
+      uncertainty phase, and its own real bugs are documented in section
+      1 rather than glossed over). Explicitly scoped as the *condensed*
+      technical record — full phase-by-phase detail stays in this file
+      (`MULTI_TARGET_PLAN.md`), not duplicated there.
+- [x] **Task 7.3** — `todo.md` §D: already done, alongside this plan's
+      creation on 2026-08-08 (see its "superseded 2026-08-08" line) — kept
+      in sync throughout every phase of this plan since, most recently
+      with today's `results/` separation and Past Runs display entries in
+      `todo.md` §E.
 
 ---
 
