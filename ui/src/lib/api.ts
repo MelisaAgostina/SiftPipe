@@ -102,6 +102,39 @@ export const validatePayloads = (body: ValidateRequest) =>
   });
 
 /**
+ * Downloads a run's PDF report and triggers a browser save — bypasses the
+ * JSON-only request() wrapper (same reason getBlockResult() below does its
+ * own fetch) since this response is a PDF blob, not JSON.
+ */
+export async function downloadReport(runId: number, lang: "en" | "es" = "en"): Promise<void> {
+  const headers = new Headers();
+  if (API_KEY) headers.set("X-API-Key", API_KEY);
+
+  const res = await fetch(`${API_BASE}/api/runs/${runId}/report?lang=${lang}`, { headers });
+  if (!res.ok) {
+    const detail = await parseDetail(res);
+    throw new ApiError(`GET /api/runs/${runId}/report failed (${res.status})`, res.status, detail);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  // Filename is decided once, server-side (blocks/report.py's
+  // build_report_filename) — read it back instead of duplicating that
+  // naming scheme here. Falls back to a generic name only if the
+  // Content-Disposition header is ever missing/unparseable.
+  const disposition = res.headers.get("Content-Disposition");
+  const filename =
+    disposition?.match(/filename="([^"]+)"/)?.[1] ?? `siftpipe-run-${runId}-${lang}.pdf`;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
  * A 404 means the block hasn't produced results yet — a normal state on a
  * fresh/partial run, not an error — so it resolves to null instead of throwing.
  */

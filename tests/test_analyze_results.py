@@ -148,8 +148,8 @@ class TestAnalyzeResults(unittest.TestCase):
         self.assertEqual(out["B8"]["findings"][0]["result"], "possible")
 
     def test_ask_llm_error_placeholder_still_gets_a_valid_result_field(self):
-        # main.py's ask_llm() catches every exception (including Groq 429 rate
-        # limits) and returns {"vulnerability": "API Error", "evidence": ...}
+        # main.py's ask_llm() catches every exception (including Anthropic 429
+        # rate limits) and returns {"vulnerability": "API Error", "evidence": ...}
         # with no "result" key at all — analyze_results() must still write a
         # valid result value, since the frontend's B8Finding.result is typed
         # as non-optional and un-guarded (f.result.toUpperCase()).

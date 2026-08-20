@@ -1616,3 +1616,160 @@ through the real running app (landing page -> Past Runs tab) confirmed all
   real, partially-spent constraint throughout — live-run payload approval
   counts were kept deliberately small (2-3) rather than approving
   everything on every verification run.
+
+
+SESSION 9 — Groq → Anthropic migration (Llama 3.3 decommission)
+(2026-08-19)
+================================================================================
+
+Scope: Groq notified the user that `llama-3.3-70b-versatile` — the single
+model every LLM call in the pipeline used (B3, B5, B8, B9) — was being
+decommissioned 2026-08-16. The user got an Anthropic API key with a $5
+prepaid budget and asked for a cost estimate and model recommendation
+before writing any migration code, then validated that recommendation
+empirically in the Anthropic Console Playground against real project data
+before touching the codebase.
+
+
+1. REAL FINDING — Sonnet 5 fully deprecates `temperature`
+-----------------------------------------------------------
+Not a SiftPipe bug, but a real platform-level gotcha hit live during
+Playground testing and worth recording since it would have silently broken
+any future attempt to route a block to Sonnet: setting `temperature` (or
+`top_p`/`top_k`) to any non-default value on `claude-sonnet-5` returns a
+400 error. Confirmed via the Anthropic Console error message itself, then
+verified against Anthropic's own docs (platform.claude.com/docs/en/build-
+with-claude/effort): sampling parameters are removed entirely on this
+model in favor of `output_config.effort` (low/medium/high/xhigh/max,
+defaulting to high), an adaptive-thinking control, not a token-budget cap.
+Doesn't affect the code actually shipped this session (all four blocks use
+Haiku 4.5, which still accepts `temperature=0.0` exactly as the Groq code
+did), but matters if the project ever routes a block to Sonnet later —
+that call site would need `effort=` instead of `temperature=`.
+
+
+2. VALIDATION BEFORE TOUCHING CODE
+-----------------------------------
+Before writing any migration code, tested the two highest-stakes prompts —
+B3 (static analysis) and B8 (dynamic classification) — the ones with real
+judgment involved, as opposed to B5/B9's more formulaic generation/yes-
+no-judge tasks. Assembled real ready-to-paste prompt packages from the
+actual project code (`get_analysis_prompt()` in
+blocks/static_scanner.py, the inline prompt in `analyze_results()`) and
+real project data (a real scanned file, `mattermost-src/mattermost/
+server/path.go`, for B3; the `_b7_finding` test-fixture shape for B8,
+since no real B7_dynamic_attacks.json existed yet — the pipeline was
+already fully stalled at B5 by the Groq decommission, so no real B7 output
+could exist until the migration itself unblocked it).
+
+Ran both prompts on `claude-haiku-4-5-20251001` and `claude-sonnet-5`
+(sequentially — Compare mode wasn't available) in the Playground:
+  - B3 (clean file, no real vulnerability present): both models correctly
+    returned `[]` — no markdown fences, no fabricated "not found"
+    placeholder finding (the exact bug this project had already found and
+    guarded against with Llama — see SESSION 4/8's `"line": 0` fixes).
+    Sonnet: $0.0028, 4 out tokens. Haiku: $0.001, 9 out tokens.
+  - B8 (clear-cut SQLi case, HTTP 500 + "database error" evidence): both
+    models returned identical `result: "confirmed"` / `confidence: "high"`
+    with comparably specific reasoning in `evidence` — Haiku's answer was
+    if anything slightly more detailed. Sonnet: $0.0022, 469 in / 129 out,
+    3.6s. Haiku: $0.00098, 318 in / 133 out, 2.3s — less than half the
+    cost, no visible quality gap on either test.
+
+No quality gap surfaced on either test, so the mixed Haiku/Sonnet split
+originally proposed (Sonnet on B3/B8 for judgment quality, Haiku on B5/B9
+for cost) was dropped in favor of Haiku everywhere — simpler code (one
+model constant, one temperature path, no Sonnet-specific `effort` branch
+needed) at meaningfully lower cost. Caveat carried into section 4: B3's
+test used a clean file, so it validates "doesn't hallucinate a finding,"
+not "catches a real one as well as Sonnet would" — that gap was
+consciously accepted rather than closed, given the $5 budget and the
+tiny cost delta actually observed.
+
+
+3. MIGRATION APPLIED
+-----------------------------------
+- requirements.txt: `groq==1.2.0` -> `anthropic==0.124.0` (installed into
+  the project venv, which didn't have it yet).
+- main.py: `Groq(api_key=os.getenv("GROQ_API_KEY"))` ->
+  `Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))`; added a
+  `CLAUDE_MODEL = "claude-haiku-4-5-20251001"` constant. `ask_llm()`
+  (shared by B3 and B8) now calls `client.messages.create()` instead of
+  `client.chat.completions.create()` — `system` moved from a chat message
+  to its own top-level param, `max_tokens=4096` added (Anthropic's
+  Messages API requires it explicitly; Groq's didn't), `temperature=0.0`
+  kept unchanged, response text read from `response.content[0].text`
+  instead of `response.choices[0].message.content`. The existing
+  markdown-fence-stripping and JSON-parse-fallback logic was left
+  untouched — Playground testing showed clean output, but there was no
+  reason to remove a working safety net that costs nothing to keep.
+- blocks/generate_payloads.py (B5): same client/model/response-shape swap
+  in its own `ask_llm()`, in both places it lazily instantiates a client
+  when none is passed in. `max_tokens=512` kept as-is.
+- B8 (blocks/analyze_results.py) and B9 (blocks/correlate_results.py)
+  needed zero changes — both receive `ask_llm` as a parameter from
+  main.py rather than importing a client directly, so they picked up the
+  new provider automatically.
+- Updated three now-stale "Groq quota"/"Groq" comments to reflect the
+  new provider and constraint (blocks/correlate_results.py's
+  MAX_JUDGE_CALLS comment, blocks/dynamic_injector.py's sibling-field
+  comment, and one comment each in tests/test_api.py, tests/
+  test_analyze_results.py, tests/test_static_analysis_target.py) — none
+  were functional, all referenced the retired provider by name in a way
+  that would have confused a future reader.
+- .env: user already had `ANTHROPIC_API_KEY` set (confirmed present via
+  `.env`'s tracked key names, not its values) before the migration; a
+  static API key was the deliberate choice over Anthropic Console's
+  workload-identity-federation option, since SiftPipe runs as a local
+  script (and, per AWS_HOSTING_TODO.md, later as a short-lived EC2 demo
+  with hand-edited `.env`) — not inside a GCP/AWS/Azure/GitHub Actions
+  identity provider that federation requires. Confirmed `.env` is
+  gitignored and untracked before this was suggested.
+
+
+4. VERIFICATION
+-----------------
+Full test suite run after the migration via `python -m unittest discover
+-s tests`: 197/197 passing, no regressions, no test changes needed — every
+test mocks `ask_llm` rather than hitting a live client, so the swap was
+transparent to them. One of the mocked B3 tests replays the old fake-
+placeholder-finding scenario (`"line": 0`) verbatim; the existing filter
+in main.py's `run_static_analysis()` still caught and skipped it correctly
+post-migration, confirming that guard needed no changes either.
+
+Not yet verified live: no real end-to-end pipeline run (`python main.py
+--target ... --mode ...`) has been made against the live Anthropic API
+since the migration — only Playground testing (section 2, real API calls,
+real spend, just not through this codebase) and the mocked test suite
+(section 3, zero real API calls) have exercised this code so far.
+
+
+5. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+- No live pipeline run yet through the migrated code itself — the two
+  Playground tests validated the prompts and model choice, and the test
+  suite validated the code doesn't regress, but nobody has run `python
+  main.py --target mattermost` (or naviq) against the real Anthropic API
+  end-to-end since the swap. Offered to the user as the natural next step;
+  not done yet by user's choice, still mid-conversation at session close.
+- B3's model choice (Haiku over Sonnet) was validated only against a
+  clean file with nothing to find — it confirms neither model hallucinates
+  a finding, not that Haiku's detection recall matches Sonnet's on a file
+  with a real vulnerability. Consciously accepted, not closed — flagged to
+  the user twice (after the initial test, and again before the final
+  model-assignment decision) and deliberately deferred rather than
+  resolved, given the very small cost delta actually observed on B8.
+  If a real run surfaces missed findings, this is the first thing to
+  revisit.
+- No B7 output existed anywhere in this repo (fresh clone or git history)
+  before this session — the pipeline was fully stalled at B5 by the Groq
+  decommission (B5 calls the LLM; B7 needs B5's payloads as input), so
+  B8's Playground test necessarily used the existing test-fixture shape
+  from tests/test_analyze_results.py rather than real captured evidence.
+  A real end-to-end run (item 1 above) will produce genuine B7/B8 data for
+  the first time.
+- The code carries no Sonnet-specific code path (no `effort=` handling) —
+  a deliberate simplification of going all-Haiku, not an oversight, but it
+  means routing any block to Sonnet later requires actual code, not just a
+  model-string change, since `temperature=0.0` would 400 on that model
+  (see section 1).

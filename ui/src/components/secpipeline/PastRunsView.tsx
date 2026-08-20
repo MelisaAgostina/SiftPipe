@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { MoreVertical } from "lucide-react";
 import { usePastRuns, useRunDetail } from "@/lib/queries";
+import { API_BASE, downloadReport } from "@/lib/api";
 import type {
   B3Result,
   B4Raw,
@@ -21,6 +23,16 @@ import {
 import { Callout } from "./Callout";
 import { QueryState } from "./QueryState";
 import { Section } from "./Section";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const STATUS_TONE: Record<RunSummary["status"], string> = {
   completed: "text-primary",
@@ -53,11 +65,24 @@ function RunRow({
   selected: boolean;
   onClick: () => void;
 }) {
+  // A native <button> can't host the dropdown trigger's own interactive
+  // button without producing invalid, nested-button markup — this plays
+  // the same row-selection role via role="button" + explicit keyboard
+  // handling instead, so clicking/Enter/Space still select the row exactly
+  // like the native element did.
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className={
-        "w-full rounded-lg border px-4 py-3 text-left transition-colors " +
+        "w-full cursor-pointer rounded-lg border px-4 py-3 text-left transition-colors " +
         (selected ? "border-primary bg-accent" : "border-border bg-card hover:bg-accent/50")
       }
     >
@@ -65,9 +90,43 @@ function RunRow({
         <span className="text-sm font-medium text-foreground">
           Run #{run.id} · {run.mode ?? "unknown"}
         </span>
-        <span className={"text-xs font-semibold " + STATUS_TONE[run.status]}>
-          {run.status.toUpperCase()}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className={"text-xs font-semibold " + STATUS_TONE[run.status]}>
+            {run.status.toUpperCase()}
+          </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Run actions"
+                onClick={(e) => e.stopPropagation()}
+                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>Download report</DropdownMenuSubTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem onSelect={() => downloadReport(run.id, "en")}>
+                      English
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => downloadReport(run.id, "es")}>
+                      Español
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuPortal>
+              </DropdownMenuSub>
+              <DropdownMenuItem
+                onSelect={() => window.open(`${API_BASE}/api/runs/${run.id}`, "_blank")}
+              >
+                View raw JSON
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
       <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
         <span className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground">
@@ -80,7 +139,7 @@ function RunRow({
           </span>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 

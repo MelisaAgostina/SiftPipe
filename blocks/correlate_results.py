@@ -1,14 +1,14 @@
 import json
 import os
 
-from blocks.taxonomy import infer_taxonomy
+from blocks.taxonomy import infer_taxonomy, cwe_info
 from blocks.scoring import compute_score
 from blocks.targets import MATTERMOST, result_path
 
 # Safety cap on LLM-judge calls per run, same rationale as B3's MAX_FILES:
-# protects Groq's daily token cap on a large correlation run. Ambiguous pairs
-# beyond the cap fall back to a weak "same OWASP category" match instead of
-# an unbounded number of new LLM calls.
+# protects the Anthropic API budget on a large correlation run. Ambiguous
+# pairs beyond the cap fall back to a weak "same OWASP category" match
+# instead of an unbounded number of new LLM calls.
 MAX_JUDGE_CALLS = 15
 
 
@@ -79,18 +79,32 @@ def _load_previous_judgments(path):
     return data.get("judgments", {}) if isinstance(data, dict) else {}
 
 
-def _judge_prompt(b3, b8):
+def _cwe_line(cwe_id):
+    """'CWE-89 — <MITRE's own definition>' when known, else just the bare id
+    (or 'unknown' if there isn't one) — this tier is only reached when the
+    two sides' CWEs differ or are missing, so grounding whichever side does
+    have one with its real MITRE definition gives the judge something
+    concrete to reason against instead of just two free-text labels."""
+    if not cwe_id:
+        return "unknown"
+    info = cwe_info(cwe_id)
+    return f"{cwe_id} — {info['description']}" if info else cwe_id
+
+
+def _judge_prompt(b3, b8, static_cwe=None, dynamic_cwe=None):
     return f"""You are a security analyst reconciling two independent scans of the same \
 application. Both flagged something in the same OWASP category, but their vulnerability \
 labels don't line up exactly. Decide whether they describe the SAME underlying vulnerability.
 
 STATIC FINDING (source code analysis):
   Vulnerability: {b3.get('vulnerability')}
+  CWE: {_cwe_line(static_cwe)}
   File: {b3.get('file')}
   Evidence: {b3.get('evidence')}
 
 DYNAMIC FINDING (live exploitation attempt):
   Vulnerability: {b8.get('vulnerability')}
+  CWE: {_cwe_line(dynamic_cwe)}
   Target: {b8.get('target') or b8.get('endpoint')}
   Payload: {b8.get('payload')}
   Evidence: {b8.get('evidence')}
@@ -152,7 +166,7 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
     judgments = _load_previous_judgments(result_path(target_profile.name, "B9_correlation.json"))
     judge_calls_made = 0
 
-    def judge(b3, b8, pair_key):
+    def judge(b3, b8, pair_key, static_cwe=None, dynamic_cwe=None):
         nonlocal judge_calls_made
 
         cached = judgments.get(pair_key)
@@ -164,7 +178,7 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
 
         judge_calls_made += 1
         try:
-            raw = ask_llm(_judge_prompt(b3, b8))
+            raw = ask_llm(_judge_prompt(b3, b8, static_cwe, dynamic_cwe))
             same = raw.get("same_vulnerability") if isinstance(raw, dict) else None
             if same is True:
                 verdict = "yes"
@@ -195,7 +209,7 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
                 if stat_taxonomy["owasp_category"] != dyn_taxonomy["owasp_category"]:
                     continue
                 pair_key = f"{b8.get('payload_id', '?')}|{b3.get('file', '?')}|{i}"
-                verdict = judge(b3, b8, pair_key)
+                verdict = judge(b3, b8, pair_key, stat_taxonomy["cwe_id"], dyn_taxonomy["cwe_id"])
                 if verdict == "yes":
                     rationale = judgments.get(pair_key, {}).get("rationale", "")
                     return i, "judge", rationale

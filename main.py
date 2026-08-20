@@ -1,12 +1,14 @@
 #Ajustar los indicadores y palabras clave a las respuestas reales de Mattermost si observas falsos positivos/negativos.
 from dotenv import load_dotenv
 load_dotenv()
-from groq import Groq
+from anthropic import Anthropic
 import os
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 import time
 import json
 import argparse
+
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
 
 
@@ -41,16 +43,17 @@ from blocks.targets import MATTERMOST, get_target, result_path, DEFAULT_TARGET
 
 def ask_llm(prompt):
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=4096,
+            system="You are a security analysis tool. You respond ONLY with valid JSON. No prose, no explanations, no markdown. Only JSON.",
             messages=[
-                {"role": "system", "content": "You are a security analysis tool. You respond ONLY with valid JSON. No prose, no explanations, no markdown. Only JSON."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.0 #Higher temperatures can cause the AI to invent fake CVEs (Common Vulnerabilities and Exposures) or imagine security flaws that do not actually exist in your codebase.
                             #The model makes the "safest" and most expected choices, making the output highly focused and deterministic.
         )
-        text = response.choices[0].message.content.strip()
+        text = response.content[0].text.strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return json.loads(text)
     except json.JSONDecodeError:

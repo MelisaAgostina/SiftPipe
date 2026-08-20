@@ -16,7 +16,7 @@ import api
 class FakeThread:
     """
     Stands in for threading.Thread so /api/validate doesn't actually spawn
-    B7->B9 (which would hit Playwright + a live Mattermost + Groq). Records
+    B7->B9 (which would hit Playwright + a live Mattermost + Anthropic). Records
     what it was asked to run instead of running it.
     """
     started = []

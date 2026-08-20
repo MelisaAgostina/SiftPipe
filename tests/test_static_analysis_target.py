@@ -18,7 +18,7 @@ class TestRunStaticAnalysisTargetAwareness(unittest.TestCase):
     path AND its Go/TypeScript-tuned extensions/directory filter, plus a
     single shared results/files_list.txt cache that made whichever target
     ran B3 first "win" it forever. Exercises the real function (not a fake),
-    with ask_llm/time.sleep patched out so this doesn't hit Groq or take 15s.
+    with ask_llm/time.sleep patched out so this doesn't hit Anthropic or take 15s.
     """
 
     def setUp(self):

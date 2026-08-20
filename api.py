@@ -7,10 +7,11 @@ from typing import List
 import requests
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from blocks import run_history
+from blocks import report, run_history
 from blocks.environment import MM_PING_URL, ensure_naviq_server_running, fresh_reset, naviq_fresh_reset, stop_naviq_server
 from blocks.targets import TARGETS, get_target, result_path
 from main import (
@@ -43,6 +44,11 @@ app.add_middleware(
     ],
     allow_methods=["*"],
     allow_headers=["*"],
+    # Cross-origin fetch() hides all response headers except a small
+    # CORS-safelisted set by default — Content-Disposition isn't in it, so
+    # without this the frontend can't read the filename get_run_report()
+    # sets and would have to hardcode its own copy of that naming logic.
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -438,6 +444,25 @@ def get_run(run_id: int):
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
     return run
+
+
+@app.get("/api/runs/{run_id}/report")
+def get_run_report(run_id: int, lang: str = "en"):
+    """PDF export of one past run — blocks/report.py renders a deterministic
+    HTML document from the same snapshot GET /api/runs/{run_id} returns
+    (no new LLM calls), then Playwright prints it to PDF."""
+    if lang not in ("en", "es"):
+        raise HTTPException(status_code=400, detail="lang must be 'en' or 'es'")
+    run = run_history.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    pdf_bytes = report.render_report_pdf(run, lang)
+    filename = report.build_report_filename(run, lang)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/api/validate", dependencies=[Depends(require_api_key)])

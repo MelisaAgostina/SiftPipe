@@ -32,7 +32,7 @@ _SKIP_FIELD_TYPES = {"hidden", "submit", "button", "reset", "file", "image"}
 # an LLM call — this is filling out *other* fields to get past ordinary
 # "required field" validation, not generating the security-relevant value,
 # and an LLM call per sibling field per payload would burn through B5's
-# already-tight Groq quota for no real benefit here.
+# already-tight Anthropic budget for no real benefit here.
 _KEYWORD_PLACEHOLDERS = [
     ("email", "test@example.com"),
     ("phone", "1234567890"),

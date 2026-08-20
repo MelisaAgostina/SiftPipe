@@ -1,5 +1,5 @@
 import json
-from groq import Groq
+from anthropic import Anthropic
 import os
 import re
 
@@ -8,6 +8,7 @@ from blocks.targets import MATTERMOST, result_path
 
 
 RESULTS_DIR = "results"
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
 
 def ensure_results_dir():
@@ -197,25 +198,22 @@ def ask_llm(prompt, client=None):
     if client is None:
         from dotenv import load_dotenv
         load_dotenv()
-        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=512,   # compact response — prompt asks for exactly 5 payloads
+            system=(
+                "You are a security testing assistant. "
+                "You respond ONLY with valid, complete JSON. "
+                "No prose, no markdown, no truncation."
+            ),
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a security testing assistant. "
-                        "You respond ONLY with valid, complete JSON. "
-                        "No prose, no markdown, no truncation."
-                    )
-                },
                 {"role": "user", "content": prompt}
             ],
             temperature=0.0,
-            max_tokens=512,   # compact response — prompt asks for exactly 5 payloads
         )
-        text = response.choices[0].message.content.strip()
+        text = response.content[0].text.strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return json.loads(text)
 
@@ -236,7 +234,7 @@ def generate_payloads(client=None, target_profile=None):
     if client is None:
         from dotenv import load_dotenv
         load_dotenv()
-        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
     static_data    = load_json_file(result_path(target_profile.name, "B3_static.json"))
     attack_surface_path = result_path(target_profile.name, "attack_surface.json")
