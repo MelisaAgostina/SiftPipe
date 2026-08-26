@@ -97,13 +97,34 @@ MATTERMOST = TargetProfile(
     authenticated_selectors=[".channel-header", "#channelHeaderTitle"],
     supports_fresh_reset=True,
     extra_denylist=[],
-    # Exact values blocks/static_scanner.py hardcoded before this existed -
-    # kept identical here so Mattermost's own B3 behavior doesn't change at
-    # all, only NaViQ gains a real scan config of its own.
+    # Kept in sync with blocks/static_scanner.py's DEFAULT_EXCLUDE_DIRS /
+    # DEFAULT_RELEVANT_DIRS - see that file's comment for how these were
+    # recalibrated (2026-08-26) against a real scan of mattermost-src: the
+    # old relevant_dirs (with bare "api"/"server") let non-application
+    # tooling (e2e-tests/, top-level api/ doc-gen, tools/) eat scan budget
+    # while barely reaching webapp/ at all (16 of 2057 matched files, every
+    # one an accidental "store"-folder match, zero real component/action/
+    # util files). This set is deliberately every name verified to actually
+    # exist in mattermost-src's tree, not a generic starter list.
     source_dir="mattermost-src/mattermost",
     source_extensions=(".go", ".ts", ".tsx", ".js", ".jsx"),
-    source_exclude_dirs=frozenset({"node_modules", "vendor", "tests", ".git"}),
-    source_relevant_dirs=frozenset({"api", "app", "handlers", "store", "services", "auth", "model", "server"}),
+    source_exclude_dirs=frozenset({
+        "node_modules", "vendor", "tests", ".git",
+        "e2e-tests", "api", "tools", "testlib", "manualtesting", ".github", "dist",
+        "build", "bin", "cmd", "scripts", "eslint-plugin",
+        "i18n", "fonts", "images", "sounds", "sass",
+    }),
+    source_relevant_dirs=frozenset({
+        # server/channels/* - the real Go backend logic
+        "api4", "app", "store", "web", "wsapi", "audit", "db", "jobs",
+        # server/public/*, server/platform/* - shared models/services
+        # (role.go, the CVE-2025-3611 root cause investigated this session,
+        # lives under server/public/model/)
+        "model", "plugin", "pluginapi", "shared", "utils", "services",
+        # webapp/channels/src/*, webapp/platform/* - the React frontend,
+        # barely reachable at all before this fix
+        "components", "actions", "client", "selectors", "reducers", "hooks", "plugins",
+    }),
 )
 
 # Selectors confirmed live against the real local instance during Phase 0
@@ -184,3 +205,19 @@ def result_path(target_name: str, filename: str) -> str:
     target wasn't the most recent one to run.
     """
     return f"results/{target_name}_{filename}"
+
+
+def evidence_dir(target_name: str, run_id) -> str:
+    """
+    Per-run, per-target directory for B7's screenshots/videos, e.g.
+    evidence_dir("naviq", 23) -> "evidence/naviq/23". Deliberately kept
+    outside results/: environment.py's clear_results_folder() wipes
+    results/ wholesale on every Fresh Reset, which would destroy every past
+    run's evidence files in one shot if they lived there — the same reason
+    run_history.py's SQLite db already lives outside results/ (see
+    readme.md's "Decisiones técnicas"). Namespacing by run_id (not just
+    target) is what actually stops one run's screenshots/videos from
+    overwriting another's — the run_blocks JSON snapshot was already
+    immune to this, only the binary evidence files weren't.
+    """
+    return f"evidence/{target_name}/{run_id}"

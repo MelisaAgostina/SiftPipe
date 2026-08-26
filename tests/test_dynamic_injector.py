@@ -74,18 +74,35 @@ class FakeExpectResponse:
         return False
 
 
+class FakeGotoResponse:
+    """Stands in for the Response page.goto() returns on a real navigation."""
+
+    def __init__(self, status):
+        self.status = status
+
+
 class FakePage:
     """
     Stands in for a Playwright Page. `responses` is a list of FakeResponse|None,
-    one per _execute_one() call (i.e. per non-skipped payload, in order),
-    consumed by expect_response() to mimic a real request/response round trip
-    (None simulates a timeout — no matching response observed).
+    one per _execute_one() call, in order, consumed by expect_response() to
+    mimic a real request/response round trip (None simulates a timeout — no
+    matching response observed). Since run_payloads() now issues one
+    unauthenticated auth-probe call per field before that field's own
+    payloads, the first entry per non-skipped field in `responses` is the
+    probe's response, not the first payload's.
+
+    `goto_statuses` (url -> status code) is separate: it's consulted by
+    goto() itself, used by the action-link probe (_check_action_link), which
+    reads a navigation's own response status rather than expect_response()'s
+    queue — unset URLs (including the real login/payload navigations) get
+    goto()'s old no-op None, unaffected.
     """
 
-    def __init__(self, responses):
+    def __init__(self, responses, goto_statuses=None):
         self._responses = responses
         self._call_idx = 0
         self.keyboard = FakeKeyboard()
+        self._goto_statuses = goto_statuses or {}
 
     def _next_response(self):
         if self._call_idx < len(self._responses):
@@ -98,7 +115,8 @@ class FakePage:
         return FakeExpectResponse(self, predicate, timeout)
 
     def goto(self, url, wait_until=None, timeout=None):
-        pass
+        status = self._goto_statuses.get(url)
+        return FakeGotoResponse(status) if status is not None else None
 
     def wait_for_selector(self, selector, timeout=None, state=None):
         pass
@@ -209,20 +227,23 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         os.chdir(self._cwd)
         self._tmp.cleanup()
 
-    def _run(self, responses):
-        page = FakePage(responses)
+    def _run(self, responses, goto_statuses=None):
+        page = FakePage(responses, goto_statuses)
         fake_sync_playwright = lambda: FakeSyncPlaywright(page)
         with patch.object(di, "sync_playwright", fake_sync_playwright):
             return di.run_payloads(self.validated_path, {})
 
     def test_file_upload_target_is_skipped(self):
-        result = self._run([None, None])
-        self.assertEqual(result["total_executed"], 2)
+        # Leading None is the auth-probe response (timeout -> not vulnerable,
+        # no finding) that now runs once per field before its payloads.
+        result = self._run([None, None, None])
+        self.assertEqual(result["total_executed"], 3)
         for finding in result["findings"]:
             self.assertNotEqual(finding["field_id"], "fileUploadInput")
 
     def test_sql_error_response_is_detected_as_injection(self):
         responses = [
+            None,  # auth-probe: timeout, not vulnerable
             FakeResponse("http://localhost:8065/api/v4/posts", 500, "database error: syntax error near..."),
             None,
         ]
@@ -267,7 +288,10 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
             json.dump(validated, f)
 
         body = f"<html><body>{payload}</body></html>"
-        responses = [FakeResponse("http://localhost:8065/town-square", 200, body, content_type="text/html")]
+        responses = [
+            None,  # auth-probe: timeout, not vulnerable
+            FakeResponse("http://localhost:8065/town-square", 200, body, content_type="text/html"),
+        ]
 
         result = self._run(responses)
 
@@ -300,9 +324,10 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
 
         body = f'{{"id": "abc123", "message": "{payload}"}}'
         responses = [
+            None,  # auth-probe: timeout, not vulnerable
             FakeResponse(
                 "http://localhost:8065/api/v4/posts", 201, body, content_type="application/json"
-            )
+            ),
         ]
 
         result = self._run(responses)
@@ -313,7 +338,7 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
     def test_output_is_persisted_to_disk(self):
         self._run([None, None])
         self.assertTrue(Path("results/mattermost_B7_dynamic_attacks.json").exists())
-        self.assertTrue(Path("results/dynamic/mattermost/b7_1_1.json").exists())
+        self.assertTrue(Path("evidence/mattermost/adhoc/dynamic/b7_1_1.json").exists())
 
     def test_no_matching_response_is_recorded_as_an_explicit_error(self):
         """
@@ -327,6 +352,78 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         self.assertIsNone(first["status_code"])
         self.assertFalse(first["anomaly_detected"])
         self.assertIn("No matching same-origin POST", first["error"])
+
+    def test_unauthenticated_success_is_flagged_as_broken_access_control(self):
+        """
+        The auth-probe call (storage_state=None) succeeding means the field's
+        endpoint accepted a real submission with no session at all.
+        """
+        responses = [
+            FakeResponse("http://localhost:8065/api/v4/posts", 200, "ok"),
+            None,
+            None,
+        ]
+
+        result = self._run(responses)
+
+        probe = result["findings"][0]
+        self.assertEqual(probe["payload_id"], "1_anon")
+        self.assertTrue(probe["anomaly_detected"])
+        self.assertEqual(probe["detections"], ["Broken_Access_Control"])
+        self.assertEqual(probe["vulnerability"], "Broken_Access_Control")
+        self.assertEqual(probe["cwe_id"], "CWE-284")
+        self.assertEqual(probe["owasp_category"], "A01")
+        self.assertEqual(result["anomalies_found"], 1)
+
+    def test_unauthenticated_rejection_is_not_flagged(self):
+        """The expected case: no session gets a real 401/403, no finding."""
+        responses = [
+            FakeResponse("http://localhost:8065/api/v4/posts", 401, "unauthorized"),
+            None,
+            None,
+        ]
+
+        result = self._run(responses)
+
+        self.assertFalse(any(f["payload_id"] == "1_anon" for f in result["findings"]))
+        self.assertEqual(result["anomalies_found"], 0)
+
+    def test_action_link_unauthenticated_success_is_flagged(self):
+        """
+        Real gap this closes: a bare GET link with a numeric id in the path
+        (e.g. /consultas/leido/5) has no form for B4 to discover it through
+        at all — this is select_action_links() (blocks/crawler.py)'s output,
+        tested independently of any field/payload.
+        """
+        link_url = "http://localhost:8065/consultas/leido/5"
+        with open("results/mattermost_attack_surface.json", "w", encoding="utf-8") as f:
+            json.dump({"action_links": [link_url]}, f)
+
+        # No responses needed for expect_response() -> every field's own
+        # auth-probe and payloads time out; only goto_statuses matters here.
+        result = self._run([None, None, None], goto_statuses={link_url: 200})
+
+        link_finding = next(f for f in result["findings"] if f["payload_id"] == "link_1_anon")
+        self.assertEqual(link_finding["endpoint"], link_url)
+        self.assertTrue(link_finding["anomaly_detected"])
+        self.assertEqual(link_finding["vulnerability"], "Broken_Access_Control")
+        self.assertEqual(link_finding["cwe_id"], "CWE-284")
+        self.assertEqual(link_finding["owasp_category"], "A01")
+
+    def test_action_link_unauthenticated_rejection_is_not_flagged(self):
+        link_url = "http://localhost:8065/consultas/leido/5"
+        with open("results/mattermost_attack_surface.json", "w", encoding="utf-8") as f:
+            json.dump({"action_links": [link_url]}, f)
+
+        result = self._run([None, None, None], goto_statuses={link_url: 302})
+
+        self.assertFalse(any(f["payload_id"] == "link_1_anon" for f in result["findings"]))
+
+    def test_no_attack_surface_file_means_no_action_links_checked(self):
+        # No results/mattermost_attack_surface.json written at all — the
+        # common case for every existing test in this class.
+        result = self._run([None, None, None])
+        self.assertFalse(any(f["payload_id"].startswith("link_") for f in result["findings"]))
 
 
 class TestBuildSelector(unittest.TestCase):

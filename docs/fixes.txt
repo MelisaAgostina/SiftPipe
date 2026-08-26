@@ -1773,3 +1773,400 @@ real spend, just not through this codebase) and the mocked test suite
   means routing any block to Sonnet later requires actual code, not just a
   model-string change, since `temperature=0.0` would 400 on that model
   (see section 1).
+
+
+================================================================================
+SESSION 10 — B10: per-run PDF report, CWE-grounded B9 judge, POSSIBLE-finding
+explanations, and CWE-grouped Recommendations
+(2026-08-19)
+================================================================================
+
+Scope: two rounds the same day. Round 1 shipped B10 from nothing — a
+per-run PDF export — plus grounded B9's existing LLM judge in real MITRE
+CWE text instead of two bare labels. Round 2, done live with the user
+confirming design decisions up front via AskUserQuestion before any code
+was written, closed a real gap in that first version: POSSIBLE findings
+(the majority of what B9 produces on this pipeline's usual runs) were
+dumped into a bare table with no explanation, and there was no way to see
+repeated findings as one root cause with one fix instead of N duplicate
+rows.
+
+
+1. ROUND 1 — B10 base: blocks/report.py, CWE grounding for B9's judge
+--------------------------------------------------------------------------
+
+1.1 blocks/report.py (new, ~700 lines pre-Round-2)
+    build_report_html()/render_report_pdf() render one run_history.get_run()
+    snapshot into a PDF — pure rendering layer over B9's already-computed
+    output, deliberately making zero new LLM calls (a report re-generating
+    or re-judging evidence on every export would be non-reproducible and
+    would burn budget for no analytical value; see readme.md's "Decisiones
+    técnicas" for the same reasoning applied elsewhere in this project).
+    Rendered via Playwright's headless Chromium (page.pdf()), not a
+    Python-side PDF library, specifically to get real per-physical-page
+    numbering (pageNumber/totalPages) from the print engine itself — a
+    footer div baked into the HTML document has no way to know which
+    physical page it lands on once Chromium paginates a long report.
+    Bilingual from the start (lang=en|es): REPORT_STRINGS holds every piece
+    of chrome text hand-translated (not LLM-translated at export time —
+    same non-reproducibility argument as above), and CWE_ES/OWASP_ES
+    translate the CWE/OWASP names shown per finding and in the appendix.
+    Deliberately kept out of blocks/taxonomy.py: that module's CWE_CATALOG
+    grounds B9's LLM judge (see 1.2) and mixing a presentation-only
+    translation concern into it would blur what that data is actually for.
+    Watermark: the real SiftPipe cat mark (ui/src/assets/), loaded once via
+    functools.lru_cache, positioned `position:fixed` so it repeats on every
+    physical PDF page (unlike `position:absolute`, which only appears where
+    it falls in document flow) — sits above the footer template's margin
+    strip, clear of the real page-number text.
+    Findings CONFIRMED or severity HIGH get a full narrative card (title,
+    OWASP/CWE/classification/severity chips, evidence block, screenshot if
+    one still exists on disk, and the match_rationale B9 already computes).
+    Screenshot handling is defensive on purpose: results/dynamic/{target}/
+    is only namespaced by target, not by run, so a historical run's
+    screenshot file may have been overwritten by a later run of the same
+    target — _screenshot_data_uri() returns None on a missing file instead
+    of embedding a broken image or crashing, and the report shows a plain
+    "no longer available" note.
+    Everything else (POSSIBLE and DESCARTED) went into one bare table —
+    the gap Round 2 below closes for POSSIBLE specifically.
+
+1.2 blocks/taxonomy.py — CWE_CATALOG gained a real "description" field
+    Fetched live from cwe.mitre.org (not from model memory — the user's
+    standing instruction from prior sessions, see readme.md's "Live-
+    verification" feedback memory) for all 16 curated CWEs, trimmed to fit
+    a prompt. blocks/correlate_results.py's _judge_prompt() (the tier-2
+    "judge" match in B9, used when both sides share an OWASP category but
+    disagree/are missing a CWE) now calls a new _cwe_line(cwe_id) helper
+    that renders "CWE-89 — <MITRE's real definition>" instead of a bare id
+    — the judge now reasons against real reference text on both the static
+    and dynamic side, not just two free-text vulnerability labels. Same
+    "description" field also feeds the PDF report's appendix (1.1) — one
+    fetch, two consumers, no duplication.
+    Confirmed compatible with the existing OWASP Top 10:2025 categorization
+    already in CWE_CATALOG (added SESSION 4's addendum) — CWE definitions
+    are edition-independent, only the OWASP grouping differs between
+    editions, so no conflict between the two fields.
+
+1.3 api.py / frontend wiring
+    New GET /api/runs/{id}/report?lang=en|es calls report.render_report_pdf()
+    against a stored run_history snapshot and streams the PDF back with
+    Content-Disposition set to report.build_report_filename()'s output —
+    the single source of truth for the filename (Siftpipe_CWE_Report_
+    {target}_{id}_{date}_{EN|ES}.pdf), read back by the frontend instead of
+    duplicating the naming scheme in TypeScript. Required adding
+    expose_headers=["Content-Disposition"] to the CORS config — that header
+    isn't in a browser's default CORS-safelisted set, so without this the
+    frontend's fetch() couldn't read the real filename and would have had
+    to fall back to a generic one.
+    PastRunsView.tsx gained a three-dot menu per run: "Download report" ▸
+    English/Español, plus "View raw JSON". RunRow had to change from a
+    native <button> to a <div role="button"> since a button element can't
+    host the dropdown menu's own nested trigger button — matching keyboard
+    handling (Enter/Space) was added by hand so this didn't regress
+    accessibility. ui/src/lib/api.ts's downloadReport() reads the filename
+    off the response's Content-Disposition header rather than
+    reconstructing it client-side.
+
+1.4 Design decisions made and explicitly declined this round
+    Rejected: a live browser "translate this page" widget for the Spanish
+    version (doesn't fit a server-rendered PDF — no browser tab exists at
+    generation time — and a generic MT engine can't be trusted with
+    classification-label terminology); a full RAG/vector-DB knowledge base
+    for CWE lookups (a static dict matching the existing OWASP_SCOPE
+    pattern is the right scope for ~16 known CWEs, not infrastructure); CVE
+    database integration (category mismatch — SiftPipe detects CWE/OWASP
+    patterns in first-party code, not known CVEs in named third-party
+    dependencies, which would be a separate SCA feature); compare-runs/
+    CSV-export/share-link menu items (deferred as separate features, not
+    natural extensions of this one); an LLM-generated report narrative
+    (the report is a deterministic render of already-validated data, not a
+    fresh generation step — cost, reproducibility, and hallucination-risk
+    reasons, consistent with 1.1's design). Accepted as a known, bounded
+    gap: the B9 judge's rationale text for the "judge" match tier stays in
+    English even in the Spanish report, rather than adding a live
+    translation call for it.
+
+1.5 Run history cleanup (data only, not code)
+    siftpipe_history.db trimmed from 20 historical runs down to the 2
+    post-Anthropic-migration runs (Mattermost, NaViQ) for focused analysis
+    of current pipeline behavior. Full backup preserved as
+    siftpipe_history.db.backup-2026-08-19 in the project root — restorable
+    any time.
+
+
+2. ROUND 2 — POSSIBLE-finding explanations + CWE-grouped Recommendations
+--------------------------------------------------------------------------
+
+Prompted directly by the user pointing at real B9 output
+(results/naviq_B9_correlation.json): 3 separate POSSIBLE CWE-22 findings in
+naviq-src/naviq/batch_jobs/run_batch_evaluations.py (lines 54/73/82) were
+three unexplained table rows with no indication they're one root cause, not
+three independent bugs.
+
+2.1 Two design decisions confirmed with the user up front, before writing
+    any code (via AskUserQuestion, not assumed):
+    - Recommendation grouping key: by cwe_id alone (not (file, cwe_id)) —
+      chosen so the 3 same-file CWE-22 findings collapse into one group AND
+      so cross-file duplicates of the same CWE (e.g. the same insecure-
+      temp-file pattern copy-pasted into two different model_clients/*.py
+      files) also collapse into one group, since the remediation is driven
+      by the CWE class either way.
+    - Uncataloged CWEs seen in real run data (CWE-426, CWE-276, CWE-377 —
+      none of which were in CWE_CATALOG's original 16-entry curated set):
+      extend the remediation catalog to cover them now, rather than leaving
+      them on a generic fallback note, since they're not hypothetical —
+      they're in the actual naviq_B9_correlation.json/mattermost_B9_
+      correlation.json on disk.
+
+2.2 blocks/report.py — POSSIBLE findings get a real explanation
+    _finding_chips() extracted from _finding_card_html() (was inline,
+    duplicated logic) so both the full narrative card and the new compact
+    item share one chip-building function.
+    New _possible_item_html()/_possible_list_html(): every POSSIBLE finding
+    that isn't already promoted to a full card gets a compact item with 1-2
+    sentences built ONLY from fields B9 already computes and the report
+    already had on disk but never rendered for these entries — evidence
+    (code snippet, collapsed to one line and truncated via new
+    _clean_evidence_snippet(), limit=180 chars) and match_rationale
+    (verbatim). No new analysis is generated or inferred — this was a
+    scoping constraint from the user up front, not a judgment call made
+    during implementation.
+    DESCARTED findings are unchanged — still a bare table, since they were
+    actively tested and ruled out with evidence; they don't need the same
+    "is this worth a manual look" framing POSSIBLE findings do (see
+    REPORT_STRINGS' existing how_to_read_body copy, which already draws
+    this same distinction for the reader).
+    _rest_table_html()'s heading/copy renamed to reflect that it now only
+    ever holds DESCARTED entries in practice ("Discarded findings" /
+    "Hallazgos descartados", was "Remaining findings" / "Hallazgos
+    restantes") — full cards already claim every CONFIRMED entry
+    regardless of severity, so nothing else can land in this table now.
+
+2.3 blocks/report.py — new "Recommendations" section
+    New section rendered after Findings, before the CWE appendix.
+    _recommendation_groups() groups CONFIRMED+POSSIBLE findings (DESCARTED
+    excluded — they were ruled out, nothing to fix) by cwe_id, falling back
+    to a normalized vulnerability label for the rare finding with no CWE at
+    all. _recommendation_locations() lists every distinct file/line under
+    a group, preferring matched_static_finding.file:line when a dynamic
+    finding matched one, falling back to the static finding's own target
+    field otherwise.
+    New REMEDIATIONS catalog (en/es), one authored line per CWE — new
+    content, not extracted from B9's output, since nothing in the pipeline
+    computes a suggested fix anywhere (B9's evidence field is the
+    vulnerable code, not a remediation). Every rendered fix is labeled
+    "General guidance for this CWE class:" / "Orientación general para
+    esta clase de CWE:" so it reads as templated guidance, never as a
+    pipeline-verified correction — the explicit flagging the user asked
+    for between inferred vs. quoted content. Covers taxonomy.py's 16
+    curated CWEs plus CWE-426/276/377 (added this round per 2.1's second
+    decision) as _EXTRA_CWE_CATALOG/_EXTRA_CWE_ES (kept local to report.py,
+    same rationale as CWE_ES — presentation-only, not B9's judge-grounding
+    data). _cwe_display() and the appendix's inclusion filter both updated
+    to fall through to this supplemental catalog, so a CWE-426/276/377
+    finding gets a real name/definition in its chip and appendix entry
+    instead of falling back to the bare id. Any CWE outside both catalogs
+    renders reco_fallback ("no curated remediation template... consult the
+    MITRE CWE database") instead of guessing.
+
+2.4 Real bug caught by the test suite, not by inspection
+    reco_fallback's first draft read "...consult MITRE's page for standard
+    mitigations" — html.escape() (via the existing _esc() helper) turns
+    that apostrophe into &#x27;, so the raw string never appears verbatim
+    in the rendered HTML and an assertIn() check against it failed. Fixed
+    by rewording to "...consult the MITRE CWE database..." (no apostrophe)
+    rather than special-casing escaped comparisons in the test — the
+    existing REPORT_STRINGS entries already avoid contractions/possessives
+    for exactly this reason, this one just hadn't been checked before the
+    test caught it.
+
+2.5 tests/test_report.py — 12 new tests (13 -> 25 in this file)
+    TestPossibleFindingExplanations: POSSIBLE findings surface real
+    evidence/rationale text instead of a table row; long multi-line
+    evidence is collapsed and truncated (no unbroken multi-line dump into
+    the explanation paragraph); DESCARTED findings still render as a plain
+    table, not an explained item; the explanation renders correctly in
+    Spanish too.
+    TestRecommendations: three same-file, same-CWE findings collapse into
+    exactly one reco-group with the real curated fix text; DESCARTED
+    findings never produce a Recommendations section on their own; a run
+    with zero CONFIRMED/POSSIBLE findings omits the section entirely rather
+    than rendering an empty heading; a CWE outside the curated catalog (a
+    fabricated CWE-9999) falls back to the generic note instead of
+    fabricating a fix; every REMEDIATIONS['en'] key has a Spanish
+    translation; CWE-426/276/377 specifically are confirmed present in the
+    catalog (guards against the exact gap this round was scoped to close).
+    Test-writing gotcha found while making these pass: three of the new
+    single-finding test fixtures were being silently promoted to full
+    narrative cards instead of exercising the possible-item/table split
+    under test, because of a pre-existing fallback in build_report_html()
+    ("if no CONFIRMED/HIGH finding exists, promote the first two results to
+    full cards anyway, so the Findings section isn't just a bare table").
+    Not a bug — existing, intentional behavior — but it meant those tests
+    needed an anchor CONFIRMED+HIGH finding added to their fixture list so
+    the fallback didn't fire and the finding under test actually landed in
+    the rest/possible split being tested.
+
+
+3. VERIFICATION
+-----------------
+
+Full suite: `python -m unittest discover -s tests` — 222/222 passing (197
+before this session's report.py work + 25 new in tests/test_report.py).
+Rendered the real naviq_B9_correlation.json (not a synthetic fixture)
+through build_report_html() directly and confirmed by parsing the output:
+6 possible-item blocks (7 total findings minus 1 DESCARTED), exactly 3
+reco-groups (CWE-22 — the 3 run_batch_evaluations.py findings collapsed
+into one; CWE-284 — 1 finding; CWE-377 — the 2 separate model_clients/*.py
+findings correctly collapsed into one group despite being in different
+files, confirming the cwe_id-only grouping decision from 2.1 behaves as
+designed on real data, not just the synthetic test fixtures). Also called
+render_report_pdf() against the same real data end to end (actual
+Playwright/Chromium render, not just HTML string assembly) — produced a
+256KB PDF with no errors — and re-ran the same real-data check against the
+Spanish (lang="es") output to confirm both new sections translate
+correctly, not just the English path exercised by most of the new unit
+tests.
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- REMEDIATIONS covers 19 CWEs (the 16 in taxonomy.py's CWE_CATALOG plus
+  CWE-426/276/377 added this round) — not the full CWE catalog. Any CWE
+  the pipeline emits outside that set gets the generic fallback note
+  rather than a fabricated fix; the set grows the same way it always has
+  in this project (add a curated entry when a real run surfaces a new CWE
+  outside it), not proactively.
+- The B9 judge's own rationale text (tier "judge", SESSION 7) is still
+  English-only in the Spanish report — unchanged, pre-existing, bounded gap
+  from Round 1 (see 1.4), not touched this round.
+- Recommendation grouping is per-run, not cross-run — it doesn't yet
+  recognize "this is the same root cause we already flagged in a prior
+  run of this target," since that would need a cross-run diff/dedup layer
+  that doesn't exist anywhere else in the pipeline either (see readme.md
+  section 5's note on run-history trend graphs being a deferred, separate
+  feature).
+
+
+================================================================================
+SESSION 11 — Per-run evidence storage for B7 screenshots/videos
+(2026-08-25)
+================================================================================
+
+Problem: B7's screenshot_path/video_path were namespaced by target only
+(results/dynamic/{target}/, results/videos/{target}/), not by run — a
+second run of the same target overwrote the first run's evidence files on
+disk, even though run_history's JSON snapshot of the finding data itself
+was already immune to this. Worse, both paths lived under results/, which
+clear_results_folder() wipes wholesale on every Fresh Reset — the same
+reason run_history.db already lives outside results/.
+
+Solution: new evidence_dir(target, run_id) helper (blocks/targets.py) ->
+evidence/{target}/{run_id}. run_id is already created before B7 runs
+(run_history.start_run(), called before B3 in both main.py and api.py),
+so this was just threading an existing value through
+_execute_one()/run_payloads() (blocks/dynamic_injector.py) and
+execute_attacks() (main.py, api.py), not new state. api.py gained a
+second StaticFiles mount (/evidence) alongside /media; ui/src/lib/api.ts's
+mediaUrl() routes by path prefix so pre-migration results/... paths
+already stored in old run_history rows still resolve via /media.
+evidence/ added to .gitignore.
+
+Not changed: B4's discovery video
+(results/videos/{target}/b4_discovery.webm) keeps the old
+overwrite-on-rerun behavior on purpose — its path isn't referenced from
+anywhere persistent (no B4_dynamic.json field, no Past Runs/report usage),
+so it's a live debug artifact, not evidence tied to a historical finding;
+the run_id treatment doesn't apply.
+
+Verification: 222/222 tests passing (one path assertion updated in
+test_dynamic_injector.py); ui `tsc --noEmit` clean.
+
+
+================================================================================
+SESSION 12 — B7: unauthenticated-access probe (broken access control)
+(2026-08-25)
+================================================================================
+
+Problem: B7's only access-control-adjacent rule flagged the *presence* of a
+401/403 response — the opposite of real broken access control (a request
+that should have been rejected but wasn't). B7 only ever ran payloads
+through one authenticated session, so there was no signal at all for "this
+endpoint accepts a real submission with zero auth."
+
+Solution: run_payloads() (blocks/dynamic_injector.py) now issues one extra
+call per field, before that field's own payloads — _execute_one() reused
+as-is with storage_state=None, so browser.new_context() gets neither
+cookies nor localStorage (covers JWT-in-localStorage targets, not just
+cookie sessions). Uses a benign probe value ("siftpipe_probe"), not a real
+payload, so it can't also trip the SQLi/XSS rules. A 2xx response ->
+Broken_Access_Control finding (CWE-284/A01, already in taxonomy.py and
+report.py's REMEDIATIONS catalog — no changes needed there). Deliberately
+not pre-filtered against "is this endpoint supposed to be public" (B4
+already discovers legitimately public forms it crawls past, e.g. NaViQ's
+contact form) — left for B8's LLM judgment, same as every other rule-based
+B7 signal.
+
+Test fallout: every existing FakePage `responses` fixture in
+tests/test_dynamic_injector.py needed a leading entry for the new
+per-field probe call — 4 existing tests updated (one was a silent false
+pass: the probe consumed the fixture's only queued 2xx response, so
+`findings[0]` was quietly the probe instead of the XSS case under test,
+and the assertion still passed by accident). 2 new tests added for the
+detector itself (fires on 2xx, doesn't on 401).
+
+Verification: 224/224 tests passing.
+
+
+================================================================================
+SESSION 13 — B4/B7: bare GET action-link probe (broken access control)
+(2026-08-25)
+================================================================================
+
+Problem: SESSION 12's auth-probe only covers form fields. A real bug found
+reading lutto_website's Routes.php (a candidate third target) has no form
+at all: GET consultas/leido/(:num) and consultas/noleido/(:num) have no
+auth filter while every sibling admin route in the same file does. B4 only
+discovers forms/inputs; B7's execution model drives form-fill-and-submit.
+Neither had any way to notice a bare link like that exists, let alone test
+it.
+
+Solution: blocks/crawler.py gained looks_like_action_link() (true if the
+URL path has a purely-numeric segment, e.g. /consultas/leido/5 - the shape
+of a REST-ish "act on this id" route) and select_action_links(), the same
+same-origin/denylist filtering select_links_to_visit() already does minus
+the visited/budget crawl-queue bookkeeping (a link is worth auth-probing
+even if already visited). Deliberately path-only, not query-string aware
+(?id=5 would fire on nearly every ordinary filter/search link instead of
+the specific action-route shape this targets). blocks/dynamic_analysis.py
+records these into a new attack_surface["action_links"] set during the
+existing crawl loop, alongside the existing endpoints set (same
+set->sorted-list conversion at the end). main.py's B4 summary gained
+action_links_found for visibility parity with forms/inputs/endpoints.
+
+blocks/dynamic_injector.py gained _check_action_link() - anonymous GET via
+page.goto() (no form field involved, so it doesn't reuse _execute_one; the
+navigation's own response status is the whole signal), called once per
+discovered action_link at the end of run_payloads(), reading
+attack_surface.json directly rather than going through B5/B6 (this isn't a
+generated payload for a human to review, it's a structural check, same
+reasoning as SESSION 12's per-field probe). Same CWE-284/A01 tagging, same
+"no pre-filtering against legitimately public GETs, let B8 judge" design
+as SESSION 12.
+
+Tests: 8 new pure-logic tests in test_crawler.py
+(looks_like_action_link/select_action_links). test_dynamic_injector.py's
+FakePage gained goto_statuses (url -> status), separate from the existing
+expect_response() queue, since _check_action_link reads goto()'s own
+response rather than a submit's. 3 new integration tests (fires on 2xx,
+not on a redirect, no-op when no attack_surface.json exists - the common
+case for every pre-existing test in the file).
+
+Verification: 235/235 tests passing. ui `tsc --noEmit` clean.
+
+Not yet done: this closes the discovery+detection gap, not the specific
+lutto_website finding itself - no live run against a real instance of it
+yet, so "does this actually fire against the real bug" is still unverified
+in practice, only by construction.

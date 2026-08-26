@@ -155,6 +155,7 @@ def run_dynamic_discovery(pipeline_results, target=None):
         "forms_found": len(attack_surface.get("forms", [])),
         "inputs_found": len(attack_surface.get("inputs", [])),
         "endpoints_found": len(attack_surface.get("endpoints", [])),
+        "action_links_found": len(attack_surface.get("action_links", [])),
         "errors": attack_surface.get("errors", []),
     }
 
@@ -167,13 +168,13 @@ def run_dynamic_discovery(pipeline_results, target=None):
 
     print(f"B4 dynamic completed and stored in {attack_surface_path}")
 
-def execute_attacks(target=None):
+def execute_attacks(target=None, run_id=None):
     target = target or MATTERMOST
     print("Executing B7: Executing Attacks...")
     # Cargar los payloads validados por B6 y ejecutar las inyecciones dinámicas
     validated_path = result_path(target.name, "validated_payloads.json")
     try:
-        b7 = run_payloads(validated_path, pipeline_results, target)
+        b7 = run_payloads(validated_path, pipeline_results, target, run_id)
         # Guardar el objeto completo retornado por run_payloads para que B9 pueda correlacionar
         save_result("B7_dynamic_attacks", b7, target.name)
     except FileNotFoundError as e:
@@ -221,7 +222,7 @@ def main():
         run_dynamic_discovery(pipeline_results, target)
         generate_payloads(client=client, target_profile=target)
         run_human_review(pipeline_results, target)
-        execute_attacks(target)
+        execute_attacks(target, run_id)
         analyze_results(pipeline_results, ask_llm, target)
         correlate_results(pipeline_results, ask_llm, target)
     except Exception:

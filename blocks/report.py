@@ -425,10 +425,12 @@ def _is_full_card(entry):
 
 def _screenshot_data_uri(screenshot_path):
     """Best-effort: a historical run's screenshot may no longer exist on
-    disk, since results/dynamic/{target}/ is only namespaced by target, not
-    by run — the next run of the same target overwrites it. Returns None
-    if the file is missing so the caller can degrade gracefully instead of
-    embedding a broken image."""
+    disk — runs predating the evidence/{target}/{run_id}/ layout
+    (blocks/targets.py's evidence_dir()) stored screenshots under
+    results/dynamic/{target}/, namespaced by target only, so a later run of
+    the same target could overwrite them. Returns None if the file is
+    missing so the caller can degrade gracefully instead of embedding a
+    broken image."""
     if not screenshot_path:
         return None
     path = Path(screenshot_path)

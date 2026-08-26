@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 from blocks.mattermost_auth import find_working_selector
 from blocks.targets import MATTERMOST
-from blocks.crawler import GENERIC_DENYLIST, DEFAULT_MAX_PAGES, select_links_to_visit
+from blocks.crawler import GENERIC_DENYLIST, DEFAULT_MAX_PAGES, select_action_links, select_links_to_visit
 
 load_dotenv()
 
@@ -137,7 +137,8 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
     attack_surface = {
         "forms": [],
         "inputs": [],
-        "endpoints": set()
+        "endpoints": set(),
+        "action_links": set()
     }
     errors = []
     login_ok = False
@@ -344,6 +345,9 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                         queue.extend(select_links_to_visit(
                             hrefs, page.url, base_url, visited, denylist, remaining_budget
                         ))
+                        attack_surface["action_links"].update(select_action_links(
+                            hrefs, page.url, base_url, denylist
+                        ))
 
                     except Exception as page_error:
                         msg = f"Could not review {url}: {page_error}"
@@ -373,6 +377,7 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                     print(f"[B4] Could not save discovery video: {e}")
 
     attack_surface["endpoints"] = sorted(attack_surface["endpoints"])
+    attack_surface["action_links"] = sorted(attack_surface["action_links"])
     attack_surface["status"] = _determine_status(login_ok, errors)
     attack_surface["errors"] = errors
 

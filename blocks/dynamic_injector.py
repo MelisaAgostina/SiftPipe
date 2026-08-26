@@ -3,7 +3,7 @@ import json
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from blocks.mattermost_auth import find_working_selector
-from blocks.targets import MATTERMOST, result_path
+from blocks.targets import MATTERMOST, evidence_dir, result_path
 from blocks.crawler import is_same_origin
 from blocks.taxonomy import infer_taxonomy
 
@@ -272,7 +272,7 @@ def _submit(page, input_selector):
     page.keyboard.press("Enter")
 
 
-def _execute_one(browser, storage_state, page_url, input_selector, payload, pid, target_profile):
+def _execute_one(browser, storage_state, page_url, input_selector, payload, pid, target_profile, run_id):
     """
     Runs one payload in its own browser context — logged in via `storage_state`
     captured once at the start of the run, instead of a fresh login — so each
@@ -288,23 +288,24 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
     of a page-wide listener + fixed sleep — that gave no real correlation
     between "this payload's submission" and "whatever same-origin response
     happened to arrive in the next 2s".
-    Screenshot/video paths are scoped under target_profile.name (see
-    result_path() in blocks/targets.py) so running two targets back to back
-    doesn't overwrite one's evidence files with the other's — pid alone
-    (e.g. "1_1") isn't unique across targets.
+    Screenshot/video paths are scoped under evidence_dir(target_profile.name,
+    run_id) (blocks/targets.py) so running two targets back to back, or the
+    same target twice, doesn't overwrite one run's evidence files with
+    another's — pid alone (e.g. "1_1") is only unique within a single run.
     Returns a result dict.
     """
+    base = evidence_dir(target_profile.name, run_id)
     result = {
         "payload_id":      pid,
         "status_code":     None,
         "response_body":   "",
         "content_type":    "",
-        "screenshot_path": f"results/dynamic/{target_profile.name}/screenshot_{pid}.png",
+        "screenshot_path": f"{base}/dynamic/screenshot_{pid}.png",
         "video_path":      None,
         "error":           None,
     }
 
-    context = browser.new_context(storage_state=storage_state, record_video_dir=f"results/videos/{target_profile.name}/")
+    context = browser.new_context(storage_state=storage_state, record_video_dir=f"{base}/videos/")
     # Same landing-page skip as B4 (blocks/dynamic_analysis.py) — belt-and-suspenders
     # alongside storage_state, in case a Playwright version doesn't carry
     # localStorage over in storage_state.
@@ -336,7 +337,7 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
             result["error"] = "No matching same-origin POST response observed within 8s"
 
         page.wait_for_timeout(500)  # let the UI settle before the screenshot
-        os.makedirs(f"results/dynamic/{target_profile.name}", exist_ok=True)
+        os.makedirs(f"{base}/dynamic", exist_ok=True)
         page.screenshot(path=result["screenshot_path"])
 
     except Exception as e:
@@ -354,7 +355,7 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
         except Exception:
             video_path = None
         if video_path and os.path.exists(video_path):
-            final_path = f"results/videos/{target_profile.name}/{pid}.webm"
+            final_path = f"{base}/videos/{pid}.webm"
             try:
                 if os.path.exists(final_path):
                     os.remove(final_path)
@@ -363,6 +364,37 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
             except Exception as e:
                 print(f"[B7]   Could not save video for {pid}: {e}")
 
+    return result
+
+
+def _check_action_link(browser, link_url, pid, target_profile, run_id):
+    """
+    Anonymous GET against a same-origin, action-shaped link B4 discovered
+    (select_action_links(), blocks/crawler.py — a numeric id in the path,
+    e.g. /consultas/leido/5) — no storage_state at all, so this checks
+    whether the link enforces auth on its own. There's no field to fill or
+    submit and no form to react to, so this doesn't reuse _execute_one:
+    the navigation's own response status is the whole signal. Evidence
+    dir/screenshot handling mirrors _execute_one's for consistency with
+    every other B7 finding.
+    """
+    base = evidence_dir(target_profile.name, run_id)
+    result = {
+        "status_code":     None,
+        "screenshot_path": f"{base}/dynamic/screenshot_{pid}.png",
+        "error":           None,
+    }
+    context = browser.new_context()
+    page = context.new_page()
+    try:
+        response = page.goto(link_url, wait_until="domcontentloaded", timeout=15000)
+        result["status_code"] = response.status if response else None
+        os.makedirs(f"{base}/dynamic", exist_ok=True)
+        page.screenshot(path=result["screenshot_path"])
+    except Exception as e:
+        result["error"] = str(e)
+    finally:
+        context.close()
     return result
 
 
@@ -430,7 +462,7 @@ def _looks_like_html_response(content_type, body):
     return body.lstrip().startswith("<")
 
 
-def run_payloads(validated_payloads_path, pipeline_results, target_profile=None):
+def run_payloads(validated_payloads_path, pipeline_results, target_profile=None, run_id=None):
     """
     Reads validated_payloads.json (output of B6) and executes every payload
     via Playwright using a single authenticated browser session against
@@ -439,8 +471,13 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
     `target` for each payload's own semantic label (e.g. "post_textbox"),
     read straight from validated_payloads.json; reusing the name would
     silently shadow the profile with a string partway through the loop.
+    `run_id` (blocks/run_history.py's row id, already known before B7 runs —
+    see main.py/api.py) scopes this run's evidence directory so it survives
+    later runs of the same target instead of being overwritten by them;
+    defaults to "adhoc" for direct/test callers that don't track run history.
     """
     target_profile = target_profile or MATTERMOST
+    run_id = run_id if run_id is not None else "adhoc"
 
     if not os.path.exists(validated_payloads_path):
         raise FileNotFoundError(f"Not found: {validated_payloads_path}")
@@ -454,13 +491,14 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
     else:
         validated = raw
 
-    os.makedirs(f"results/dynamic/{target_profile.name}", exist_ok=True)
+    base = evidence_dir(target_profile.name, run_id)
+    os.makedirs(f"{base}/dynamic", exist_ok=True)
 
     findings  = []
     total     = 0
     anomalies = 0
 
-    os.makedirs(f"results/videos/{target_profile.name}", exist_ok=True)
+    os.makedirs(f"{base}/videos", exist_ok=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
@@ -497,6 +535,49 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
 
                 selector = _build_selector(field_id, field_name)
 
+                # ── Broken-access-control probe: same submission, no session at all ──
+                # Runs once per field (not per payload — this tests whether the
+                # endpoint enforces auth, independent of which value is sent), using
+                # _execute_one with storage_state=None so browser.new_context() gets
+                # neither cookies nor localStorage (JWT-in-localStorage targets are
+                # covered too, not just cookie-session ones). A benign probe value
+                # (not a real SQLi/XSS payload) keeps this signal clean from the
+                # other detection rules below. B4 only discovers pages while
+                # authenticated, so this can and does fire on legitimately public
+                # forms it also finds (NaViQ's contact form, e.g.) — deliberately
+                # left for B8's LLM judgment to sort real gaps from intentionally
+                # open endpoints, same as every other rule-based B7 detection.
+                total += 1
+                anon_pid = f"{idx}_anon"
+                print(f"[B7] [{anon_pid}] auth-probe {field_id or selector} @ {page_url}")
+                anon_r = _execute_one(
+                    browser, None, page_url, selector, "siftpipe_probe", anon_pid, target_profile, run_id
+                )
+                anon_status = anon_r.get("status_code")
+                if anon_status is not None and 200 <= anon_status < 300:
+                    anomalies += 1
+                    vuln_taxonomy = infer_taxonomy({"vulnerability": "Broken_Access_Control"})
+                    anon_finding = {
+                        "payload_id":       anon_pid,
+                        "target":           target,
+                        "endpoint":         page_url,
+                        "field_id":         field_id,
+                        "payload":          "siftpipe_probe",
+                        "vulnerability":    "Broken_Access_Control",
+                        "cwe_id":           vuln_taxonomy["cwe_id"],
+                        "owasp_category":   vuln_taxonomy["owasp_category"],
+                        "status_code":      anon_status,
+                        "anomaly_detected": True,
+                        "detections":       ["Broken_Access_Control"],
+                        "evidence":         f"Submission succeeded (HTTP {anon_status}) with no authenticated session at all",
+                        "screenshot_path":  anon_r.get("screenshot_path"),
+                        "video_path":       anon_r.get("video_path"),
+                        "error":            anon_r.get("error"),
+                    }
+                    findings.append(anon_finding)
+                    with open(f"{base}/dynamic/b7_{anon_pid}.json", "w", encoding="utf-8") as fh:
+                        json.dump(anon_finding, fh, indent=4)
+
                 for subidx, payload in enumerate(payload_list, start=1):
                     if not isinstance(payload, str):
                         payload = str(payload)
@@ -505,7 +586,7 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
                     pid = f"{idx}_{subidx}"
                     print(f"[B7] [{pid}] {field_id or selector} @ {page_url} | {repr(payload)[:60]}")
 
-                    raw_r = _execute_one(browser, storage_state, page_url, selector, payload, pid, target_profile)
+                    raw_r = _execute_one(browser, storage_state, page_url, selector, payload, pid, target_profile, run_id)
 
                     # ── Detection rules ──
                     detections   = []
@@ -589,13 +670,58 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None)
                     findings.append(finding)
 
                     # Partial save per payload for inspection
-                    with open(f"results/dynamic/{target_profile.name}/b7_{pid}.json", "w", encoding="utf-8") as fh:
+                    with open(f"{base}/dynamic/b7_{pid}.json", "w", encoding="utf-8") as fh:
                         json.dump(finding, fh, indent=4)
+
+            # ── Action-link probe: bare GET links B4 found that look like a
+            # resource action (numeric id in the path — select_action_links(),
+            # blocks/crawler.py), tested unauthenticated the same way each
+            # field's auth-probe above tests forms. No form/payload involved:
+            # this is "does this link enforce auth on its own", independent
+            # of B5/B6 entirely (there's nothing here for a human to review —
+            # it's a structural check, not a generated attack payload), same
+            # as the per-field probe. Real gap this closes: a link like
+            # /consultas/leido/5 has no form to discover it through at all.
+            attack_surface_path = result_path(target_profile.name, "attack_surface.json")
+            action_links = []
+            if os.path.exists(attack_surface_path):
+                with open(attack_surface_path, "r", encoding="utf-8") as f:
+                    action_links = json.load(f).get("action_links", [])
+
+            for link_idx, link_url in enumerate(action_links, start=1):
+                total += 1
+                link_pid = f"link_{link_idx}_anon"
+                print(f"[B7] [{link_pid}] auth-probe GET {link_url}")
+                link_r = _check_action_link(browser, link_url, link_pid, target_profile, run_id)
+                link_status = link_r.get("status_code")
+                if link_status is not None and 200 <= link_status < 300:
+                    anomalies += 1
+                    vuln_taxonomy = infer_taxonomy({"vulnerability": "Broken_Access_Control"})
+                    link_finding = {
+                        "payload_id":       link_pid,
+                        "target":           link_url,
+                        "endpoint":         link_url,
+                        "field_id":         None,
+                        "payload":          None,
+                        "vulnerability":    "Broken_Access_Control",
+                        "cwe_id":           vuln_taxonomy["cwe_id"],
+                        "owasp_category":   vuln_taxonomy["owasp_category"],
+                        "status_code":      link_status,
+                        "anomaly_detected": True,
+                        "detections":       ["Broken_Access_Control"],
+                        "evidence":         f"GET {link_url} succeeded (HTTP {link_status}) with no authenticated session at all",
+                        "screenshot_path":  link_r.get("screenshot_path"),
+                        "video_path":       None,
+                        "error":            link_r.get("error"),
+                    }
+                    findings.append(link_finding)
+                    with open(f"{base}/dynamic/b7_{link_pid}.json", "w", encoding="utf-8") as fh:
+                        json.dump(link_finding, fh, indent=4)
         finally:
             # Guarantees the Chromium process always exits, even if a
             # payload/selector error interrupts the loop — otherwise it lingers holding
-            # file handles on results/dynamic/*, which then blocks the next
-            # "Reset environment" from deleting that folder (WinError 5 on Windows).
+            # file handles on evidence/*, which could block a concurrent
+            # cleanup of that folder (WinError 5 on Windows).
             # Each payload's own context (and video) is already closed inside
             # _execute_one, so there's nothing left to finalize here.
             browser.close()

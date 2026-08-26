@@ -15,6 +15,10 @@ env/
 # Logs y resultados (opcional, si los generas automáticamente)
 results/
 
+# B7 screenshots/videos, namespaced by target+run_id (blocks/targets.py's
+# evidence_dir()) — local run evidence, not project config
+evidence/
+
 # Run history DB (blocks/run_history.py) — local run data, not project config
 siftpipe_history.db
 

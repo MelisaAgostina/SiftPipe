@@ -104,14 +104,23 @@ env_state = {
 }
 
 RESULTS_DIR = Path("results")
+EVIDENCE_DIR = Path("evidence")
 
-# ── Static evidence files (B7/B4 screenshots + per-payload videos) ────────────
+# ── Static evidence files (B7 screenshots + per-payload videos) ───────────────
 # StaticFiles requires the mounted directory to exist at import time — create it
-# up front instead of waiting for a pipeline run. Subdirectories (results/dynamic,
-# results/videos) are created on demand by the blocks that write into them and
-# don't need to exist yet for the mount itself to work.
+# up front instead of waiting for a pipeline run. Subdirectories are created on
+# demand by the blocks that write into them and don't need to exist yet for the
+# mount itself to work.
+# Two mounts, not one: current results/*.json still lives under RESULTS_DIR,
+# but B7's screenshots/videos now live under EVIDENCE_DIR (blocks/targets.py's
+# evidence_dir()), deliberately outside results/ so a Fresh Reset's wipe of
+# results/ doesn't also destroy every past run's evidence — see evidence_dir()'s
+# docstring. /media stays mounted on RESULTS_DIR for backward compatibility with
+# screenshot_path/video_path values already stored in older run_history rows.
 RESULTS_DIR.mkdir(exist_ok=True)
+EVIDENCE_DIR.mkdir(exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(RESULTS_DIR)), name="media")
+app.mount("/evidence", StaticFiles(directory=str(EVIDENCE_DIR)), name="evidence")
 
 
 def log(message: str):
@@ -206,7 +215,7 @@ def run_pipeline_from_b7():
     try:
         pipeline_state["current_block"] = "B7"
         log(">> B7 - Attack execution")
-        execute_attacks(ACTIVE_TARGET)
+        execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"])
         log("OK B7 completed")
 
         pipeline_state["current_block"] = "B8"

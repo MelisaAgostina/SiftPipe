@@ -8,7 +8,9 @@ from blocks.crawler import (
     GENERIC_DENYLIST,
     is_denylisted,
     is_same_origin,
+    looks_like_action_link,
     normalize_url,
+    select_action_links,
     select_links_to_visit,
 )
 from blocks.targets import NAVIQ
@@ -134,6 +136,55 @@ class TestSelectLinksToVisit(unittest.TestCase):
             denylist=[], budget=1,
         )
         self.assertEqual(selected, ["http://x.com/first"])
+
+
+class TestLooksLikeActionLink(unittest.TestCase):
+
+    def test_numeric_path_segment_looks_like_an_action(self):
+        self.assertTrue(looks_like_action_link("http://x.com/consultas/leido/5"))
+
+    def test_trailing_numeric_id_looks_like_an_action(self):
+        self.assertTrue(looks_like_action_link("http://x.com/productos/42"))
+
+    def test_plain_navigation_link_does_not(self):
+        self.assertFalse(looks_like_action_link("http://x.com/faq"))
+
+    def test_query_string_id_does_not_count(self):
+        # Deliberate: a query param looks identical to an ordinary
+        # search/filter link, which would fire on nearly every page.
+        self.assertFalse(looks_like_action_link("http://x.com/productos?id=5"))
+
+
+class TestSelectActionLinks(unittest.TestCase):
+
+    def test_picks_out_the_action_shaped_link_only(self):
+        selected = select_action_links(
+            ["/consultas/leido/5", "/faq", "/productos"],
+            "http://x.com", "http://x.com", denylist=[],
+        )
+        self.assertEqual(selected, ["http://x.com/consultas/leido/5"])
+
+    def test_skips_cross_origin_action_links(self):
+        selected = select_action_links(
+            ["http://evil.com/steal/5"], "http://x.com", "http://x.com", denylist=[],
+        )
+        self.assertEqual(selected, [])
+
+    def test_skips_denylisted_action_links(self):
+        # /delete/5 is action-shaped but already covered by GENERIC_DENYLIST.
+        selected = select_action_links(
+            ["/productos/delete/5"], "http://x.com", "http://x.com",
+            denylist=GENERIC_DENYLIST,
+        )
+        self.assertEqual(selected, [])
+
+    def test_not_limited_by_already_visited_or_budget(self):
+        # Unlike select_links_to_visit, this isn't a crawl-queue decision —
+        # a link is still worth auth-probing regardless of visited/budget.
+        selected = select_action_links(
+            ["/consultas/leido/5"], "http://x.com", "http://x.com", denylist=[],
+        )
+        self.assertEqual(selected, ["http://x.com/consultas/leido/5"])
 
 
 if __name__ == "__main__":

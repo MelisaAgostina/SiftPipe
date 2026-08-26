@@ -24,15 +24,22 @@ export const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000"
 const API_KEY = import.meta.env.VITE_API_KEY;
 
 /**
- * Turns a backend-relative path like "results/dynamic/screenshot_1_1.png" or
- * "results/videos/1_1.webm" into a URL servable by api.py's `/media` mount
- * (StaticFiles over the results/ directory). Returns null for missing paths
- * so callers can conditionally render <img>/<video> without extra checks.
+ * Turns a backend-relative path into a URL servable by one of api.py's two
+ * static mounts. Evidence written by newer runs looks like
+ * "evidence/{target}/{run_id}/dynamic/screenshot_1_1.png" (served via
+ * `/evidence`, api.py's EVIDENCE_DIR mount); older run_history rows can still
+ * hold pre-migration paths like "results/dynamic/screenshot_1_1.png" (served
+ * via the original `/media` mount over results/) — routed by prefix so both
+ * keep resolving. Returns null for missing paths so callers can conditionally
+ * render <img>/<video> without extra checks.
  */
 export function mediaUrl(path?: string | null): string | null {
   if (!path) return null;
-  const normalized = path.replace(/\\/g, "/").replace(/^results\//, "");
-  return `${API_BASE}/media/${normalized}`;
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized.startsWith("evidence/")) {
+    return `${API_BASE}/evidence/${normalized.slice("evidence/".length)}`;
+  }
+  return `${API_BASE}/media/${normalized.replace(/^results\//, "")}`;
 }
 
 export class ApiError extends Error {

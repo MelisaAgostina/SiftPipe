@@ -1,0 +1,6 @@
+{
+  "target_file": "c:\\Users\\melis\\SiftPipe\\mattermost-src\\mattermost-v10.7.0-scratch\\server\\public\\model\\role.go",
+  "mattermost_version": "v10.7.0 (vulnerable, CVE-2025-3611)",
+  "raw_llm_response": [],
+  "findings_surviving_filter": []
+}
