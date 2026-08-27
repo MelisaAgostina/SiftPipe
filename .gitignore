@@ -12,6 +12,9 @@ env/
 .env
 .vscode/
 
+# Personal Claude Code instructions (not shared with the team)
+CLAUDE.local.md
+
 # Logs y resultados (opcional, si los generas automáticamente)
 results/
 

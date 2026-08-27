@@ -1,0 +1,3 @@
+# Dev-only tooling - not needed to run the pipeline itself, see requirements.txt for that.
+-r requirements.txt
+ruff==0.14.4
