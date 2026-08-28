@@ -44,7 +44,7 @@ class TestRunStaticAnalysisTargetAwareness(unittest.TestCase):
                 main.run_static_analysis(main.pipeline_results, target_profile)
 
     def test_defaults_to_mattermost_when_no_target_given(self):
-        self._touch(MATTERMOST.source_dir, "api/handler.go")
+        self._touch(MATTERMOST.source_dir, "api4/handler.go")
 
         self._run()
 
@@ -77,7 +77,7 @@ class TestRunStaticAnalysisTargetAwareness(unittest.TestCase):
         target ran B3 first got cached forever, and the other target
         silently reused it instead of ever scanning its own source.
         """
-        self._touch(MATTERMOST.source_dir, "api/handler.go")
+        self._touch(MATTERMOST.source_dir, "api4/handler.go")
         self._touch(NAVIQ.source_dir, "users/views.py")
 
         self._run(MATTERMOST)
@@ -112,8 +112,8 @@ class TestNotFoundPlaceholderIsFiltered(unittest.TestCase):
         os.chdir(self._tmp.name)
         main.pipeline_results.clear()
         Path(MATTERMOST.source_dir).mkdir(parents=True, exist_ok=True)
-        (Path(MATTERMOST.source_dir) / "api" / "handler.go").parent.mkdir(parents=True, exist_ok=True)
-        (Path(MATTERMOST.source_dir) / "api" / "handler.go").write_text("x", encoding="utf-8")
+        (Path(MATTERMOST.source_dir) / "api4" / "handler.go").parent.mkdir(parents=True, exist_ok=True)
+        (Path(MATTERMOST.source_dir) / "api4" / "handler.go").write_text("x", encoding="utf-8")
 
     def tearDown(self):
         os.chdir(self._cwd)

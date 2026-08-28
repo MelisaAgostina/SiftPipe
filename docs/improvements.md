@@ -1,36 +1,3 @@
-## Where I'd invest next
-
-Grounding this in what's actually in the repo (not already done, not already declined as out-of-scope like Approach B or pluggable LLM provider) — here's where I'd invest next, organized by your four angles. The single highest-leverage item touches both "more real" and "easier AWS deploy," so I'll flag that first.
-
-### The one that pays off twice: containerize SiftPipe itself
-
-There's no Dockerfile for the project — only Mattermost's own submodule Dockerfiles. Right now AWS deployment is a manual sequence (venv, playwright install --with-deps, nginx, certbot, systemd unit, git pull + reinstall on every update — see todo.md §C). A Dockerfile for api.py (Python + Playwright/Chromium deps baked in) plus a docker-compose.yml that also brings up Mattermost turns EC2 setup into "install Docker, docker compose up" instead of a multi-step manual list, and makes redeploys `git pull && docker compose up --build -d` instead of touching a systemd unit by hand. It also makes the product look more like a real deployable tool in the Informe final, not a script that only ran on your machine.
-
-### Architecture
-
-- **Structured logging.** main.py's `log()` currently uses `print()` with box-drawing characters (already caused one real UnicodeEncodeError bug on Windows cp1252). Swapping to Python's `logging` module with levels (and writing to a file, not just stdout) matters more once this runs headless on an EC2 box you can't watch live.
-- **Fail-fast config validation.** `ANTHROPIC_API_KEY` missing today only surfaces as a crash on the first LLM call, mid-pipeline. A startup check in main.py/api.py that validates required env vars before accepting `/api/run` is cheap and reads as more production-grade.
-- **Secrets via AWS Secrets Manager/SSM** instead of a hand-edited `.env` on the box — small change, but it's the kind of detail that makes the AWS deployment chapter of the Informe final look deliberate rather than "we scp'd a .env file."
-
-### Business logic
-
-- **B5's relevance ranking is still pure keyword matching**, while B9 got a real CWE/OWASP taxonomy engine — the readme itself flags this gap (`find_related_static_findings` "sigue siendo keywords puro"). Routing B5 through the same taxonomy B9 already has would close a gap the project's own docs already identified, which is a strong, low-risk thesis narrative ("we found this inconsistency and closed it").
-- **Run-history trends.** Two separate places in readme.md §5/§7 explicitly park this as "queda fuera de este alcance, posible extensión futura." A "compare this run vs. the previous run of the same target" view (new vs. recurrent findings, severity delta) is scoped small since run_history.py already has everything needed — it's mostly a new query + a UI panel, not new pipeline logic.
-
-### UI
-
-- Trend/compare view in Past Runs (pairs with the business-logic item above).
-- **A visible failure surface for background pipeline errors.** Several past bugs were "screen shows nothing, user has to guess why" (B3 "no findings yet", the B8 KeyError on API Error placeholders). A small toast/banner tied to run_history's error state would prevent the next version of that same class of bug from ever reaching a user again.
-- A minimal empty-state/first-run guide ("pick a target → Fresh reset → Run") — worth it specifically because a jury will be clicking around cold, unlike you.
-
-### AWS deployment ease
-
-- Docker (above) is the big one.
-- **Caddy instead of nginx + certbot** — automatic HTTPS with a ~5-line Caddyfile, meaningfully less manual TLS setup for what AWS_HOSTING_TODO.md already frames as a short-lived demo box, not an always-on service.
-- A cloud-init/user-data script (or a minimal Terraform file) so EC2 provisioning is one launch instead of a manual checklist — reproducibility matters more here because the plan is spin-up → demo → tear down, not maintain forever.
-
----
-
 ## Objetivo 3 — Mattermost CVE validation
 
 The thesis's actual formal objectives (not previously in this doc): a quasi-experiment on Juice Shop/MultiJuicer with ~50 LSI students comparing manual/AI/hybrid detection (Objetivo 1, already run/handled separately — not pipeline work), the hybrid pipeline operating on Mattermost as the real-environment case study (Objetivo 2, done), and validating that the winning experimental approach replicates its advantage against Mattermost specifically **because Mattermost has documented CVEs** (Objetivo 3). Juice Shop's actual role in the thesis is the controlled experiment's known-ground-truth environment — not a SiftPipe pipeline target, which is a different use of it than earlier discussion in this doc assumed.
@@ -90,9 +57,7 @@ Cleaned up fully afterward: worktree removed, fetched tags deleted, `mattermost-
 
 ---
 
-## Scoping a third target — supplementary, not a formal objective
 
-Not required by the thesis's actual three objectives (see above) — this is "extra evidence of substantive results" in the same spirit NaViQ was extra evidence of generalization, not a graded deliverable on its own. Two real candidates are now both fully investigated; below is what committing to each would actually take.
 
 ### TC_Grupo9 (your own NestJS/Prisma/Postgres project)
 

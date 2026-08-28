@@ -489,6 +489,7 @@ def _clean_evidence_snippet(evidence, limit=180):
 def _finding_card_html(entry, lang):
     strings = REPORT_STRINGS[lang]
     cwe = _cwe_display(entry.get("cwe_id"), lang)
+    del cwe  # already shown via chip; kept for future use (same convention as owasp_suffix below)
     owasp_name = _owasp_display(entry.get("owasp_category"), lang)
     sev_class = _severity_class(entry.get("severity"))
     chips = _finding_chips(entry, lang)

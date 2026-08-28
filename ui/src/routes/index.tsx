@@ -55,7 +55,9 @@ function Index() {
         </h1>
 
         <p className=" mt-8 text-muted-foreground max-w-xl text-balance text-base leading-relaxed sm:text-lg">
-          SiftPipe pairs AI-driven static analysis with Playwright-powered dynamic discovery and context-aware payload generation — then pauses for human sign-off before any attack runs. Every result gets cross-checked and confirmed, so what you see is signal, not noise.
+          SiftPipe pairs AI-driven static analysis with Playwright-powered dynamic discovery and
+          context-aware payload generation — then pauses for human sign-off before any attack runs.
+          Every result gets cross-checked and confirmed, so what you see is signal, not noise.
         </p>
 
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
@@ -64,9 +66,7 @@ function Index() {
             className="font-button group inline-flex items-center gap-3 rounded-full bg-primary px-10 py-6 text-lg text-primary-foreground transition-colors hover:bg-primary/90 [-webkit-text-stroke:0.6px_currentColor]"
           >
             Open the pipeline
-            <span aria-hidden className="transition-transform group-hover:translate-x-0.5">
-
-            </span>
+            <span aria-hidden className="transition-transform group-hover:translate-x-0.5"></span>
           </Link>
         </div>
       </section>

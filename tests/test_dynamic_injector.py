@@ -229,7 +229,10 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
 
     def _run(self, responses, goto_statuses=None):
         page = FakePage(responses, goto_statuses)
-        fake_sync_playwright = lambda: FakeSyncPlaywright(page)
+
+        def fake_sync_playwright():
+            return FakeSyncPlaywright(page)
+
         with patch.object(di, "sync_playwright", fake_sync_playwright):
             return di.run_payloads(self.validated_path, {})
 

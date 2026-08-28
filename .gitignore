@@ -15,8 +15,11 @@ env/
 # Personal Claude Code instructions (not shared with the team)
 CLAUDE.local.md
 
+docs_backup/
+
 # Logs y resultados (opcional, si los generas automáticamente)
 results/
+logs/
 
 # B7 screenshots/videos, namespaced by target+run_id (blocks/targets.py's
 # evidence_dir()) — local run evidence, not project config

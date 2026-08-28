@@ -160,7 +160,11 @@ export type B9Entry = {
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   evidence: string;
   match_rationale: string; // plain-language why/where this match_tier was picked
-  matched_static_finding: { file: string | null; line: number | null; vulnerability: string | null } | null;
+  matched_static_finding: {
+    file: string | null;
+    line: number | null;
+    vulnerability: string | null;
+  } | null;
 };
 export type B9Judgment = { verdict: "yes" | "no" | null; rationale: string };
 export type B9Result = {

@@ -28,18 +28,23 @@ class TestScanAndSaveFiles(unittest.TestCase):
         path.write_text("// content", encoding="utf-8")
 
     def test_only_relevant_dirs_and_extensions_are_included(self):
-        self._touch("api/handler.go")
+        # NOTE: top-level "api/" is a real Mattermost dir but is now in
+        # DEFAULT_EXCLUDE_DIRS (it's OpenAPI doc-generation tooling, not the
+        # real REST handlers, which live under "api4/" - see the comment on
+        # DEFAULT_RELEVANT_DIRS in blocks/static_scanner.py). Use "api4/" so
+        # this test still exercises a real relevant dir.
+        self._touch("api4/handler.go")
         self._touch("app/store/model.ts")
         # Not under a RELEVANT_DIRS path -> excluded even though extension matches
         self._touch("misc/notes.js")
         # Wrong extension even though under a relevant dir -> excluded
-        self._touch("api/README.md")
+        self._touch("api4/README.md")
 
         output_file = self.source_dir / "files_list.txt"
         found = scan_and_save_files(str(self.source_dir), output_file=str(output_file))
 
         found_normalized = {Path(f).as_posix() for f in found}
-        self.assertIn((self.source_dir / "api/handler.go").as_posix(), found_normalized)
+        self.assertIn((self.source_dir / "api4/handler.go").as_posix(), found_normalized)
         self.assertIn((self.source_dir / "app/store/model.ts").as_posix(), found_normalized)
         self.assertEqual(len(found), 2)
 
@@ -54,7 +59,10 @@ class TestScanAndSaveFiles(unittest.TestCase):
         self.assertEqual(found, [])
 
     def test_output_file_is_written_with_one_path_per_line(self):
-        self._touch("server/main.go")
+        # NOTE: "server" alone is deliberately not in DEFAULT_RELEVANT_DIRS
+        # (it over-matched the whole server/ subtree - see the comment on
+        # DEFAULT_RELEVANT_DIRS in blocks/static_scanner.py). "app" is.
+        self._touch("app/main.go")
         output_file = self.source_dir / "out" / "files_list.txt"
 
         scan_and_save_files(str(self.source_dir), output_file=str(output_file))

@@ -1,6 +1,5 @@
 import json
 import os
-import time
 
 from blocks.targets import MATTERMOST, result_path
 

@@ -2,10 +2,9 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import List
 
 import requests
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +23,7 @@ from main import (
     pipeline_results,
     run_dynamic_discovery,
     run_static_analysis,
+    validate_required_env_vars,
 )
 
 app = FastAPI(title="SiftPipe API")
@@ -50,6 +50,14 @@ app.add_middleware(
     # sets and would have to hardcode its own copy of that naming logic.
     expose_headers=["Content-Disposition"],
 )
+
+
+@app.on_event("startup")
+def _on_startup():
+    """Fail fast on a missing required env var (e.g. ANTHROPIC_API_KEY) at
+    server boot, before any request - including /api/run - can be accepted,
+    instead of only surfacing it as a crash on the first LLM call mid-pipeline."""
+    validate_required_env_vars()
 
 
 @app.on_event("shutdown")

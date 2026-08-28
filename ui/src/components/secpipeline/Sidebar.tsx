@@ -85,7 +85,8 @@ export function Sidebar() {
   // reseed steps are still running in the background. Without this guard,
   // a jury clicking Run analysis right after Fresh reset could start B3-B9
   // against a database that's still mid-reset.
-  const buttonDisabled = isRunning || isWaiting || runMutation.isPending || !targetUp || envResetting;
+  const buttonDisabled =
+    isRunning || isWaiting || runMutation.isPending || !targetUp || envResetting;
 
   const buttonLabel = () => {
     if (runMutation.isPending || isRunning) return "Running...";
@@ -202,8 +203,9 @@ export function Sidebar() {
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {activeTarget?.name === "naviq" ? (
                 <>
-                  No environment detected. Restore mode won't start it for you — use Fresh reset above,
-                  which also starts NaViQ's dev server automatically (no command line needed).
+                  No environment detected. Restore mode won't start it for you — use Fresh reset
+                  above, which also starts NaViQ's dev server automatically (no command line
+                  needed).
                 </>
               ) : (
                 <>

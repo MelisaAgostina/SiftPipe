@@ -62,7 +62,11 @@ export function useLiveRunVisible() {
 // Whether the active target is already up — polled at a slower cadence than
 // pipeline status since it barely changes outside of an active environment reset.
 export function useEnvironmentHealth() {
-  return useQuery({ queryKey: queryKeys.envHealth, queryFn: getEnvironmentHealth, refetchInterval: 5000 });
+  return useQuery({
+    queryKey: queryKeys.envHealth,
+    queryFn: getEnvironmentHealth,
+    refetchInterval: 5000,
+  });
 }
 
 // The active target + the closed set the TopBar picker can switch between
@@ -90,7 +94,11 @@ export function useSetTarget() {
 }
 
 export function useEnvironmentStatus() {
-  return useQuery({ queryKey: queryKeys.envStatus, queryFn: getEnvironmentStatus, refetchInterval: 2000 });
+  return useQuery({
+    queryKey: queryKeys.envStatus,
+    queryFn: getEnvironmentStatus,
+    refetchInterval: 2000,
+  });
 }
 
 export function useResetEnvironment() {

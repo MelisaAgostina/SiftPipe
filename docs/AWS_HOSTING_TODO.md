@@ -18,17 +18,40 @@ Your professors only ever open the Cloudflare Pages link. It calls your AWS-host
 
 ## 1. Code changes needed before deploying
 
-- [x] **Playwright must run headless.** `PLAYWRIGHT_HEADLESS` env var added (default `false`, so local dev is unchanged) — used in [blocks/dynamic_analysis.py](blocks/dynamic_analysis.py) and [blocks/dynamic_injector.py](blocks/dynamic_injector.py).
-- [x] **Prerequisite for that to actually work:** replaced every `wait_until="networkidle"` with `wait_until="domcontentloaded"` in the login/navigation `goto` calls in both files — Mattermost's persistent WebSocket was almost certainly why login previously timed out headless. The existing `wait_for_selector` calls provide the real synchronization. All 102 tests pass after the change.
-- [x] **Record video of every dynamic run, since it's headless now.** Implemented per-payload, not per-run: B7 ([blocks/dynamic_injector.py](blocks/dynamic_injector.py)) logs in once in a throwaway context, captures `storage_state()`, then gives every individual payload its own context (`record_video_dir="results/videos/"`, reusing the login via `storage_state=`) so each finding gets its own `results/videos/{pid}.webm` — matching the existing per-payload `screenshot_{pid}.png` pattern, so a "watch it run" button next to one finding plays only that finding, not the whole run. B4 ([blocks/dynamic_analysis.py](blocks/dynamic_analysis.py)) still records one video for the whole discovery session (`results/videos/b4_discovery.webm`) since there's no per-finding concept there.
-- [x] **Serve those videos (and the existing screenshots) to the frontend.** Mounted in [api.py](api.py): `app.mount("/media", StaticFiles(directory=str(RESULTS_DIR)), name="media")`. The frontend can now load `/media/videos/{pid}.webm`, `/media/videos/b4_discovery.webm`, and `/media/dynamic/screenshot_*.png` directly — confirmed with a real request via `TestClient` (200 + correct bytes for an existing file, 404 for a missing one).
-- [x] **Frontend: add a "watch it run" player.** `<video controls>` + `<img>` now render directly under any finding with a screenshot/video in `CorrelationView` (which is what actually shows B8/B9), via a `mediaUrl()` helper in [ui/src/lib/api.ts](ui/src/lib/api.ts) and matching fields on `UIFinding`. Also had to patch `video_path` propagation through B8/B9 ([blocks/analyze_results.py](blocks/analyze_results.py), [blocks/correlate_results.py](blocks/correlate_results.py)), which was silently dropping it before. `tsc --noEmit` and `eslint` both clean.
-- [x] **Add run history (a real database) before you demo, not after.** Implemented in [blocks/run_history.py](blocks/run_history.py): SQLite with a `runs` table (id, started_at, finished_at, mode, status, total_findings, confirmed_findings) and a `run_blocks` table snapshotting every `results/*.json` file per `run_id`, plus `GET /api/runs`/`GET /api/runs/{id}` and a "Past Runs" tab reusing `Section`/`FindingRow`/the existing mapper functions pointed at historical data. **One important deploy detail:** the `.db` file lives at the **project root, deliberately outside `results/`** — `fresh_reset()` wipes the whole `results/` folder via `shutil.rmtree` on every environment reset, which would have silently erased all run history alongside it if the DB lived there too. Make sure whatever backup approach you use on the server includes `siftpipe_history.db`, not just `results/`. Worth having 2-3 real runs already in the database before opening the link to professors, so "Past Runs" shows something instead of an empty list. 7 new backend tests, 109/109 total passing.
-- [x] **Frontend API base URL must become configurable.** [ui/src/lib/api.ts](ui/src/lib/api.ts) now reads `import.meta.env.VITE_API_BASE ?? "http://localhost:8000"` (type declared in the new [ui/src/vite-env.d.ts](ui/src/vite-env.d.ts)). Set `VITE_API_BASE=https://api.yourdomain.com` as the Cloudflare Pages build env var when you deploy.
-- [x] **CORS allow-list must include the Cloudflare Pages origin.** [api.py](api.py) now reads a `FRONTEND_ORIGIN` env var (comma-separated if you need more than one) and appends it to the always-allowed localhost origins. Set it once you know your Pages URL.
-- [x] **Add a light shared-secret check on the destructive endpoints** (`/api/environment/reset`, `/api/run`, `/api/validate`, `/api/reset`) — implemented as `require_api_key`, a FastAPI dependency comparing an `X-API-Key` header against `SIFTPIPE_API_KEY`. No-op (fully open, same as before) when that env var is unset, so local dev is unaffected — confirmed with a direct HTTP smoke test: open when unset, 401 on missing/wrong key, 200 on the correct one. The frontend sends the header automatically via `VITE_API_KEY`. Be honest with yourself about what this does and doesn't protect against: anything shipped to the browser can be read by anyone who opens devtools, so this isn't a real security boundary against a motivated person — it just stops random bots/crawlers from stumbling onto an open reset endpoint during your review window, which is the actual realistic risk for an unlisted link nobody's advertising.
-- [ ] **Playwright system libraries**, not just the browser: `playwright install --with-deps chromium`.
-- [ ] **Submodule checkout on the server**: `git submodule update --init --depth 1` after cloning (otherwise `mattermost-src/mattermost` is empty and B3 silently scans zero files).
+Full item-by-item detail (what was implemented, how, and why) now lives in
+[todo.md](todo.md) §A — this section only summarizes, to avoid keeping two
+copies of the same checklist in sync by hand. All of it is done except the
+two server-side install steps, which aren't code:
+
+- [x] Headless Playwright (`PLAYWRIGHT_HEADLESS`), plus the
+      `networkidle`→`domcontentloaded` fix that made headless login actually
+      work.
+- [x] Per-payload video recording for B7, per-session for B4; both served to
+      the frontend via a `/media` static mount and a real "watch it run"
+      player in `CorrelationView`.
+- [x] Run history: SQLite ([blocks/run_history.py](blocks/run_history.py)),
+      deliberately kept at the **project root, outside `results/`**, since
+      `fresh_reset()` wipes `results/` wholesale on every environment reset —
+      make sure whatever backup approach the server uses includes
+      `siftpipe_history.db`, not just `results/`. Worth seeding 2-3 real runs
+      before opening the link so "Past Runs" isn't empty on first view.
+- [x] `VITE_API_BASE` configurable on the frontend; `FRONTEND_ORIGIN`
+      CORS allow-list on the backend.
+- [x] Shared-secret check (`X-API-Key`/`SIFTPIPE_API_KEY`) on the destructive
+      endpoints, no-op when unset. **Honest about its actual scope**: this
+      isn't a real security boundary against a motivated person — anything
+      shipped to the browser is readable via devtools — it only stops random
+      bots/crawlers from stumbling onto an open reset endpoint during the
+      review window, which is the actual realistic risk for an unlisted
+      link nobody's advertising. See
+      [next-steps-before-deployment.md](next-steps-before-deployment.md)'s
+      security section for the planned real fix (a session-cookie login
+      gate) before the jury deployment.
+- [ ] **Playwright system libraries**, not just the browser: `playwright
+      install --with-deps chromium`.
+- [ ] **Submodule checkout on the server**: `git submodule update --init
+      --depth 1` after cloning (otherwise `mattermost-src/mattermost` is
+      empty and B3 silently scans zero files).
 
 ## 2. Step-by-step
 

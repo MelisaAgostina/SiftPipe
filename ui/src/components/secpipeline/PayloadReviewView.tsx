@@ -41,8 +41,7 @@ export function PayloadReviewView({ onValidated }: { onValidated: () => void }) 
           onValidated();
         },
         onError: (err) => {
-          const detail =
-            (err as ApiError)?.detail ?? (err as Error)?.message ?? "unknown error";
+          const detail = (err as ApiError)?.detail ?? (err as Error)?.message ?? "unknown error";
           toast.error(`Could not validate: ${detail}`);
         },
       },
@@ -169,8 +168,8 @@ function InteractiveReview({
   return (
     <div className="space-y-4">
       <Callout>
-        The pipeline is paused, waiting for review. Choose which payloads to run against
-        Mattermost in B7.
+        The pipeline is paused, waiting for review. Choose which payloads to run against Mattermost
+        in B7.
       </Callout>
 
       <div className="flex items-center justify-between">

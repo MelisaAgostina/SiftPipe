@@ -118,8 +118,6 @@ def load_files_list(file_path):
         return [line.strip() for line in f if line.strip()]
 
 
-import json
-
 def get_analysis_prompt(file_content):
     prompt = f"""You are a security auditor. Analyze the provided code for OWASP vulnerabilities.
 

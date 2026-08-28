@@ -1,0 +1,18 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      # ruff-format is deliberately not enabled yet - it would reformat
+      # 31/34 existing Python files in one shot. Add it once that one-time
+      # bulk reformat is done (see next-steps-before-deployment.md).
+
+  - repo: local
+    hooks:
+      - id: frontend-lint
+        name: eslint (ui/)
+        entry: bash -c 'cd ui && npm run lint'
+        language: system
+        files: ^ui/
+        pass_filenames: false
