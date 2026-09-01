@@ -218,6 +218,33 @@ class TestApiRoutes(unittest.TestCase):
             result = api.environment_health()
         self.assertFalse(result["target_up"])
 
+    # ── /api/runs/{run_id}/compare (business-logic checklist item) ─────────
+
+    def test_get_run_comparison_404s_for_unknown_run(self):
+        with self.assertRaises(HTTPException) as ctx:
+            api.get_run_comparison(9999)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_get_run_comparison_returns_compare_with_previous_result(self):
+        from blocks import run_history as rh
+
+        first = rh.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B9_correlation.json", "w", encoding="utf-8") as f:
+            json.dump({"results": [{"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "h.go", "severity": "HIGH"}]}, f)
+        rh.finish_run(first, "completed")
+
+        second = rh.start_run(mode="restore", target=api.ACTIVE_TARGET.name)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B9_correlation.json", "w", encoding="utf-8") as f:
+            json.dump({"results": [{"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "v.go", "severity": "LOW"}]}, f)
+        rh.finish_run(second, "completed")
+
+        result = api.get_run_comparison(second)
+
+        self.assertEqual(result["previous_run_id"], first)
+        self.assertEqual([f["cwe_id"] for f in result["new_findings"]], ["CWE-79"])
+        self.assertEqual([f["cwe_id"] for f in result["resolved_findings"]], ["CWE-89"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -139,6 +139,30 @@ class TestFindRelatedStaticFindings(unittest.TestCase):
     def test_no_static_findings_returns_empty(self):
         self.assertEqual(gp.find_related_static_findings({}, []), [])
 
+    def test_findings_with_resolvable_taxonomy_are_ranked_first(self):
+        """
+        readme.md's own SESSION 4 note flags this gap directly: relevance
+        selection stayed pure keyword matching even after B9 got a real
+        CWE/OWASP taxonomy engine (blocks/taxonomy.py) - infer_taxonomy() was
+        only ever called *after* selection, on whatever keyword matching
+        already picked, never used to influence which match comes first.
+        Both findings below keyword-match on "login"; only the second has a
+        taxonomy infer_taxonomy() can actually resolve (an explicit cwe_id) -
+        it should be ranked ahead of the free-text-only match, not stay
+        second just because it appears second in static_findings.
+        """
+        dynamic_target = {"field_id": "login", "field_name": None, "field_type": None,
+                           "page_url": "http://x/login", "action": None}
+        static_findings = [
+            {"file": "login/handler.go", "vulnerability": "Something Unrecognized"},
+            {"file": "login/auth.go", "vulnerability": "Broken Authentication", "cwe_id": "CWE-287"},
+        ]
+
+        matches = gp.find_related_static_findings(dynamic_target, static_findings)
+
+        self.assertEqual(len(matches), 2)
+        self.assertEqual(matches[0].get("cwe_id"), "CWE-287")
+
 
 class TestTryExtractPartialJson(unittest.TestCase):
 

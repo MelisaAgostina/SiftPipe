@@ -205,3 +205,90 @@ def get_run(run_id):
         "confirmed_findings": run_row[7],
         "blocks": {name: json.loads(data) for name, data in block_rows},
     }
+
+
+def _find_previous_run_id(run_id, target):
+    """Most recent *completed* run of the same target that started before
+    run_id - an in-between run against a different target, or one that
+    errored out (and so may carry incomplete/misleading B9 data), is never
+    picked as the comparison baseline."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """
+            SELECT id FROM runs
+            WHERE target = ? AND id < ? AND status = 'completed'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (target, run_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def _finding_key(finding):
+    """Stable identity for a B9-correlated finding across separate runs:
+    its CWE id (falling back to the free-text vulnerability label if none
+    was resolved) plus its target/file - the same identity signal B9's own
+    tiered correlation already treats as strongest (see
+    blocks/taxonomy.py's infer_taxonomy() and blocks/correlate_results.py's
+    find_match()). payload_id isn't used here - it's assigned per-run
+    execution order, not a stable identity across separate runs."""
+    label = finding.get("cwe_id") or str(finding.get("vulnerability", "")).strip().lower()
+    return (label, finding.get("target"))
+
+
+def _severity_counts(findings):
+    counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    for finding in findings:
+        severity = finding.get("severity")
+        if severity in counts:
+            counts[severity] += 1
+    return counts
+
+
+def _severity_diff(previous_findings, current_findings):
+    previous_counts = _severity_counts(previous_findings)
+    current_counts = _severity_counts(current_findings)
+    return {severity: current_counts[severity] - previous_counts[severity] for severity in current_counts}
+
+
+def compare_with_previous(run_id):
+    """
+    Diffs this run's B9 findings against the previous completed run of the
+    same target: which findings are new, which recurred, which were
+    resolved (present before, gone now), and how the severity distribution
+    shifted (see _severity_diff). Returns None if run_id doesn't exist.
+    """
+    run = get_run(run_id)
+    if run is None:
+        return None
+
+    current_findings = run.get("blocks", {}).get("B9_correlation", {}).get("results", [])
+    previous_id = _find_previous_run_id(run_id, run.get("target"))
+
+    if previous_id is None:
+        return {
+            "run_id": run_id,
+            "previous_run_id": None,
+            "new_findings": current_findings,
+            "recurring_findings": [],
+            "resolved_findings": [],
+            "severity_delta": _severity_diff([], current_findings),
+        }
+
+    previous_run = get_run(previous_id)
+    previous_findings = previous_run.get("blocks", {}).get("B9_correlation", {}).get("results", [])
+
+    previous_keys = {_finding_key(f) for f in previous_findings}
+    current_keys = {_finding_key(f) for f in current_findings}
+
+    return {
+        "run_id": run_id,
+        "previous_run_id": previous_id,
+        "new_findings": [f for f in current_findings if _finding_key(f) not in previous_keys],
+        "recurring_findings": [f for f in current_findings if _finding_key(f) in previous_keys],
+        "resolved_findings": [f for f in previous_findings if _finding_key(f) not in current_keys],
+        "severity_delta": _severity_diff(previous_findings, current_findings),
+    }

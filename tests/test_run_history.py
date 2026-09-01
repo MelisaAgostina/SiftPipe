@@ -174,6 +174,80 @@ class TestRunHistory(unittest.TestCase):
         self.assertEqual(run_history.get_run(first)["blocks"]["B3_static"]["marker"], "first-run")
         self.assertEqual(run_history.get_run(second)["blocks"]["B3_static"]["marker"], "second-run")
 
+    def test_compare_with_previous_returns_none_for_unknown_run_id(self):
+        self.assertIsNone(run_history.compare_with_previous(9999))
+
+    def test_compare_with_no_previous_run_treats_every_finding_as_new(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        self._write_b9([
+            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH"},
+        ])
+        run_history.finish_run(run_id, "completed")
+
+        comparison = run_history.compare_with_previous(run_id)
+
+        self.assertIsNone(comparison["previous_run_id"])
+        self.assertEqual(len(comparison["new_findings"]), 1)
+        self.assertEqual(comparison["recurring_findings"], [])
+        self.assertEqual(comparison["resolved_findings"], [])
+        self.assertEqual(comparison["severity_delta"]["HIGH"], 1)
+
+    def test_compare_identifies_new_recurring_and_resolved_findings(self):
+        """
+        Findings are matched across runs by (cwe_id, target) - same file/CWE
+        pair recurring means the same underlying issue, not a coincidentally
+        similar one. Run 1 has SQLi in handler.go and XSS in view.go; run 2
+        (same target) still has the SQLi (recurring), lost the XSS (resolved),
+        and gained a new path-traversal finding in upload.go (new).
+        """
+        first = run_history.start_run(mode="fresh", target="mattermost")
+        self._write_b9([
+            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH"},
+            {"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "view.go", "severity": "MEDIUM"},
+        ])
+        run_history.finish_run(first, "completed")
+
+        second = run_history.start_run(mode="restore", target="mattermost")
+        self._write_b9([
+            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "CRITICAL"},
+            {"vulnerability": "Path Traversal", "cwe_id": "CWE-22", "target": "upload.go", "severity": "HIGH"},
+        ])
+        run_history.finish_run(second, "completed")
+
+        comparison = run_history.compare_with_previous(second)
+
+        self.assertEqual(comparison["previous_run_id"], first)
+        self.assertEqual([f["cwe_id"] for f in comparison["new_findings"]], ["CWE-22"])
+        self.assertEqual([f["cwe_id"] for f in comparison["recurring_findings"]], ["CWE-89"])
+        self.assertEqual([f["cwe_id"] for f in comparison["resolved_findings"]], ["CWE-79"])
+        # CRITICAL +1 (the recurring SQLi got worse), MEDIUM -1 (XSS resolved), HIGH net 0 (one gained, one - actually lost from previous's HIGH)
+        self.assertEqual(comparison["severity_delta"]["CRITICAL"], 1)
+        self.assertEqual(comparison["severity_delta"]["MEDIUM"], -1)
+
+    def test_compare_ignores_other_targets_and_non_completed_runs_as_previous(self):
+        """The "previous run" must be the same target AND a completed run -
+        an in-between run against a different target, or one that errored
+        out (and so may have incomplete/misleading B9 data), must not be
+        picked as the comparison baseline."""
+        mm_first = run_history.start_run(mode="fresh", target="mattermost")
+        self._write_b9([{"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH"}])
+        run_history.finish_run(mm_first, "completed")
+
+        naviq_run = run_history.start_run(mode="restore", target="naviq")
+        self._write_b9([{"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "views.py", "severity": "LOW"}], target="naviq")
+        run_history.finish_run(naviq_run, "completed")
+
+        mm_errored = run_history.start_run(mode="restore", target="mattermost")
+        run_history.finish_run(mm_errored, "error")
+
+        mm_second = run_history.start_run(mode="restore", target="mattermost")
+        self._write_b9([{"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH"}])
+        run_history.finish_run(mm_second, "completed")
+
+        comparison = run_history.compare_with_previous(mm_second)
+
+        self.assertEqual(comparison["previous_run_id"], mm_first)
+
     def test_two_different_targets_run_back_to_back_do_not_cross_contaminate_snapshots(self):
         """
         The real bug found live 2026-08-10: block output files on disk are

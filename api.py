@@ -482,6 +482,17 @@ def get_run(run_id: int):
     return run
 
 
+@app.get("/api/runs/{run_id}/compare")
+def get_run_comparison(run_id: int):
+    """New vs. recurring vs. resolved findings, and the severity-count
+    delta, against the previous completed run of the same target (see
+    blocks/run_history.py's compare_with_previous())."""
+    comparison = run_history.compare_with_previous(run_id)
+    if comparison is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return comparison
+
+
 @app.get("/api/runs/{run_id}/report")
 def get_run_report(run_id: int, lang: str = "en"):
     """PDF export of one past run — blocks/report.py renders a deterministic

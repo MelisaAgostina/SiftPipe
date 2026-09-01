@@ -130,16 +130,21 @@ top of the current structure.*
 
 ### Business logic
 
-- [ ] **Route B5's relevance ranking through B9's taxonomy engine.** B5's
+- [X] **Route B5's relevance ranking through B9's taxonomy engine.** B5's
       `find_related_static_findings` is still pure keyword matching, while
       B9 already has a real CWE/OWASP taxonomy engine — the project's own
       docs already flag this inconsistency. Closing it is low-risk and
       already scoped: reuse what B9 has.
-- [ ] **Run-history trends/compare view.** "Compare this run vs. the
+- [X] **Run-history trends/compare view.** "Compare this run vs. the
       previous run of the same target" (new vs. recurrent findings, severity
       delta) — `run_history.py` already has everything needed; mostly a new
       query + a UI panel, not new pipeline logic. Parked twice already in
       readme.md as "out of scope for now, possible future extension."
+      Scoped down to the backend query only this round (per the doc's own
+      split: the UI section below has its own "Trend/compare view in Past
+      Runs" line item) — `blocks/run_history.py`'s `compare_with_previous()`
+      plus `GET /api/runs/{run_id}/compare`. The UI panel remains open under
+      the UI section.
 
 ### Efficiency
 

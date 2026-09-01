@@ -98,6 +98,18 @@ def build_dynamic_targets(attack_surface):
     return targets
 
 
+def _taxonomy_rank(finding):
+    """0 = infer_taxonomy() resolved a real CWE, 1 = only an OWASP category,
+    2 = neither. Lower ranks sort first - a resolvable taxonomy is a
+    stronger relevance signal than the free-text keyword match alone."""
+    taxonomy = infer_taxonomy(finding)
+    if taxonomy["cwe_id"]:
+        return 0
+    if taxonomy["owasp_category"]:
+        return 1
+    return 2
+
+
 def find_related_static_findings(dynamic_target, static_findings):
     if not static_findings:
         return []
@@ -119,6 +131,17 @@ def find_related_static_findings(dynamic_target, static_findings):
         vuln_text = normalize_text(finding.get("vulnerability", ""))
         if any(kw in file_text or kw in vuln_text for kw in keywords):
             matches.append(finding)
+
+    # Route relevance ranking through B9's taxonomy engine (blocks/taxonomy.py)
+    # instead of leaving it purely to keyword-match order: among the keyword
+    # matches above, prefer whichever finding infer_taxonomy() can actually
+    # resolve to a CWE/OWASP category. Doesn't change *which* findings match
+    # (still the same keyword filter) - only which one ends up first, which is
+    # what feeds the "Likely relevant" taxonomy hint in build_prompt() and the
+    # cwe_id/owasp_category tag generate_payloads() attaches to the output.
+    # list.sort() is stable, so ties (same resolvability) keep their original
+    # keyword-match order.
+    matches.sort(key=_taxonomy_rank)
 
     return matches
 
