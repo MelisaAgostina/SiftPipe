@@ -3,12 +3,12 @@ from anthropic import Anthropic
 import os
 import re
 
+from blocks.llm import call_llm_json
 from blocks.taxonomy import infer_taxonomy
 from blocks.targets import MATTERMOST, result_path
 
 
 RESULTS_DIR = "results"
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
 
 def ensure_results_dir():
@@ -200,29 +200,23 @@ def ask_llm(prompt, client=None):
         load_dotenv()
         client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
+        return call_llm_json(
+            prompt,
+            client,
             max_tokens=512,   # compact response — prompt asks for exactly 5 payloads
             system=(
                 "You are a security testing assistant. "
                 "You respond ONLY with valid, complete JSON. "
                 "No prose, no markdown, no truncation."
             ),
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0,
         )
-        text = response.content[0].text.strip()
-        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        return json.loads(text)
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
         # Try to salvage partial JSON before giving up
-        recovered = _try_extract_partial_json(text)
+        recovered = _try_extract_partial_json(e.raw_text)
         if recovered:
             return {"payloads": recovered, "rationale": "Recovered from partial LLM response."}
-        return {"error": "LLM response could not be parsed as JSON", "response_text": text[:200]}
+        return {"error": "LLM response could not be parsed as JSON", "response_text": e.raw_text[:200]}
 
     except Exception as e:
         return {"error": "LLM request failed", "message": str(e)}

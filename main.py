@@ -1,250 +1,25 @@
 #Ajustar los indicadores y palabras clave a las respuestas reales de Mattermost si observas falsos positivos/negativos.
 
-# ruff: noqa: E402 - load_dotenv() must run before importing blocks/* modules
-# that read env vars at import time (PLAYWRIGHT_HEADLESS, MM_URL, NAVIQ_URL,
-# SIFTPIPE_HISTORY_DB), so the imports below can't all sit above it.
-from dotenv import load_dotenv
-
-load_dotenv()
-
 import argparse
-import json
-import logging
-import os
-import time
-
-from anthropic import Anthropic
 
 from blocks import run_history
 from blocks.analyze_results import analyze_results
 from blocks.correlate_results import correlate_results
-from blocks.dynamic_analysis import discover_attack_surface
-from blocks.dynamic_injector import run_payloads
-from blocks.environment import ensure_naviq_server_running, fresh_reset, naviq_fresh_reset
+from blocks.environment import dispatch_fresh_reset, ensure_naviq_server_running
 from blocks.generate_payloads import generate_payloads
 from blocks.human_review import run_human_review
-from blocks.static_scanner import get_analysis_prompt, load_files_list, scan_and_save_files
-from blocks.targets import DEFAULT_TARGET, MATTERMOST, get_target, result_path
-
-REQUIRED_ENV_VARS = ("ANTHROPIC_API_KEY",)
-
-
-class MissingConfigError(RuntimeError):
-    """Raised when a required environment variable is missing.
-
-    A plain RuntimeError, deliberately not SystemExit: api.py's async
-    startup handler needs a normal Exception (raising SystemExit - a
-    BaseException - from inside FastAPI's/anyio's startup task group
-    doesn't propagate cleanly; it surfaces as a CancelledError/
-    BaseExceptionGroup mess instead of a clean failure - confirmed live
-    with a real TestClient before settling on this design). main()'s CLI
-    path catches this and converts it to a clean SystemExit itself, so the
-    CLI UX (a short message, no traceback) is unchanged.
-    """
-
-
-def validate_required_env_vars():
-    """Fail fast on a missing required env var, instead of only surfacing it
-    as a crash on the first LLM call, mid-pipeline. Called explicitly from
-    main() and from api.py's own startup - not at bare import time, so
-    importing this module (e.g. for tests, which mock ask_llm and never need
-    a real key) stays safe."""
-    missing = [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
-    if missing:
-        raise MissingConfigError(
-            f"Missing required environment variable(s): {', '.join(missing)}. "
-            "Set them in .env before running the pipeline."
-        )
-
-
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"
-
-# --- Structured logging ---
-# Replaces main.py's scattered print() calls with real levels, written to a
-# file (not just stdout) - matters once this runs headless on an EC2 box
-# nobody is watching live. Logs to logs/, not results/: fresh_reset()/
-# naviq_fresh_reset() wipe results/ wholesale on every environment reset,
-# the same lesson already learned for NaViQ's dev-server log (see
-# MULTI_TARGET_PLAN.md's "NaViQ dev-server automation" section).
-LOG_DIR = "logs"
-os.makedirs(LOG_DIR, exist_ok=True)
-
-logger = logging.getLogger("siftpipe")
-logger.setLevel(logging.DEBUG)
-if not logger.handlers:
-    _formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-
-    _file_handler = logging.FileHandler(os.path.join(LOG_DIR, "siftpipe.log"), encoding="utf-8")
-    _file_handler.setLevel(logging.DEBUG)
-    _file_handler.setFormatter(_formatter)
-
-    _console_handler = logging.StreamHandler()
-    _console_handler.setLevel(logging.INFO)
-    _console_handler.setFormatter(_formatter)
-
-    logger.addHandler(_file_handler)
-    logger.addHandler(_console_handler)
-
-# Repositorio central de resultados
-pipeline_results = {}
-
-def save_result(block_name, data, target_name=None):
-    """Guarda el resultado de un bloque en el diccionario central y en disco,
-    scoped to target_name so two targets run back-to-back don't overwrite
-    each other's output (see blocks/targets.py's result_path())."""
-    target_name = target_name or DEFAULT_TARGET
-    pipeline_results[block_name] = data
-    if not os.path.exists("results"):
-        os.makedirs("results")
-    with open(result_path(target_name, f"{block_name}.json"), "w") as f:
-        json.dump(data, f, indent=4)
-    logger.info(f"-> {block_name} completado y guardado.")
-
-def ask_llm(prompt):
-    try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=4096,
-            system="You are a security analysis tool. You respond ONLY with valid JSON. No prose, no explanations, no markdown. Only JSON.",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0 #Higher temperatures can cause the AI to invent fake CVEs (Common Vulnerabilities and Exposures) or imagine security flaws that do not actually exist in your codebase.
-                            #The model makes the "safest" and most expected choices, making the output highly focused and deterministic.
-        )
-        text = response.content[0].text.strip()
-        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {"vulnerability": "JSON Parse Error", "evidence": text[:200]}
-    except Exception as e:
-        return {"vulnerability": "API Error", "evidence": str(e)}
-
-def run_static_analysis(pipeline_results, target_profile=None):
-    target_profile = target_profile or MATTERMOST
-    logger.info(f"Executing B3: Static Analysis (target={target_profile.name})...")
-
-    # Target-scoped cache filename - a real bug found live 2026-08-10:
-    # a single shared "results/files_list.txt" meant whichever target ran
-    # B3 first got cached forever, and every other target silently reused
-    # its (wrong-tech-stack) file list instead of ever scanning its own.
-    files_list_path = f"results/{target_profile.name}_files_list.txt"
-    files = load_files_list(files_list_path) or scan_and_save_files(
-        target_profile.source_dir,
-        output_file=files_list_path,
-        extensions=target_profile.source_extensions,
-        exclude_dirs=target_profile.source_exclude_dirs,
-        relevant_dirs=target_profile.source_relevant_dirs,
-    )
-    logger.info(f"Total files listed: {len(files)}")
-
-    results = []
-
-    MAX_FILES = 10 #could scan more but it would consume a lot of tokens during development, so we limit it for now. In production, you might want to remove this limit or set it higher.
-
-    files_to_scan = files[:MAX_FILES]
-    total_files = len(files_to_scan)
-    for index, file_path in enumerate(files_to_scan, start=1):
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()[:15000] # Truncamiento de seguridad
-
-            logger.info(f"Analizando ({index}/{total_files}): {os.path.basename(file_path)}...")
-            prompt = get_analysis_prompt(content)
-            llm_response = ask_llm(prompt)
-            logger.debug(f"RAW LLM RESPONSE: {llm_response}")
-
-            # Validamos que sea una lista (array) como pedimos en el prompt
-            if isinstance(llm_response, list):
-                for finding in llm_response:
-                    # Filtro 1: Que haya detectado una vulnerabilidad válida
-                    if finding.get("vulnerability") not in ["None", "None/Detected", None]:
-
-                        # Filtro 1b: a genuine finding always cites a real line number
-                        # (the prompt's own format spec requires it). "line": 0/missing
-                        # means the model fabricated a "not found" placeholder entry
-                        # instead of omitting the category, despite the prompt saying
-                        # not to - real bug found live 2026-08-10 against NaViQ's
-                        # run_batch_evaluations.py: {"vulnerability": "Broken Access
-                        # Control", "evidence": "No clear authorization checks found...",
-                        # "line": 0, "confidence": "medium"} - a real vulnerability name/
-                        # confidence pair that's actually describing its own absence.
-                        if not finding.get("line"):
-                            logger.debug(f"[-] Skipped placeholder 'not found' entry: {finding.get('vulnerability')}")
-                            continue
-
-                        # Filtro 2: Solo guardar confidence 'high' o 'medium'
-                        confianza = finding.get("confidence", "").lower()
-                        if confianza in ["high", "medium"]:
-                            finding["file"] = file_path
-                            results.append(finding)
-                            logger.info(f"[+] Saved: {finding.get('vulnerability')} ({confianza})")
-            else:
-                logger.warning(f"[-] Unexpected format from LLM for {file_path}")
-
-        except Exception as e:
-            logger.error(f"Error processing {file_path}: {e}")
-
-    # Guardar en diccionario central
-    pipeline_results["B3"] = {
-        "status": "complete",
-        "total_scanned": total_files,
-        "findings": results
-    }
-
-    time.sleep(15) #timer so it doesnt waste too many tokens in case of re-runs during development
-
-    # Persistir output JSON en /results para la UI (Streamlit)
-    os.makedirs("results", exist_ok=True)
-    with open(result_path(target_profile.name, "B3_static.json"), "w", encoding="utf-8") as f:
-        json.dump(pipeline_results["B3"], f, indent=4)
-
-    logger.info(f"B3 finalized. Findings detected: {len(results)}")
-
-
-
-#block 4 dynamic discovery
-def run_dynamic_discovery(pipeline_results, target=None):
-    target = target or MATTERMOST
-    logger.info("Executing B4: Dynamic Discovery...")
-
-    attack_surface = discover_attack_surface(target=target)
-    summary = {
-        "status": attack_surface.get("status", "complete"),
-        "forms_found": len(attack_surface.get("forms", [])),
-        "inputs_found": len(attack_surface.get("inputs", [])),
-        "endpoints_found": len(attack_surface.get("endpoints", [])),
-        "action_links_found": len(attack_surface.get("action_links", [])),
-        "errors": attack_surface.get("errors", []),
-    }
-
-    save_result("B4_dynamic", summary, target.name)
-
-    os.makedirs("results", exist_ok=True)
-    attack_surface_path = result_path(target.name, "attack_surface.json")
-    with open(attack_surface_path, "w", encoding="utf-8") as f:
-        json.dump(attack_surface, f, indent=4)
-
-    logger.info(f"B4 dynamic completed and stored in {attack_surface_path}")
-
-def execute_attacks(target=None, run_id=None):
-    target = target or MATTERMOST
-    logger.info("Executing B7: Executing Attacks...")
-    # Cargar los payloads validados por B6 y ejecutar las inyecciones dinámicas
-    validated_path = result_path(target.name, "validated_payloads.json")
-    try:
-        b7 = run_payloads(validated_path, pipeline_results, target, run_id)
-        # Guardar el objeto completo retornado por run_payloads para que B9 pueda correlacionar
-        save_result("B7_dynamic_attacks", b7, target.name)
-    except FileNotFoundError as e:
-        logger.warning(f"[-] B7 canceled: {e}")
-        save_result("B7_dynamic_attacks", {"status": "skipped", "reason": str(e)}, target.name)
-    except Exception as e:
-        logger.error(f"[-] Error executing B7: {e}")
-        save_result("B7_dynamic_attacks", {"status": "error", "reason": str(e)}, target.name)
-
+from blocks.pipeline import (
+    MissingConfigError,
+    ask_llm,
+    client,
+    execute_attacks,
+    logger,
+    pipeline_results,
+    run_dynamic_discovery,
+    run_static_analysis,
+    validate_required_env_vars,
+)
+from blocks.targets import get_target
 
 # --- Orquestador Principal ---
 
@@ -264,18 +39,10 @@ def main():
 
     # Lógica de Inicialización
     if args.mode == "fresh":
-        if target.name == "mattermost":
-            fresh_reset()
-        elif target.name == "naviq":
-            # naviq_fresh_reset() also ensures the dev server itself is
-            # running now (ensure_naviq_server_running, blocks/environment.py)
-            # — reversed from Phase 4 Task 4.3's original "manual
-            # prerequisite only" decision once a real no-CLI requirement
-            # (a jury operating the pipeline from the frontend only) made
-            # that a hard blocker instead of a developer convenience trade-off.
-            naviq_fresh_reset()
-        else:
-            raise SystemExit(f"[main] --mode fresh has no implementation for target={target.name!r}.")
+        try:
+            dispatch_fresh_reset(target)
+        except ValueError as e:
+            raise SystemExit(f"[main] {e}")
     else:
         logger.info(f"Restore mode: assuming target={target.name!r} is already up and reachable.")
         if target.name == "naviq":

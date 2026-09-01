@@ -67,48 +67,58 @@ not new features. Grouped near Architecture since it's the same kind of
 foundational cleanup, best done before the feature work below builds more on
 top of the current structure.*
 
-- [ ] **Move B3's scan loop, LLM calls, and result-filtering into
+- [X] **Move B3's scan loop, LLM calls, and result-filtering into
       `blocks/static_scanner.py`.** That module currently only holds
       file-listing/prompt-building — the actual logic sits inline in
       `main.py`'s `run_static_analysis`. B4 through B9 each live entirely
       inside their own `blocks/*.py` module; B3 is the one exception.
-- [ ] **Extract a single shared LLM-call helper.** `ask_llm()`/`CLAUDE_MODEL`
+- [X] **Extract a single shared LLM-call helper.** `ask_llm()`/`CLAUDE_MODEL`
       are defined twice, independently, in `main.py` and
       `blocks/generate_payloads.py` (same `client.messages.create(...)`
       shape, same JSON-code-fence stripping, same `temperature=0.0`);
       `blocks/analyze_results.py` repeats the strip-and-parse logic a third
       time as a defensive fallback. A model-version bump means remembering
       to update more than one place.
-- [ ] **Unify the two independently-maintained OWASP tables.**
+- [X] **Unify the two independently-maintained OWASP tables.**
       `blocks/static_scanner.py`'s `OWASP_SCOPE` (drives B3's prompt) and
       `blocks/taxonomy.py`'s `OWASP_TOP10_2025` (drives B9's correlation)
       aren't the same object — both files' own comments already acknowledge
       this ("keep this in sync with...") rather than one importing from the
       other. Only keep OWASP TOP10 2025, following MITREs standards.
-- [ ] **Derive `static_scanner.py`'s Mattermost scan-scope defaults from
+- [X] **Derive `static_scanner.py`'s Mattermost scan-scope defaults from
       `targets.py`'s `MATTERMOST` profile** instead of hand-maintaining
       both. `DEFAULT_EXTENSIONS`/`DEFAULT_EXCLUDE_DIRS`/
       `DEFAULT_RELEVANT_DIRS` are meant to mirror the profile exactly — this
       is the pair recalibrated together for the directory-targeting fix, so
       it's two *correct* copies today, but still two copies.
-- [ ] **Reconsider `pipeline_results` as threaded-global mutable state.**
+- [X] **Reconsider `pipeline_results` as threaded-global mutable state.**
       Defined at module scope in `main.py`, mutated directly by every block
       function, shared into `api.py`'s two background `threading.Thread`s
       with no locking. Low real risk given the GIL and the
       `pipeline_state["running"]` guards, but it's unsynchronized shared
-      state crossing a module boundary.
-- [ ] **Separate `main.py`'s orchestrator-script responsibilities from the
+      state crossing a module boundary. Resolved by adding
+      `api.pipeline_results_lock` (a `threading.Lock`), held by both
+      background entry points (`run_pipeline_until_b6`,
+      `run_pipeline_from_b7`) for their full run and by `/api/validate`'s
+      `pipeline_results["B6"]` write — makes the no-concurrent-access
+      invariant self-enforcing instead of dependent on the state-guard
+      checks staying correct forever.
+- [X] **Separate `main.py`'s orchestrator-script responsibilities from the
       definitions `api.py` actually needs to import.** `main.py` constructs
       the `Anthropic` client and calls `load_dotenv()` at import time, so
       importing `api.py` (which pulls `client`/`ask_llm`/block-runners
       straight from `main`) triggers all of that regardless of what `api.py`
-      itself needs at that moment.
-- [ ] **Delete the dead code in `blocks/dynamic_analysis.py`**: its
+      itself needs at that moment. Resolved by moving the client/logger/
+      `pipeline_results`/`ask_llm`/block-entry-point definitions into new
+      `blocks/pipeline.py`; `main.py` is now CLI-only (argparse + `main()`)
+      and imports from `blocks/pipeline.py` on the same footing as `api.py`
+      does, instead of being the thing `api.py` reaches into.
+- [X] **Delete the dead code in `blocks/dynamic_analysis.py`**: its
       module-level `run_dynamic_discovery()` duplicates — without any of the
       target-scoping — what `main.py`'s own version (the one the real
       pipeline actually calls) does. Leftover from before target-awareness
       existed.
-- [ ] **Share B6's "filter approved indices, write
+- [X] **Share B6's "filter approved indices, write
       `validated_payloads.json`" logic instead of implementing it twice.**
       `blocks/human_review.py`'s blocking console `input()` path and
       `api.py`'s `/api/validate` endpoint reimplement the same contract

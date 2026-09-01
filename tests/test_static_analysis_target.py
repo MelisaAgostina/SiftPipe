@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import main
+from blocks import pipeline, static_scanner
 from blocks.targets import MATTERMOST, NAVIQ
 
 
@@ -19,13 +19,21 @@ class TestRunStaticAnalysisTargetAwareness(unittest.TestCase):
     single shared results/files_list.txt cache that made whichever target
     ran B3 first "win" it forever. Exercises the real function (not a fake),
     with ask_llm/time.sleep patched out so this doesn't hit Anthropic or take 15s.
+
+    The scan loop itself lives in blocks/static_scanner.py (moved from
+    main.py so that module owns its own block's logic, same as every other
+    blocks/*.py module) - pipeline.run_static_analysis is now a thin wrapper
+    that passes pipeline.ask_llm down into it, so patching pipeline.ask_llm
+    (not static_scanner.ask_llm, which doesn't exist - it's a parameter, not
+    an import) is what actually takes effect. time.sleep(15) is called
+    inside static_scanner.py, so that's patched there instead.
     """
 
     def setUp(self):
         self._cwd = os.getcwd()
         self._tmp = tempfile.TemporaryDirectory()
         os.chdir(self._tmp.name)
-        main.pipeline_results.clear()
+        pipeline.pipeline_results.clear()
 
     def tearDown(self):
         os.chdir(self._cwd)
@@ -37,11 +45,11 @@ class TestRunStaticAnalysisTargetAwareness(unittest.TestCase):
         path.write_text("x = 1", encoding="utf-8")
 
     def _run(self, target_profile=None):
-        with patch.object(main, "ask_llm", return_value=[]), patch.object(main.time, "sleep"):
+        with patch.object(pipeline, "ask_llm", return_value=[]), patch.object(static_scanner.time, "sleep"):
             if target_profile is None:
-                main.run_static_analysis(main.pipeline_results)
+                pipeline.run_static_analysis(pipeline.pipeline_results)
             else:
-                main.run_static_analysis(main.pipeline_results, target_profile)
+                pipeline.run_static_analysis(pipeline.pipeline_results, target_profile)
 
     def test_defaults_to_mattermost_when_no_target_given(self):
         self._touch(MATTERMOST.source_dir, "api4/handler.go")
@@ -81,7 +89,7 @@ class TestRunStaticAnalysisTargetAwareness(unittest.TestCase):
         self._touch(NAVIQ.source_dir, "users/views.py")
 
         self._run(MATTERMOST)
-        main.pipeline_results.clear()
+        pipeline.pipeline_results.clear()
         self._run(NAVIQ)
 
         mm_listed = Path(f"results/{MATTERMOST.name}_files_list.txt").read_text(encoding="utf-8")
@@ -102,15 +110,16 @@ class TestNotFoundPlaceholderIsFiltered(unittest.TestCase):
     the provided code snippet", "line": 0, "confidence": "medium"}. A real
     vulnerability name/confidence pair that's actually describing its own
     absence, which the pre-existing filter (checking only for the literal
-    string "None") didn't catch. main.py now also rejects any finding
-    missing a real "line" number, since a genuine finding always cites one.
+    string "None") didn't catch. blocks/static_scanner.py now also rejects
+    any finding missing a real "line" number, since a genuine finding always
+    cites one.
     """
 
     def setUp(self):
         self._cwd = os.getcwd()
         self._tmp = tempfile.TemporaryDirectory()
         os.chdir(self._tmp.name)
-        main.pipeline_results.clear()
+        pipeline.pipeline_results.clear()
         Path(MATTERMOST.source_dir).mkdir(parents=True, exist_ok=True)
         (Path(MATTERMOST.source_dir) / "api4" / "handler.go").parent.mkdir(parents=True, exist_ok=True)
         (Path(MATTERMOST.source_dir) / "api4" / "handler.go").write_text("x", encoding="utf-8")
@@ -138,10 +147,10 @@ class TestNotFoundPlaceholderIsFiltered(unittest.TestCase):
                 "confidence": "high",
             },
         ]
-        with patch.object(main, "ask_llm", return_value=fake_response), patch.object(main.time, "sleep"):
-            main.run_static_analysis(main.pipeline_results, MATTERMOST)
+        with patch.object(pipeline, "ask_llm", return_value=fake_response), patch.object(static_scanner.time, "sleep"):
+            pipeline.run_static_analysis(pipeline.pipeline_results, MATTERMOST)
 
-        findings = main.pipeline_results["B3"]["findings"]
+        findings = pipeline.pipeline_results["B3"]["findings"]
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["vulnerability"], "Injection")
 

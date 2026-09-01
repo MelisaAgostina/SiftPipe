@@ -503,3 +503,27 @@ def fresh_reset(log_fn=print, interactive=True):
     run_seed_script(log_fn=log_fn)
     clear_results_folder(log_fn=log_fn)
     log_fn("=== FRESH RESET COMPLETED ===\n")
+
+
+def dispatch_fresh_reset(target, log_fn=print, interactive=True):
+    """Picks fresh_reset() vs naviq_fresh_reset() by target.name - shared
+    dispatch previously written out independently in main.py's CLI --mode
+    fresh branch and api.py's run_environment_reset(). Raises ValueError for
+    a target with no fresh-reset implementation; each caller converts that
+    into whatever failure signal fits its own context (main.py's SystemExit
+    for a clean CLI exit; api.py's /api/environment/reset already 501s on an
+    unsupported target before a background thread ever reaches this, so its
+    own except Exception handler catching this ValueError is defense in
+    depth, not the primary guard)."""
+    if target.name == "mattermost":
+        fresh_reset(log_fn=log_fn, interactive=interactive)
+    elif target.name == "naviq":
+        # Also ensures the dev server itself is running now
+        # (ensure_naviq_server_running, called inside naviq_fresh_reset) -
+        # reversed from Phase 4 Task 4.3's original "manual prerequisite
+        # only" decision once a real no-CLI requirement (a jury operating
+        # the pipeline from the frontend only) made that a hard blocker
+        # instead of a developer convenience trade-off.
+        naviq_fresh_reset(log_fn=log_fn)
+    else:
+        raise ValueError(f"No fresh-reset implementation for target={target.name!r}.")

@@ -11,20 +11,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from blocks import report, run_history
-from blocks.environment import MM_PING_URL, ensure_naviq_server_running, fresh_reset, naviq_fresh_reset, stop_naviq_server
-from blocks.targets import TARGETS, get_target, result_path
-from main import (
-    analyze_results,
+from blocks.analyze_results import analyze_results
+from blocks.correlate_results import correlate_results
+from blocks.environment import MM_PING_URL, dispatch_fresh_reset, ensure_naviq_server_running, stop_naviq_server
+from blocks.generate_payloads import generate_payloads
+from blocks.human_review import save_validated_payloads
+from blocks.pipeline import (
     ask_llm,
     client,
-    correlate_results,
     execute_attacks,
-    generate_payloads,
     pipeline_results,
     run_dynamic_discovery,
     run_static_analysis,
     validate_required_env_vars,
 )
+from blocks.targets import TARGETS, get_target, result_path
 
 app = FastAPI(title="SiftPipe API")
 
@@ -111,6 +112,21 @@ env_state = {
     "logs": [],
 }
 
+# pipeline_results (blocks/pipeline.py) is a plain module-scope dict, mutated
+# directly by every block function and shared into the two background
+# threading.Threads below with no locking of its own. In practice the two
+# threads never run concurrently — pipeline_state["running"]/
+# ["waiting_for_human"] already serialize them (run_pipeline_until_b6 always
+# finishes, setting waiting_for_human=True, before /api/validate is allowed
+# to start run_pipeline_from_b7) — but that safety currently depends on
+# those flag checks staying correct forever. This lock makes the
+# no-concurrent-access invariant self-enforcing instead: both background
+# entry points hold it for their full run, and the one synchronous request-
+# thread write (validate_payloads' pipeline_results["B6"] = ...) takes it
+# too, so a future bug in the state-guard logic can no longer race the
+# dict itself.
+pipeline_results_lock = threading.Lock()
+
 RESULTS_DIR = Path("results")
 EVIDENCE_DIR = Path("evidence")
 
@@ -155,18 +171,27 @@ def run_environment_reset():
     env_state["logs"] = []
 
     try:
-        if ACTIVE_TARGET.name == "mattermost":
-            fresh_reset(log_fn=env_log, interactive=False)
-        elif ACTIVE_TARGET.name == "naviq":
-            naviq_fresh_reset(log_fn=env_log)
-        else:
-            raise RuntimeError(f"No fresh-reset implementation for target={ACTIVE_TARGET.name!r}.")
+        dispatch_fresh_reset(ACTIVE_TARGET, log_fn=env_log, interactive=False)
         env_state["completed"] = True
     except Exception as e:
         env_state["error"] = str(e)
         env_log(f"ERROR in environment reset: {e}")
     finally:
         env_state["running"] = False
+
+
+def _fail_pipeline(e):
+    """Shared except-block bookending for run_pipeline_until_b6 and
+    run_pipeline_from_b7 - previously each wrote out the same
+    pipeline_state update + log + run_history.finish_run(..., "error") in
+    full a second time. Each function still needs its own try/except (a
+    human-review pause between B6 and B7 splits the run across two separate
+    background threads), only the failure handling itself is shared."""
+    pipeline_state["error"] = str(e)
+    pipeline_state["running"] = False
+    pipeline_state["current_block"] = None
+    log(f"ERROR in pipeline: {e}")
+    run_history.finish_run(pipeline_state["run_id"], "error")
 
 
 def run_pipeline_until_b6():
@@ -179,39 +204,36 @@ def run_pipeline_until_b6():
     pipeline_state["run_id"] = run_history.start_run(mode="api", target=ACTIVE_TARGET.name)
 
     try:
-        # Safety net, not the primary path (that's naviq_fresh_reset() via
-        # "Prepare environment") — covers restore mode, or any run started
-        # without clicking Prepare environment first. A no-op if already up.
-        if ACTIVE_TARGET.name == "naviq":
-            ensure_naviq_server_running(log_fn=log)
+        with pipeline_results_lock:
+            # Safety net, not the primary path (that's naviq_fresh_reset() via
+            # "Prepare environment") — covers restore mode, or any run started
+            # without clicking Prepare environment first. A no-op if already up.
+            if ACTIVE_TARGET.name == "naviq":
+                ensure_naviq_server_running(log_fn=log)
 
-        pipeline_state["current_block"] = "B3"
-        log(">> B3 - Static analysis started")
-        run_static_analysis(pipeline_results, ACTIVE_TARGET)
-        log("OK B3 completed")
+            pipeline_state["current_block"] = "B3"
+            log(">> B3 - Static analysis started")
+            run_static_analysis(pipeline_results, ACTIVE_TARGET)
+            log("OK B3 completed")
 
-        pipeline_state["current_block"] = "B4"
-        log(">> B4 - Dynamic discovery started")
-        run_dynamic_discovery(pipeline_results, ACTIVE_TARGET)
-        log("OK B4 completed")
+            pipeline_state["current_block"] = "B4"
+            log(">> B4 - Dynamic discovery started")
+            run_dynamic_discovery(pipeline_results, ACTIVE_TARGET)
+            log("OK B4 completed")
 
-        pipeline_state["current_block"] = "B5"
-        log(">> B5 - Payload generation")
-        generate_payloads(client=client, target_profile=ACTIVE_TARGET)
-        log("OK B5 completed")
+            pipeline_state["current_block"] = "B5"
+            log(">> B5 - Payload generation")
+            generate_payloads(client=client, target_profile=ACTIVE_TARGET)
+            log("OK B5 completed")
 
-        # Pauses here — the UI shows the payloads for human review
-        pipeline_state["current_block"] = "B6"
-        pipeline_state["waiting_for_human"] = True
-        pipeline_state["running"] = False
-        log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
+            # Pauses here — the UI shows the payloads for human review
+            pipeline_state["current_block"] = "B6"
+            pipeline_state["waiting_for_human"] = True
+            pipeline_state["running"] = False
+            log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
 
     except Exception as e:
-        pipeline_state["error"] = str(e)
-        pipeline_state["running"] = False
-        pipeline_state["current_block"] = None
-        log(f"ERROR in pipeline: {e}")
-        run_history.finish_run(pipeline_state["run_id"], "error")
+        _fail_pipeline(e)
 
 
 def run_pipeline_from_b7():
@@ -221,33 +243,30 @@ def run_pipeline_from_b7():
     pipeline_state["error"] = None
 
     try:
-        pipeline_state["current_block"] = "B7"
-        log(">> B7 - Attack execution")
-        execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"])
-        log("OK B7 completed")
+        with pipeline_results_lock:
+            pipeline_state["current_block"] = "B7"
+            log(">> B7 - Attack execution")
+            execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"])
+            log("OK B7 completed")
 
-        pipeline_state["current_block"] = "B8"
-        log(">> B8 - Intelligent results analysis")
-        analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET)
-        log("OK B8 completed")
+            pipeline_state["current_block"] = "B8"
+            log(">> B8 - Intelligent results analysis")
+            analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET)
+            log("OK B8 completed")
 
-        pipeline_state["current_block"] = "B9"
-        log(">> B9 - Static + dynamic correlation")
-        correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET)
-        log("OK B9 completed")
+            pipeline_state["current_block"] = "B9"
+            log(">> B9 - Static + dynamic correlation")
+            correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET)
+            log("OK B9 completed")
 
-        pipeline_state["current_block"] = None
-        pipeline_state["running"] = False
-        pipeline_state["completed"] = True
-        log("OK Pipeline completed. Results available.")
-        run_history.finish_run(pipeline_state["run_id"], "completed")
+            pipeline_state["current_block"] = None
+            pipeline_state["running"] = False
+            pipeline_state["completed"] = True
+            log("OK Pipeline completed. Results available.")
+            run_history.finish_run(pipeline_state["run_id"], "completed")
 
     except Exception as e:
-        pipeline_state["error"] = str(e)
-        pipeline_state["running"] = False
-        pipeline_state["current_block"] = None
-        log(f"ERROR in pipeline: {e}")
-        run_history.finish_run(pipeline_state["run_id"], "error")
+        _fail_pipeline(e)
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
@@ -502,19 +521,12 @@ def validate_payloads(body: ValidatePayloadsRequest):
     candidates = all_payloads.get("payloads", [])
     approved = [candidates[i] for i in body.approved_indices if 0 <= i < len(candidates)]
 
-    # B7 (execute_attacks -> dynamic_injector.run_payloads) reads this exact
-    # file/shape — same contract as the console path (human_review.py).
-    validated_path = Path(result_path(ACTIVE_TARGET.name, "validated_payloads.json"))
-    RESULTS_DIR.mkdir(exist_ok=True)
-    with open(validated_path, "w", encoding="utf-8") as f:
-        json.dump({"status": "complete", "payloads": approved, "comment": body.comment}, f, indent=4)
-
-    pipeline_results["B6"] = {
-        "status": "complete",
-        "total_validated": len(approved),
-        "payloads": approved,
-        "comment": body.comment,
-    }
+    # save_validated_payloads() (blocks/human_review.py) writes the exact
+    # file/shape B7 (execute_attacks -> dynamic_injector.run_payloads)
+    # reads — the same contract the console path (run_human_review) relies
+    # on a human to have produced by hand.
+    with pipeline_results_lock:
+        pipeline_results["B6"] = save_validated_payloads(ACTIVE_TARGET, approved, body.comment)
 
     log(f"OK B6 - {len(approved)} payloads validated by the researcher")
 

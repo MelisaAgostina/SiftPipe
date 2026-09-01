@@ -1,6 +1,14 @@
+import logging
 import os
 import json
+import time
 from pathlib import Path
+
+from blocks.targets import MATTERMOST, result_path
+from blocks.taxonomy import OWASP_TOP10_2025
+
+logger = logging.getLogger("siftpipe")
+
 #block 3 static code analysis with LLM
 # Definición del alcance técnico basado en el estándar OWASP Top 10:2025 para el Bloque 3.
 # NOTE: these codes went through two corrections on 2026-07-31. First to fix
@@ -8,25 +16,32 @@ from pathlib import Path
 # Misconfiguration "A02"). Then, on realizing OWASP Top 10:2025 was already
 # the current official edition (finalized January 2026, before this session),
 # to the real 2025 numbering — Injection A03->A05, Security Misconfiguration
-# A05->A02. Keep this in sync with blocks/taxonomy.py's OWASP_TOP10_2025 table,
-# which B9 uses for correlation.
+# A05->A02. Each key's category name is now pulled from blocks/taxonomy.py's
+# OWASP_TOP10_2025 table (the same one B9 uses for correlation) instead of
+# being hand-typed a second time here - a KeyError at import time is the
+# signal if the two ever drift apart instead of a silent mismatch.
+_OWASP_SCOPE_DESCRIPTIONS = {
+    "A05": "Identify areas where untrusted user input is directly concatenated into SQL queries (instead of using safe, parameterized queries) or passed directly into system-level commands (e.g., using os.system, exec(), or eval()). This also covers: dynamic SQL built via string formatting/concatenation even inside an ORM's raw-query escape hatch or inside a stored procedure/function body (not just inline application-code queries); NoSQL injection (untrusted input placed directly into a MongoDB-style query object or filter); template injection (untrusted input rendered through a template engine without autoescaping, or passed into a template-compilation function); command/argument injection via subprocess/exec calls built with shell=True or string-concatenated arguments; and unsafe deserialization of untrusted input (pickle.loads, yaml.load without SafeLoader, PHP unserialize(), Java ObjectInputStream) used as an injection vector.",
+    "A01": "Inspect route handlers and API endpoints for missing authorization checks - proper role-validation decorators (like @auth or @is_admin) should be applied, and users should not be able to access or modify other users' private data. Beyond missing decorators on routes, ALSO look for: (1) Insecure Direct Object Reference (IDOR) - a handler that takes a user-supplied ID (user_id, team_id, order_id, invoice_id, etc.) and fetches/updates/deletes that resource without verifying the requesting user actually owns it or has rights to it, even if the route itself requires login; (2) permission/role definitions in data structures (maps, tables, RBAC config, permission-bundling lists) that incorrectly grant, imply, or duplicate a sensitive permission alongside an unrelated, less-sensitive one - e.g. a 'view team statistics' permission entry that also silently includes 'view team details', so enabling the former grants the latter even when an admin explicitly disabled it elsewhere; this class of bug lives in plain data/config, not in a route handler, so read permission tables and RBAC maps with the same scrutiny as route decorators; (3) path traversal in any handler that builds a filesystem path from user input (../ sequences reaching outside an intended directory); (4) authorization enforced only in client-side code (a hidden button/route) with no matching server-side check on the endpoint it guards.",
+    "A02": "Search the codebase for a hardcoded secret - a real-looking password/API key/token VALUE written directly as a literal string in the source (e.g. API_KEY equals a literal string like \"sk-live-abc123\"). Do NOT flag code that reads a secret from an environment variable or settings object (os.getenv(...), os.environ[...], os.environ.get(...), os.environ.setdefault(...), settings.X) - that is the correct, secure pattern for handling a secret, not a vulnerability, even when the variable name itself looks sensitive. Only flag it if the value assigned is a literal string, not another lookup. Also verify that debugging features (e.g., DEBUG = True) are completely disabled for production and that error handling does not expose raw stack traces to the end user. ALSO look for: overly permissive CORS configuration (Access-Control-Allow-Origin: '*' combined with credentials/cookies enabled); missing security-relevant HTTP response headers on a response-building function (X-Frame-Options, Content-Security-Policy, X-Content-Type-Options) where the framework requires them to be set explicitly; and default/example configuration values (default admin passwords, sample API keys, permissive default file permissions) left active rather than clearly marked as placeholders.",
+    "A07": "Review session management for missing inactivity timeouts. Check for improper validation of authentication tokens (like JWTs) or insecure Single Sign-On (SSO) implementations, and ensure sessions are actively destroyed upon logout. ALSO look for: missing rate-limiting or account lockout on login/password-reset endpoints (allowing unlimited brute-force attempts); a password-reset or email-verification token generated with a non-cryptographic random source (math/rand in Go, Python's random module, JavaScript's Math.random()) instead of a CSPRNG, making it guessable; a password-reset token that never expires or isn't invalidated after first use; and passwords stored in plaintext or hashed with a broken/fast algorithm (MD5, SHA-1, unsalted hashes) instead of bcrypt/argon2/scrypt.",
+}
 OWASP_SCOPE = {
-    "A05": "Injection: Identify areas where untrusted user input is directly concatenated into SQL queries (instead of using safe, parameterized queries) or passed directly into system-level commands (e.g., using os.system, exec(), or eval()). This also covers: dynamic SQL built via string formatting/concatenation even inside an ORM's raw-query escape hatch or inside a stored procedure/function body (not just inline application-code queries); NoSQL injection (untrusted input placed directly into a MongoDB-style query object or filter); template injection (untrusted input rendered through a template engine without autoescaping, or passed into a template-compilation function); command/argument injection via subprocess/exec calls built with shell=True or string-concatenated arguments; and unsafe deserialization of untrusted input (pickle.loads, yaml.load without SafeLoader, PHP unserialize(), Java ObjectInputStream) used as an injection vector.",
-    "A01": "Broken Access Control: Inspect route handlers and API endpoints for missing authorization checks - proper role-validation decorators (like @auth or @is_admin) should be applied, and users should not be able to access or modify other users' private data. Beyond missing decorators on routes, ALSO look for: (1) Insecure Direct Object Reference (IDOR) - a handler that takes a user-supplied ID (user_id, team_id, order_id, invoice_id, etc.) and fetches/updates/deletes that resource without verifying the requesting user actually owns it or has rights to it, even if the route itself requires login; (2) permission/role definitions in data structures (maps, tables, RBAC config, permission-bundling lists) that incorrectly grant, imply, or duplicate a sensitive permission alongside an unrelated, less-sensitive one - e.g. a 'view team statistics' permission entry that also silently includes 'view team details', so enabling the former grants the latter even when an admin explicitly disabled it elsewhere; this class of bug lives in plain data/config, not in a route handler, so read permission tables and RBAC maps with the same scrutiny as route decorators; (3) path traversal in any handler that builds a filesystem path from user input (../ sequences reaching outside an intended directory); (4) authorization enforced only in client-side code (a hidden button/route) with no matching server-side check on the endpoint it guards.",
-    "A02": "Security Misconfiguration: Search the codebase for a hardcoded secret - a real-looking password/API key/token VALUE written directly as a literal string in the source (e.g. API_KEY equals a literal string like \"sk-live-abc123\"). Do NOT flag code that reads a secret from an environment variable or settings object (os.getenv(...), os.environ[...], os.environ.get(...), os.environ.setdefault(...), settings.X) - that is the correct, secure pattern for handling a secret, not a vulnerability, even when the variable name itself looks sensitive. Only flag it if the value assigned is a literal string, not another lookup. Also verify that debugging features (e.g., DEBUG = True) are completely disabled for production and that error handling does not expose raw stack traces to the end user. ALSO look for: overly permissive CORS configuration (Access-Control-Allow-Origin: '*' combined with credentials/cookies enabled); missing security-relevant HTTP response headers on a response-building function (X-Frame-Options, Content-Security-Policy, X-Content-Type-Options) where the framework requires them to be set explicitly; and default/example configuration values (default admin passwords, sample API keys, permissive default file permissions) left active rather than clearly marked as placeholders.",
-    "A07": "Authentication Failures: Review session management for missing inactivity timeouts. Check for improper validation of authentication tokens (like JWTs) or insecure Single Sign-On (SSO) implementations, and ensure sessions are actively destroyed upon logout. ALSO look for: missing rate-limiting or account lockout on login/password-reset endpoints (allowing unlimited brute-force attempts); a password-reset or email-verification token generated with a non-cryptographic random source (math/rand in Go, Python's random module, JavaScript's Math.random()) instead of a CSPRNG, making it guessable; a password-reset token that never expires or isn't invalidated after first use; and passwords stored in plaintext or hashed with a broken/fast algorithm (MD5, SHA-1, unsalted hashes) instead of bcrypt/argon2/scrypt."
+    code: f"{OWASP_TOP10_2025[code]}: {description}"
+    for code, description in _OWASP_SCOPE_DESCRIPTIONS.items()
 }
 
 # Mattermost's own values - kept as this function's defaults so any caller
 # that doesn't pass extensions/exclude_dirs/relevant_dirs (every caller
-# before target-awareness existed) behaves the same way. blocks/targets.py's
-# TargetProfile carries each target's own values (source_extensions/
-# source_exclude_dirs/source_relevant_dirs) instead of assuming every target
-# shares Mattermost's Go/TypeScript tech stack - keep these two in sync with
-# MATTERMOST's TargetProfile there.
+# before target-awareness existed) behaves the same way. Derived directly
+# from blocks/targets.py's MATTERMOST profile (source_extensions/
+# source_exclude_dirs/source_relevant_dirs) instead of a second hand-typed
+# copy - that profile is now the single source of truth for what
+# "Mattermost's tech stack looks like on disk" means to the pipeline.
 #
-# Both sets below were recalibrated against a real scan of the live
-# mattermost-src tree (2026-08-26), not just guessed:
+# Both sets were recalibrated against a real scan of the live mattermost-src
+# tree (2026-08-26), not just guessed - see MATTERMOST's own definition in
+# blocks/targets.py for the full rationale:
 #   - The old RELEVANT_DIRS matched by directory NAME appearing ANYWHERE in
 #     the path. With "server" in that set, 2012 of 2057 matched files came
 #     from server/ alone, while webapp/ (the entire React frontend - where
@@ -44,35 +59,9 @@ OWASP_SCOPE = {
 #     e2e-tests/playwright/lib/src/server/), and tools/ (dev tooling).
 #     EXCLUDE_DIRS only excluded a folder literally named "tests", not
 #     "e2e-tests", so none of this was caught.
-DEFAULT_EXTENSIONS = ('.go', '.ts', '.tsx', '.js', '.jsx')
-DEFAULT_EXCLUDE_DIRS = {
-    'node_modules', 'vendor', 'tests', '.git',
-    # non-application tooling/test infra that was previously passing the
-    # relevant_dirs filter by accident (see comment above)
-    'e2e-tests', 'api', 'tools', 'testlib', 'manualtesting', '.github', 'dist',
-    'build', 'bin', 'cmd', 'scripts', 'eslint-plugin',
-    # assets/translations - never contain logic worth an LLM call
-    'i18n', 'fonts', 'images', 'sounds', 'sass',
-}
-DEFAULT_RELEVANT_DIRS = {
-    # server/channels/* - the real Go backend logic
-    'api4', 'app', 'store', 'web', 'wsapi', 'audit', 'db', 'jobs',
-    # server/public/*, server/platform/* - shared models/services (role.go,
-    # the CVE-2025-3611 root cause investigated this session, lives under
-    # server/public/model/)
-    'model', 'plugin', 'pluginapi', 'shared', 'utils', 'services',
-    # webapp/channels/src/*, webapp/platform/* - the React frontend, barely
-    # reachable at all before this fix (see comment above)
-    'components', 'actions', 'client', 'selectors', 'reducers', 'hooks', 'plugins',
-}
-# 'server', 'auth', and 'handlers' were in the original set but deliberately
-# dropped: 'server' is what caused the over-broad match in the first place
-# (it's satisfied by the top-level server/ directory name alone, which
-# defeats every specific name above by making the whole subtree match
-# regardless), and 'auth'/'handlers' don't exist as directory names
-# anywhere in this repo (verified with a real find) - each name here should
-# earn its place against the actual tree, not carry over from whatever
-# generic web-app layout this list started as.
+DEFAULT_EXTENSIONS = MATTERMOST.source_extensions
+DEFAULT_EXCLUDE_DIRS = MATTERMOST.source_exclude_dirs
+DEFAULT_RELEVANT_DIRS = MATTERMOST.source_relevant_dirs
 
 
 def scan_and_save_files(
@@ -155,3 +144,95 @@ CODE TO ANALYZE:
 {file_content}
 """
     return prompt
+
+
+MAX_FILES = 10  # could scan more but it would consume a lot of tokens during development, so we limit it for now. In production, you might want to remove this limit or set it higher.
+
+
+def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
+    """
+    B3's scan loop, LLM calls, and result-filtering - moved here from
+    main.py so this module (like blocks/generate_payloads.py,
+    blocks/analyze_results.py, etc.) owns its own block's actual logic
+    instead of just file-listing/prompt-building. `ask_llm` is taken as a
+    parameter rather than imported, same pattern already used by
+    blocks/analyze_results.py and blocks/correlate_results.py, so a caller
+    can substitute a fake/mock for it without patching this module directly.
+    """
+    target_profile = target_profile or MATTERMOST
+    logger.info(f"Executing B3: Static Analysis (target={target_profile.name})...")
+
+    # Target-scoped cache filename - a real bug found live 2026-08-10:
+    # a single shared "results/files_list.txt" meant whichever target ran
+    # B3 first got cached forever, and every other target silently reused
+    # its (wrong-tech-stack) file list instead of ever scanning its own.
+    files_list_path = f"results/{target_profile.name}_files_list.txt"
+    files = load_files_list(files_list_path) or scan_and_save_files(
+        target_profile.source_dir,
+        output_file=files_list_path,
+        extensions=target_profile.source_extensions,
+        exclude_dirs=target_profile.source_exclude_dirs,
+        relevant_dirs=target_profile.source_relevant_dirs,
+    )
+    logger.info(f"Total files listed: {len(files)}")
+
+    results = []
+
+    files_to_scan = files[:MAX_FILES]
+    total_files = len(files_to_scan)
+    for index, file_path in enumerate(files_to_scan, start=1):
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()[:15000]  # Truncamiento de seguridad
+
+            logger.info(f"Analizando ({index}/{total_files}): {os.path.basename(file_path)}...")
+            prompt = get_analysis_prompt(content)
+            llm_response = ask_llm(prompt)
+            logger.debug(f"RAW LLM RESPONSE: {llm_response}")
+
+            # Validamos que sea una lista (array) como pedimos en el prompt
+            if isinstance(llm_response, list):
+                for finding in llm_response:
+                    # Filtro 1: Que haya detectado una vulnerabilidad válida
+                    if finding.get("vulnerability") not in ["None", "None/Detected", None]:
+
+                        # Filtro 1b: a genuine finding always cites a real line number
+                        # (the prompt's own format spec requires it). "line": 0/missing
+                        # means the model fabricated a "not found" placeholder entry
+                        # instead of omitting the category, despite the prompt saying
+                        # not to - real bug found live 2026-08-10 against NaViQ's
+                        # run_batch_evaluations.py: {"vulnerability": "Broken Access
+                        # Control", "evidence": "No clear authorization checks found...",
+                        # "line": 0, "confidence": "medium"} - a real vulnerability name/
+                        # confidence pair that's actually describing its own absence.
+                        if not finding.get("line"):
+                            logger.debug(f"[-] Skipped placeholder 'not found' entry: {finding.get('vulnerability')}")
+                            continue
+
+                        # Filtro 2: Solo guardar confidence 'high' o 'medium'
+                        confianza = finding.get("confidence", "").lower()
+                        if confianza in ["high", "medium"]:
+                            finding["file"] = file_path
+                            results.append(finding)
+                            logger.info(f"[+] Saved: {finding.get('vulnerability')} ({confianza})")
+            else:
+                logger.warning(f"[-] Unexpected format from LLM for {file_path}")
+
+        except Exception as e:
+            logger.error(f"Error processing {file_path}: {e}")
+
+    # Guardar en diccionario central
+    pipeline_results["B3"] = {
+        "status": "complete",
+        "total_scanned": total_files,
+        "findings": results
+    }
+
+    time.sleep(15)  # timer so it doesnt waste too many tokens in case of re-runs during development
+
+    # Persistir output JSON en /results para la UI (Streamlit)
+    os.makedirs("results", exist_ok=True)
+    with open(result_path(target_profile.name, "B3_static.json"), "w", encoding="utf-8") as f:
+        json.dump(pipeline_results["B3"], f, indent=4)
+
+    logger.info(f"B3 finalized. Findings detected: {len(results)}")

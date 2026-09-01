@@ -1,6 +1,7 @@
 import json
 import os
 
+from blocks.llm import strip_json_fence
 from blocks.targets import MATTERMOST, result_path
 
 
@@ -142,7 +143,7 @@ Return ONLY a valid JSON object, no markdown, no extra text:
             llm_calls += 1
             # ask_llm in main.py already parses JSON and returns a dict
             if isinstance(raw_response, str):
-                clean = raw_response.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                clean = strip_json_fence(raw_response.strip())
                 llm_result = json.loads(clean)
             else:
                 llm_result = raw_response

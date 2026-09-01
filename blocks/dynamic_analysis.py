@@ -1,6 +1,5 @@
 #block 4 dynamic analysis with playwright and chronium
 #Uses credentials from seed.py
-import json
 import os
 import time
 from urllib.parse import urlsplit
@@ -382,19 +381,3 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
     attack_surface["errors"] = errors
 
     return attack_surface
-
-
-def run_dynamic_discovery():
-    attack_surface = discover_attack_surface()
-    os.makedirs("results", exist_ok=True)
-
-    with open("results/attack_surface.json", "w", encoding="utf-8") as f:
-        json.dump(build_attack_surface_records(attack_surface), f, indent=4)
-
-    with open("results/B4_dynamic.json", "w", encoding="utf-8") as f:
-        json.dump(attack_surface, f, indent=4)
-
-    print("B4 dynamic completed and saved to results/attack_surface.json and results/B4_dynamic.json")
-
-if __name__ == "__main__":
-    run_dynamic_discovery()
