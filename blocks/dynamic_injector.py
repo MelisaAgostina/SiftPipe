@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from blocks.mattermost_auth import find_working_selector
@@ -8,6 +9,33 @@ from blocks.crawler import is_same_origin
 from blocks.taxonomy import infer_taxonomy
 
 PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
+
+# SQLi/command-injection/misconfiguration marker detection previously ran as
+# three separate `any(m in bl for m in markers)` passes, each re-scanning the
+# same lowercased response body from scratch. Combined into one regex
+# alternation scanned once per response (_scan_response_body_markers) -
+# marker text/behavior is unchanged, only how many times `bl` gets walked.
+_SQLI_BODY_MARKERS = ("syntax error", "sqlstate", "sql error", "database error")
+_COMMAND_INJECTION_BODY_MARKERS = ("command not found", "sh:", "/bin/", "uid=", "root:", "permission denied", "no such file")
+_MISCONFIGURATION_BODY_MARKERS = ("traceback", "exception", "stack trace", "ora-", "server error")
+
+_BODY_MARKER_CATEGORY = {
+    marker: category
+    for category, markers in (
+        ("sqli", _SQLI_BODY_MARKERS),
+        ("command_injection", _COMMAND_INJECTION_BODY_MARKERS),
+        ("misconfiguration", _MISCONFIGURATION_BODY_MARKERS),
+    )
+    for marker in markers
+}
+_BODY_MARKER_PATTERN = re.compile("|".join(re.escape(marker) for marker in _BODY_MARKER_CATEGORY))
+
+
+def _scan_response_body_markers(body_lower):
+    """One pass over `body_lower` returning the set of marker categories
+    ("sqli", "command_injection", "misconfiguration") found in it, instead
+    of a separate any(...) loop re-scanning the string per category."""
+    return {_BODY_MARKER_CATEGORY[match.group()] for match in _BODY_MARKER_PATTERN.finditer(body_lower)}
 
 # Response bodies never come from a submission — a stylesheet/script/image
 # fetched incidentally around the same time as the real submit shouldn't be
@@ -594,8 +622,9 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                     status       = raw_r.get("status_code")
                     content_type = raw_r.get("content_type", "")
                     bl           = body.lower()
+                    body_markers = _scan_response_body_markers(bl)
 
-                    if status == 500 or any(k in bl for k in ("syntax error", "sqlstate", "sql error", "database error")):
+                    if status == 500 or "sqli" in body_markers:
                         detections.append("SQLi")
 
                     if (
@@ -605,9 +634,8 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                     ):
                         detections.append("XSS_reflected")
 
-                    shell_syms   = [";", "&&", "|", "`", "$()"]
-                    cmd_markers  = ["command not found", "sh:", "/bin/", "uid=", "root:", "permission denied", "no such file"]
-                    if any(s in payload for s in shell_syms) and any(m in bl for m in cmd_markers):
+                    shell_syms = [";", "&&", "|", "`", "$()"]
+                    if any(s in payload for s in shell_syms) and "command_injection" in body_markers:
                         detections.append("Command_Injection")
 
                     if ".." in payload and any(m in bl for m in ["root:x:", "etc/passwd", "document"]):
@@ -618,8 +646,7 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                     if status == 403 or any(k in bl for k in ("not authorized", "forbidden")):
                         detections.append("Broken_Access_Control")
 
-                    misconf_markers = ["traceback", "exception", "stack trace", "ora-", "server error"]
-                    if any(m in bl for m in misconf_markers):
+                    if "misconfiguration" in body_markers:
                         detections.append("Security_Misconfiguration")
                         detections.append("Information_Disclosure")
 

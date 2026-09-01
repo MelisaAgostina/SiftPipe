@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from blocks import pipeline, static_scanner
+from blocks import pipeline
 from blocks.targets import MATTERMOST, NAVIQ
 
 
@@ -18,15 +18,14 @@ class TestRunStaticAnalysisTargetAwareness(unittest.TestCase):
     path AND its Go/TypeScript-tuned extensions/directory filter, plus a
     single shared results/files_list.txt cache that made whichever target
     ran B3 first "win" it forever. Exercises the real function (not a fake),
-    with ask_llm/time.sleep patched out so this doesn't hit Anthropic or take 15s.
+    with ask_llm patched out so this doesn't hit Anthropic.
 
     The scan loop itself lives in blocks/static_scanner.py (moved from
     main.py so that module owns its own block's logic, same as every other
     blocks/*.py module) - pipeline.run_static_analysis is now a thin wrapper
     that passes pipeline.ask_llm down into it, so patching pipeline.ask_llm
     (not static_scanner.ask_llm, which doesn't exist - it's a parameter, not
-    an import) is what actually takes effect. time.sleep(15) is called
-    inside static_scanner.py, so that's patched there instead.
+    an import) is what actually takes effect.
     """
 
     def setUp(self):
@@ -45,7 +44,7 @@ class TestRunStaticAnalysisTargetAwareness(unittest.TestCase):
         path.write_text("x = 1", encoding="utf-8")
 
     def _run(self, target_profile=None):
-        with patch.object(pipeline, "ask_llm", return_value=[]), patch.object(static_scanner.time, "sleep"):
+        with patch.object(pipeline, "ask_llm", return_value=[]):
             if target_profile is None:
                 pipeline.run_static_analysis(pipeline.pipeline_results)
             else:
@@ -147,7 +146,7 @@ class TestNotFoundPlaceholderIsFiltered(unittest.TestCase):
                 "confidence": "high",
             },
         ]
-        with patch.object(pipeline, "ask_llm", return_value=fake_response), patch.object(static_scanner.time, "sleep"):
+        with patch.object(pipeline, "ask_llm", return_value=fake_response):
             pipeline.run_static_analysis(pipeline.pipeline_results, MATTERMOST)
 
         findings = pipeline.pipeline_results["B3"]["findings"]

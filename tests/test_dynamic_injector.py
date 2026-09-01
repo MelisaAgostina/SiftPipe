@@ -378,6 +378,57 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         self.assertEqual(probe["owasp_category"], "A01")
         self.assertEqual(result["anomalies_found"], 1)
 
+    def test_shell_metachar_payload_with_command_output_is_detected(self):
+        """
+        Command_Injection requires BOTH sides: a shell metacharacter in the
+        payload itself (";", "&&", "|", "`", "$()") AND a command-output
+        marker in the response body - either alone is too weak a signal.
+        Characterizes existing behavior before the single-pass body-marker
+        scan refactor (efficiency checklist item).
+        """
+        payload = "; whoami"
+        validated = {
+            "payloads": [
+                {
+                    "page_url": "http://localhost:8065/town-square",
+                    "field_id": "post_textbox",
+                    "field_name": "unknown",
+                    "target": "post_textbox",
+                    "payloads": [payload],
+                },
+            ]
+        }
+        with open(self.validated_path, "w", encoding="utf-8") as f:
+            json.dump(validated, f)
+
+        body = "sh: uid=0(root) gid=0(root) groups=0(root)"
+        responses = [
+            None,  # auth-probe: timeout, not vulnerable
+            FakeResponse("http://localhost:8065/town-square", 200, body),
+        ]
+
+        result = self._run(responses)
+
+        first = result["findings"][0]
+        self.assertIn("Command_Injection", first["detections"])
+        self.assertEqual(first["vulnerability"], "Command_Injection")
+
+    def test_stack_trace_response_is_detected_as_misconfiguration(self):
+        """Characterizes existing behavior before the single-pass body-marker
+        scan refactor - Security_Misconfiguration markers must still fire
+        Information_Disclosure alongside it, same as today."""
+        body = "Traceback (most recent call last):\n  File \"app.py\", line 1\nValueError: boom"
+        responses = [
+            None,  # auth-probe: timeout, not vulnerable
+            FakeResponse("http://localhost:8065/town-square", 500, body),
+        ]
+
+        result = self._run(responses)
+
+        first = result["findings"][0]
+        self.assertIn("Security_Misconfiguration", first["detections"])
+        self.assertIn("Information_Disclosure", first["detections"])
+
     def test_unauthenticated_rejection_is_not_flagged(self):
         """The expected case: no session gets a real 401/403, no finding."""
         responses = [

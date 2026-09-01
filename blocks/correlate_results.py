@@ -166,6 +166,13 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
     judgments = _load_previous_judgments(result_path(target_profile.name, "B9_correlation.json"))
     judge_calls_made = 0
 
+    # Computed once per static finding here, instead of find_match()
+    # recomputing infer_taxonomy(b3) on every inner-loop pass for every
+    # dynamic finding it checks against - O(dynamic findings x static
+    # findings) before this, now O(static findings) up front plus O(1) per
+    # comparison.
+    static_findings_with_taxonomy = [(b3, infer_taxonomy(b3)) for b3 in b3_findings]
+
     def judge(b3, b8, pair_key, static_cwe=None, dynamic_cwe=None):
         nonlocal judge_calls_made
 
@@ -197,15 +204,13 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
         """Returns (matched_index|None, match_tier, judge_rationale|None)."""
         # Tier 1: exact CWE match
         if dyn_taxonomy["cwe_id"]:
-            for i, b3 in enumerate(b3_findings):
-                stat_taxonomy = infer_taxonomy(b3)
+            for i, (b3, stat_taxonomy) in enumerate(static_findings_with_taxonomy):
                 if stat_taxonomy["cwe_id"] and stat_taxonomy["cwe_id"] == dyn_taxonomy["cwe_id"]:
                     return i, "cwe", None
 
         # Tier 2/3: same OWASP category, different or missing CWE — ambiguous
         if dyn_taxonomy["owasp_category"]:
-            for i, b3 in enumerate(b3_findings):
-                stat_taxonomy = infer_taxonomy(b3)
+            for i, (b3, stat_taxonomy) in enumerate(static_findings_with_taxonomy):
                 if stat_taxonomy["owasp_category"] != dyn_taxonomy["owasp_category"]:
                     continue
                 pair_key = f"{b8.get('payload_id', '?')}|{b3.get('file', '?')}|{i}"
@@ -315,10 +320,9 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
             ),
         })
 
-    for i, b3 in enumerate(b3_findings):
+    for i, (b3, stat_taxonomy) in enumerate(static_findings_with_taxonomy):
         if i in b3_matched_indices:
             continue
-        stat_taxonomy = infer_taxonomy(b3)
         score, severity = compute_score(
             static_confidence=b3.get("confidence"),
             dynamic_result="untested",

@@ -1,7 +1,6 @@
 import logging
 import os
 import json
-import time
 from pathlib import Path
 
 from blocks.targets import MATTERMOST, result_path
@@ -227,8 +226,6 @@ def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
         "total_scanned": total_files,
         "findings": results
     }
-
-    time.sleep(15)  # timer so it doesnt waste too many tokens in case of re-runs during development
 
     # Persistir output JSON en /results para la UI (Streamlit)
     os.makedirs("results", exist_ok=True)

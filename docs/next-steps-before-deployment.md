@@ -158,17 +158,58 @@ the priority of the first item below.*
       to something larger — since that's not happening (see decision above),
       this is now a nice-to-have for a modest speedup on today's small cap,
       not a blocker.
-- [ ] **Remove the flat `time.sleep(15)` that runs after every B3 run**,
+
+      **Decision (2026-09-01): deferred, not implemented.** Weighed
+      deliberately rather than skipped by default:
+
+      - *What it would buy:* parallelizing the up-to-10 per-file `ask_llm()`
+        calls turns B3's own wall-clock time from "sum of every call" into
+        roughly "the slowest single call" — real, but bounded by the
+        `MAX_FILES` cap above, and it doesn't touch B4/B5/B7 (browser
+        automation), which dominate a full pipeline run's total time anyway.
+      - *What it would cost, in engineering risk:* unlike the other three
+        items below (pure algorithmic fixes — same output, less repeated
+        work, no new failure mode possible), concurrency is a different
+        *kind* of change. It requires collecting each file's findings
+        without letting two threads write into the shared results list at
+        the same instant, and it's the sort of bug that a test suite often
+        can't catch reliably — a race can pass 99 runs and fail the 100th.
+      - *What it would cost against Anthropic's rate limits specifically:*
+        Anthropic enforces three independent per-account ceilings —
+        requests per minute, **input tokens per minute (ITPM)**, and
+        **output tokens per minute (OTPM)** — scaled to the account's usage
+        tier (see the account's own Limits page at
+        [console.anthropic.com](https://console.anthropic.com) for the
+        actual numbers; not something this codebase has visibility into).
+        Sequential calls are naturally rate-limit-safe: each file's request
+        waits for the previous one's full round trip before the next is
+        sent, so the 10 calls in a B3 run are spread across however long
+        those round trips take, never bursting. Running them concurrently
+        doesn't change the *total* tokens spent — same 10 calls, same
+        dollar cost either way — but it does compress that same spend into
+        a much narrower time window, which is exactly what a *per-minute*
+        limit is designed to catch. A small developer/thesis-scale account
+        (not a scaled production key) is the case most likely to sit on a
+        lower usage tier, i.e. the case where this risk is least
+        theoretical.
+      - *Net:* a modest, bounded time saving, purchased with a genuinely new
+        failure mode (races) and a real chance of trading "always safely
+        under the rate limit" for "sometimes hits it," for a code path that
+        only matters during local iteration, not the one-shot jury demo run.
+        Not worth it at this project's scale — revisit only if `MAX_FILES`
+        is ever raised enough to make B3's own wall-clock time an actual
+        bottleneck, not just a nice-to-have.
+- [X] **Remove the flat `time.sleep(15)` that runs after every B3 run**,
       unconditionally — regardless of whether a re-run is actually imminent
       or anything was even found. Cheap, independent fix, unrelated to the
       file-cap decision.
-- [ ] **B9's `find_match` recomputes `infer_taxonomy()` on every inner-loop
+- [X] **B9's `find_match` recomputes `infer_taxonomy()` on every inner-loop
       pass** instead of once up front — O(dynamic findings × static
       findings) overall. Trivial at today's scale (a small `MAX_FILES` keeps
       the static-findings side small too), but a one-line fix: compute
       `[(b3, infer_taxonomy(b3)) for b3 in b3_findings]` once, outside the
       loop.
-- [ ] **B7 re-scans the same response body multiple times** — separate
+- [X] **B7 re-scans the same response body multiple times** — separate
       `any(k in body for k in ...)` passes for SQLi markers,
       command-injection markers, and misconfiguration markers. Combine into
       one pass over the same lowercased string. Independent of the file-cap
