@@ -7,6 +7,7 @@ import {
   getEnvironmentStatus,
   getLogs,
   getRun,
+  getRunComparison,
   getRuns,
   getStatus,
   resetEnvironment,
@@ -182,6 +183,14 @@ export function useRunDetail(runId: number | null) {
   return useQuery({
     queryKey: ["run-detail", runId],
     queryFn: () => getRun(runId as number),
+    enabled: runId !== null,
+  });
+}
+
+export function useRunComparison(runId: number | null) {
+  return useQuery({
+    queryKey: ["run-comparison", runId],
+    queryFn: () => getRunComparison(runId as number),
     enabled: runId !== null,
   });
 }

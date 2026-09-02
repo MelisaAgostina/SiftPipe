@@ -219,24 +219,51 @@ the priority of the first item below.*
 
 *Fast local iteration, no Docker needed yet.*
 
-- [ ] Trend/compare view in Past Runs (pairs with the business-logic item
-      above).
-- [ ] **A visible failure surface for background pipeline errors.** Several
-      past bugs were "screen shows nothing, user has to guess why" (B3 "no
-      findings yet", the B8 `KeyError` on API-Error placeholders). A small
-      toast/banner tied to `run_history`'s error state would catch the next
-      version of that same bug class before it reaches a user.
-- [ ] A minimal empty-state/first-run guide ("pick a target → Fresh reset →
-      Run") — a jury will be clicking around cold, unlike the developer.
-- [ ] Driver.js-style guided tour across all utilities — do this last, since
-      new features (e.g. the history-comparison view above) would need to be
-      folded into it.
-- [ ] **Add frontend test coverage.** `ui/package.json` has no `test` script
-      and no framework installed (Jest/Vitest/RTL/Playwright component
-      tests) — zero `*.test.tsx` files across the whole `ui/src` tree.
-      ESLint/Prettier exist but that's linting, not testing. Do this *after*
-      the Internationalization pass below, not before — otherwise these
-      tests get rewritten once strings move into the i18n dictionary.
+- [X] Trend/compare view in Past Runs (pairs with the business-logic item
+      above). `PastRunsView.tsx`'s `ComparePanel` consumes
+      `GET /api/runs/{id}/compare` via a new `useRunComparison()` hook —
+      severity-delta badges (CRITICAL/HIGH/MEDIUM/LOW, colored by whether
+      this run got worse or better) plus NEW/RECURRING/RESOLVED `Section`s
+      reusing the existing `mapB9Entry` pipeline. Live-verified against real
+      historical data (run #21 vs. #19, no pipeline run triggered, no API
+      cost) in the actual browser via chrome-devtools.
+- [X] **A visible failure surface for background pipeline errors.** New
+      `useErrorToast()` hook (`ui/src/hooks/use-error-toast.ts`) fires a
+      `sonner` toast the instant `status.error` / `environment-status.error`
+      transitions from empty to a new value, wired into `SecPipelineApp.tsx`
+      alongside the existing (now-supplementary) static sidebar text. TDD'd:
+      5 unit tests cover the edge-detection state machine (first appearance,
+      no re-fire on repeated polls, re-fire on a changed or recurring error).
+- [X] A minimal empty-state/first-run guide ("pick a target → Fresh reset →
+      Run") — a jury will be clicking around cold, unlike the developer. New
+      `FirstRunGuide.tsx`, shown instead of the old generic "no active run"
+      message when `usePastRuns()` returns zero runs (true first-time
+      state); falls back to the original message once any run exists, so a
+      returning user isn't shown the beginner walkthrough every time. 3
+      render tests + a live check of the fallback path in-browser.
+- [X] Driver.js-style guided tour across all utilities — built last so it
+      could describe the compare view above. Added `driver.js` (approved
+      new dependency) plus `data-tour` anchors across `TopBar`, `Sidebar`,
+      and `Tabs`; `tour.ts` holds the 9-step script, `buildDriveSteps.ts`
+      wires each tab-scoped step to switch tabs via `setTab` right before
+      driver.js highlights it (TDD'd, 3 unit tests). Live-verified in the
+      browser end to end, including the actual tab switch to "Review (B6)"
+      rendering real payload-review content behind the tour popover.
+- [~] **Add frontend test coverage.** Framework now installed and wired —
+      `vitest` + `@testing-library/react` (+ `jest-dom`, `user-event`,
+      `jsdom`), a standalone `vitest.config.ts` (kept separate from the
+      app's `vite.config.ts`, which is wrapped by
+      `@lovable.dev/vite-tanstack-config`'s TanStack Start/Cloudflare
+      plugins — irrelevant to component tests and safer not to fight), and
+      `npm test` running clean. 11 tests exist today, but all were written
+      as TDD for *new* logic added elsewhere in this pass (the error-toast
+      hook, the tour's tab-switching, `FirstRunGuide`'s branch) — writing
+      *backfill* coverage for the existing content-heavy views
+      (`Sidebar`, `PastRunsView`, etc.) is deliberately still deferred until
+      after Internationalization, per this item's own note: those tests
+      would assert on hardcoded English strings that i18n is about to move
+      into a dictionary, so writing them now means rewriting them almost
+      immediately after.
 
 ### Internationalization (en/es toggle)
 
@@ -287,6 +314,45 @@ pass further down exercises it directly instead of a stand-in.*
       teardown date, but still defensible if a committee member asks how the
       deployment was secured (relevant given the thesis's own subject is
       OWASP vulnerability detection, A07 included).
+
+      **Design notes (2026-09-02) — nothing built yet, audit + rationale
+      only:**
+
+      - *Current state, audited against `api.py` directly:* the only auth
+        that exists today is `require_api_key()` — a no-op unless
+        `SIFTPIPE_API_KEY` is set at deploy time, and even then it only
+        gates 5 POST routes (`/api/target`, `/api/environment/reset`,
+        `/api/run`, `/api/validate`, `/api/reset`). Every `GET` route —
+        results, past runs, PDF reports, logs, status — has zero
+        protection today, key or no key, since none of them carry the
+        `Depends(require_api_key)` dependency. No `SessionMiddleware`,
+        `/api/login` route, or `SIFTPIPE_ADMIN_PASSWORD` handling exists
+        anywhere in the repo yet — this item is 0% built, design-only.
+        The existing key is also a weak stopgap even where it does apply:
+        it's baked into the frontend's JS bundle (`VITE_API_KEY`), so
+        anyone who opens devtools can read it back out — enough to keep a
+        stray bot off an unlisted demo link, not real access control.
+      - *Why this design needs no database:* a single shared passphrase
+        means there's no per-user account to store, so there's nothing to
+        look up on any request. The flow is stateless on the server:
+        `POST /api/login` compares the submitted password against
+        `SIFTPIPE_ADMIN_PASSWORD` once, and on success `SessionMiddleware`
+        encodes `{"authenticated": true}` into a cookie it
+        cryptographically *signs* (not encrypts) with a separate secret
+        key. The browser presents that cookie on every later request, and
+        the server only ever re-checks the signature — no session table,
+        no per-visitor row, nothing persisted server-side. This only works
+        *because* the scope is one shared passphrase and not per-user
+        accounts; real accounts would need somewhere to store each user's
+        credentials, which is exactly what this design avoids.
+      - *Two secrets this needs at deploy time, both env vars, neither
+        hardcoded:* `SIFTPIPE_ADMIN_PASSWORD` (the passphrase itself) and a
+        session-signing secret key (passed to `SessionMiddleware`'s
+        `secret_key=`). The signing key matters more to get right —
+        whoever holds it could forge their own valid
+        `{"authenticated": true}` cookie without ever knowing the
+        password, so it needs to be a real generated secret set at deploy
+        time, never a default or placeholder left in source.
 
 ### The highest-leverage item
 

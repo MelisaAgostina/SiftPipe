@@ -167,6 +167,7 @@ export function Sidebar() {
           {effectiveEnvMode === "fresh" ? (
             <>
               <button
+                data-tour="env-reset"
                 onClick={() => resetMutation.mutate()}
                 disabled={envResetting || isRunning || isWaiting}
                 className="font-button mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
@@ -221,7 +222,7 @@ export function Sidebar() {
           <h2 className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground">
             ANALYSIS PHASES
           </h2>
-          <ul className="space-y-1.5 text-sm">
+          <ul data-tour="analysis-phases" className="space-y-1.5 text-sm">
             {phases.map((ph, index) => {
               const state = phaseState(index);
               return (
@@ -260,6 +261,7 @@ export function Sidebar() {
 
       <div className="shrink-0 border-t border-border p-5">
         <button
+          data-tour="run-button"
           onClick={() => runMutation.mutate()}
           disabled={buttonDisabled}
           className="font-button flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-4 py-3.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"

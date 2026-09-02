@@ -8,6 +8,7 @@ export function Tabs({ value, onChange }: { value: TabId; onChange: (v: TabId) =
         return (
           <button
             key={t.id}
+            data-tour={`tab-${t.id}`}
             onClick={() => onChange(t.id)}
             className={
               "flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors " +

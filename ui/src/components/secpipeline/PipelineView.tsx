@@ -2,6 +2,7 @@ import { useB3, useB4Raw, useB4Summary, useB5, usePipelineStatus } from "@/lib/q
 import type { B4Status } from "@/lib/types";
 import { mapB3Finding, mapB4Form, mapB4Input, mapB5Group } from "./mappers";
 import { Callout } from "./Callout";
+import { FirstRunGuide } from "./FirstRunGuide";
 import { QueryState } from "./QueryState";
 import { Section } from "./Section";
 
@@ -51,10 +52,14 @@ export function PipelineView({ liveVisible }: { liveVisible: boolean }) {
 
   if (!liveVisible) {
     return (
-      <Callout>
-        No active run in this session yet — run the pipeline from the button in the sidebar to see
-        B3-B5 live, or check the Past Runs tab for previous results.
-      </Callout>
+      <FirstRunGuide
+        fallback={
+          <Callout>
+            No active run in this session yet — run the pipeline from the button in the sidebar to
+            see B3-B5 live, or check the Past Runs tab for previous results.
+          </Callout>
+        }
+      />
     );
   }
 

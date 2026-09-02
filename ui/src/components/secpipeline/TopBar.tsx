@@ -67,7 +67,10 @@ export function TopBar() {
           draggable={false}
         />
       </div>
-      <div className="flex items-center gap-3 rounded-md border border-border bg-background/60 px-3 py-1.5 text-sm text-foreground">
+      <div
+        data-tour="target-picker"
+        className="flex items-center gap-3 rounded-md border border-border bg-background/60 px-3 py-1.5 text-sm text-foreground"
+      >
         <Database className="h-4 w-4 shrink-0 text-muted-foreground" />
         {activeTarget ? (
           <>

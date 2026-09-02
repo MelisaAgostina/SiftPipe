@@ -194,6 +194,18 @@ export type RunDetail = RunSummary & {
 };
 export type RunsListResponse = { runs: RunSummary[] };
 
+// blocks/run_history.py's compare_with_previous() — findings are B9Entry-
+// shaped since the comparison is computed over B9_correlation.results.
+export type SeverityDelta = Record<"CRITICAL" | "HIGH" | "MEDIUM" | "LOW", number>;
+export type RunComparison = {
+  run_id: number;
+  previous_run_id: number | null;
+  new_findings: B9Entry[];
+  recurring_findings: B9Entry[];
+  resolved_findings: B9Entry[];
+  severity_delta: SeverityDelta;
+};
+
 export type ValidateRequest = { approved_indices: number[]; comment?: string };
 export type ValidateResponse = { message: string };
 export type RunResponse = { message: string };

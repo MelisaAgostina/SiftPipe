@@ -7,6 +7,7 @@ import type {
   PipelineStatus,
   ResetResponse,
   ResultsBulk,
+  RunComparison,
   RunDetail,
   RunResponse,
   RunsListResponse,
@@ -86,6 +87,8 @@ export const getLogs = () => request<LogsResponse>("/api/logs");
 export const getResultsAll = () => request<ResultsBulk>("/api/results");
 export const getRuns = () => request<RunsListResponse>("/api/runs");
 export const getRun = (runId: number) => request<RunDetail>(`/api/runs/${runId}`);
+export const getRunComparison = (runId: number) =>
+  request<RunComparison>(`/api/runs/${runId}/compare`);
 export const resetPipeline = () => request<ResetResponse>("/api/reset", { method: "POST" });
 
 export const getActiveTarget = () => request<ActiveTarget>("/api/target");

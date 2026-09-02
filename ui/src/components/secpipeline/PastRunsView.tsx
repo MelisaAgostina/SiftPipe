@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { MoreVertical } from "lucide-react";
-import { usePastRuns, useRunDetail } from "@/lib/queries";
+import { MoreVertical, Minus, TrendingDown, TrendingUp } from "lucide-react";
+import { usePastRuns, useRunComparison, useRunDetail } from "@/lib/queries";
 import { API_BASE, downloadReport } from "@/lib/api";
 import type {
   B3Result,
@@ -10,6 +10,7 @@ import type {
   B8Result,
   B9Result,
   RunSummary,
+  SeverityDelta,
   ValidatedPayloadsResult,
 } from "@/lib/types";
 import {
@@ -143,6 +144,103 @@ function RunRow({
   );
 }
 
+const SEVERITY_ORDER: Array<keyof SeverityDelta> = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+
+// delta > 0 means this run has *more* findings of that severity than the
+// previous one (worse), delta < 0 means fewer (better) — tone/icon follow
+// that reading, not a generic "positive number = good" convention.
+function SeverityDeltaBadge({ severity, delta }: { severity: keyof SeverityDelta; delta: number }) {
+  const Icon = delta > 0 ? TrendingUp : delta < 0 ? TrendingDown : Minus;
+  const tone =
+    delta > 0 ? "text-destructive" : delta < 0 ? "text-primary" : "text-muted-foreground";
+  const sign = delta > 0 ? "+" : "";
+  return (
+    <span className={"flex items-center gap-1 text-xs font-medium " + tone}>
+      <Icon className="h-3.5 w-3.5" />
+      {severity} {sign}
+      {delta}
+    </span>
+  );
+}
+
+/**
+ * "Trend/compare view in Past Runs" — diffs this run's B9 findings against
+ * the previous completed run of the same target via GET
+ * /api/runs/{id}/compare (blocks/run_history.py's compare_with_previous(),
+ * built in the business-logic pass). Reuses the same Section/mapB9Entry
+ * pipeline as the B9 block below, just fed three filtered subsets instead
+ * of one full result list.
+ */
+function ComparePanel({ runId }: { runId: number }) {
+  const query = useRunComparison(runId);
+
+  return (
+    <QueryState query={query} empty={() => false} emptyMessage="No comparison data available.">
+      {(cmp) => {
+        if (cmp.previous_run_id === null) {
+          return (
+            <Callout>
+              This is the first completed run for this target — nothing to compare against yet.
+            </Callout>
+          );
+        }
+
+        const nothingToCompare =
+          !cmp.new_findings.length &&
+          !cmp.recurring_findings.length &&
+          !cmp.resolved_findings.length;
+
+        return (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card px-4 py-3">
+              <span className="text-sm font-medium text-foreground">
+                vs. run #{cmp.previous_run_id}
+              </span>
+              {SEVERITY_ORDER.map((sev) => (
+                <SeverityDeltaBadge key={sev} severity={sev} delta={cmp.severity_delta[sev]} />
+              ))}
+            </div>
+
+            {nothingToCompare && (
+              <Callout>Neither run produced any B9-correlated findings to compare.</Callout>
+            )}
+
+            {Boolean(cmp.new_findings.length) && (
+              <Section
+                section={{
+                  id: `run-${runId}-cmp-new`,
+                  title: `NEW SINCE RUN #${cmp.previous_run_id} · ${cmp.new_findings.length}`,
+                  findings: cmp.new_findings.map(mapB9Entry),
+                }}
+              />
+            )}
+
+            {Boolean(cmp.recurring_findings.length) && (
+              <Section
+                section={{
+                  id: `run-${runId}-cmp-recurring`,
+                  title: `RECURRING · ${cmp.recurring_findings.length}`,
+                  findings: cmp.recurring_findings.map(mapB9Entry),
+                }}
+              />
+            )}
+
+            {Boolean(cmp.resolved_findings.length) && (
+              <Section
+                section={{
+                  id: `run-${runId}-cmp-resolved`,
+                  title: `RESOLVED SINCE RUN #${cmp.previous_run_id} · ${cmp.resolved_findings.length}`,
+                  findings: cmp.resolved_findings.map(mapB9Entry),
+                }}
+              />
+            )}
+          </div>
+        );
+      }}
+    </QueryState>
+  );
+}
+
 /**
  * Reuses the same Section/FindingRow/mapper* pipeline that PipelineView and
  * CorrelationView use for live data, just fed from one historical run's
@@ -182,6 +280,13 @@ function RunDetailView({ runId }: { runId: number }) {
 
         return (
           <div className="space-y-6">
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
+                TREND VS. PREVIOUS RUN
+              </h3>
+              <ComparePanel runId={run.id} />
+            </section>
+
             {Boolean(b3?.findings.length) && (
               <Section
                 section={{
