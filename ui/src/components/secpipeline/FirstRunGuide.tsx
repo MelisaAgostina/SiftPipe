@@ -1,11 +1,6 @@
 import type { ReactNode } from "react";
 import { usePastRuns } from "@/lib/queries";
-
-const STEPS = [
-  "Pick a target in the top bar (Mattermost or NaViQ).",
-  'Prepare the environment: click "Fresh reset" in the sidebar and wait for it to finish.',
-  'Click "Run analysis" in the sidebar to start the pipeline.',
-];
+import { useLang } from "@/hooks/use-lang";
 
 /**
  * Shown instead of the generic "no active run" message when there are no
@@ -17,6 +12,7 @@ const STEPS = [
  */
 export function FirstRunGuide({ fallback }: { fallback: ReactNode }) {
   const { data } = usePastRuns();
+  const { t } = useLang();
 
   if (!data || data.runs.length > 0) {
     return <>{fallback}</>;
@@ -24,9 +20,9 @@ export function FirstRunGuide({ fallback }: { fallback: ReactNode }) {
 
   return (
     <div className="space-y-3 rounded-lg border border-(--status-callout)/40 bg-(--status-callout)/15 p-4 text-sm text-foreground/90">
-      <p className="font-medium">First time here? Get a run going in three steps:</p>
+      <p className="font-medium">{t.firstRunGuide.heading}</p>
       <ol className="ml-4 list-decimal space-y-1.5">
-        {STEPS.map((step) => (
+        {t.firstRunGuide.steps.map((step) => (
           <li key={step}>{step}</li>
         ))}
       </ol>

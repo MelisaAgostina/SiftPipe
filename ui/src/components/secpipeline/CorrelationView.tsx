@@ -1,5 +1,6 @@
 import { useB8, useB9 } from "@/lib/queries";
 import type { B9Entry } from "@/lib/types";
+import { useLang } from "@/hooks/use-lang";
 import { mapB8Finding, mapB9Entry } from "./mappers";
 import { Callout } from "./Callout";
 import { FirstRunGuide } from "./FirstRunGuide";
@@ -30,6 +31,7 @@ function Stat({
 }
 
 function HighlightedHybridFinding({ entries }: { entries: B9Entry[] }) {
+  const { t } = useLang();
   const best = entries
     .filter((e) => e.source === "Hybrid (Static + Dynamic)")
     .sort((a, b) => b.score - a.score)[0];
@@ -43,27 +45,19 @@ function HighlightedHybridFinding({ entries }: { entries: B9Entry[] }) {
         {best.score.toFixed(3)}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
-        (both sources match — match_tier: {best.match_tier})
+        {t.correlationView.hybridMatchNote(best.match_tier)}
       </p>
     </div>
   );
 }
 
 export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
+  const { t } = useLang();
   const b8Query = useB8();
   const b9Query = useB9();
 
   if (!liveVisible) {
-    return (
-      <FirstRunGuide
-        fallback={
-          <Callout>
-            No active run in this session yet — run the pipeline from the button in the sidebar to
-            see B8-B9 live, or check the Past Runs tab for previous results.
-          </Callout>
-        }
-      />
-    );
+    return <FirstRunGuide fallback={<Callout>{t.correlationView.emptyGuideCallout}</Callout>} />;
   }
 
   return (
@@ -71,14 +65,14 @@ export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
       <QueryState
         query={b8Query}
         empty={(d) => d.findings.length === 0}
-        emptyMessage="B8 — no dynamic findings analyzed yet."
+        emptyMessage={t.correlationView.b8EmptyMessage}
       >
         {(data) => (
           <Section
             section={{
               id: "B8",
-              title: "B8 — Interpretation of dynamic findings",
-              findings: data.findings.map(mapB8Finding),
+              title: t.correlationView.b8SectionTitle,
+              findings: data.findings.map((f) => mapB8Finding(f, t)),
             }}
           />
         )}
@@ -87,7 +81,7 @@ export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
       <QueryState
         query={b9Query}
         empty={(d) => d.results.length === 0}
-        emptyMessage="B9 — no correlated findings yet."
+        emptyMessage={t.correlationView.b9EmptyMessage}
       >
         {(data) => {
           const confirmed = data.results.filter((e) => e.classification === "CONFIRMED").length;
@@ -98,21 +92,33 @@ export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
           return (
             <section className="space-y-3">
               <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
-                B9 — STATIC + DYNAMIC CORRELATION
+                {t.correlationView.b9SectionTitle}
               </h3>
 
               <HighlightedHybridFinding entries={data.results} />
 
               <div className="grid gap-4 md:grid-cols-3">
-                <Stat value={`${confirmed}/${data.total_correlated}`} label="confirmed" tone="ok" />
-                <Stat value={falsePositives} label="false positives" tone="neutral" />
-                <Stat value={data.total_correlated} label="total analyzed" tone="info" />
+                <Stat
+                  value={`${confirmed}/${data.total_correlated}`}
+                  label={t.correlationView.statConfirmed}
+                  tone="ok"
+                />
+                <Stat
+                  value={falsePositives}
+                  label={t.correlationView.statFalsePositives}
+                  tone="neutral"
+                />
+                <Stat
+                  value={data.total_correlated}
+                  label={t.correlationView.statTotalAnalyzed}
+                  tone="info"
+                />
               </div>
 
               <Section
                 section={{
                   id: "B9-entries",
-                  title: "All correlated findings",
+                  title: t.correlationView.b9AllFindingsTitle,
                   findings: data.results.map(mapB9Entry),
                 }}
               />

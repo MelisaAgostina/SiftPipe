@@ -9,11 +9,14 @@ import {
   useResetEnvironment,
   useRunPipeline,
 } from "@/lib/queries";
-import { prerequisites, phases } from "./data";
+import { useLang } from "@/hooks/use-lang";
+import type { PhaseId } from "@/lib/strings";
+import { prerequisiteIds, phases } from "./data";
 
 type EnvMode = "fresh" | "restore";
 
 export function Sidebar() {
+  const { t } = useLang();
   const { data: status } = usePipelineStatus();
   const runMutation = useRunPipeline();
 
@@ -89,18 +92,18 @@ export function Sidebar() {
     isRunning || isWaiting || runMutation.isPending || !targetUp || envResetting;
 
   const buttonLabel = () => {
-    if (runMutation.isPending || isRunning) return "Running...";
-    if (isWaiting) return "Waiting for review";
-    if (isCompleted) return "Pipeline completed";
-    if (envResetting) return "Preparing environment...";
-    if (!targetUp) return "Prepare environment first";
-    return "Run analysis";
+    if (runMutation.isPending || isRunning) return t.sidebar.running;
+    if (isWaiting) return t.sidebar.waitingForReview;
+    if (isCompleted) return t.sidebar.pipelineCompleted;
+    if (envResetting) return t.sidebar.preparingEnvironment;
+    if (!targetUp) return t.sidebar.prepareEnvironmentFirst;
+    return t.sidebar.runAnalysis;
   };
 
   const resetButtonLabel = () => {
-    if (envResetting) return "Preparing environment...";
-    if (targetUp) return "Reset environment (fresh)";
-    return "Prepare environment (fresh)";
+    if (envResetting) return t.sidebar.preparingEnvironment;
+    if (targetUp) return t.sidebar.resetEnvironmentFresh;
+    return t.sidebar.prepareEnvironmentFresh;
   };
 
   return (
@@ -108,22 +111,22 @@ export function Sidebar() {
       <div className="min-h-0 flex-1 space-y-8 overflow-y-auto p-5">
         <section>
           <h2 className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground">
-            PREREQUISITES
+            {t.sidebar.prerequisitesHeading}
           </h2>
           <ul className="space-y-2 text-sm">
             <li className="flex items-center justify-between text-foreground/90">
-              <span>{targetName} running</span>
+              <span>{t.sidebar.targetRunning(targetName)}</span>
               {targetUp ? (
                 <Check className="h-4 w-4 text-primary" />
               ) : (
                 <X className="h-4 w-4 text-destructive" />
               )}
             </li>
-            {prerequisites
-              .filter((p) => p !== "Docker running")
-              .map((p) => (
-                <li key={p} className="flex items-center justify-between text-foreground/90">
-                  <span>{p}</span>
+            {prerequisiteIds
+              .filter((id) => id !== "docker")
+              .map((id) => (
+                <li key={id} className="flex items-center justify-between text-foreground/90">
+                  <span>{t.prerequisiteLabels[id]}</span>
                   <Check className="h-4 w-4 text-primary" />
                 </li>
               ))}
@@ -140,7 +143,7 @@ export function Sidebar() {
                   disabled={disabled}
                   title={
                     m === "fresh" && !supportsFreshReset
-                      ? `${targetName} doesn't support an automated fresh reset yet`
+                      ? t.sidebar.noFreshResetTooltip(targetName)
                       : undefined
                   }
                   className={
@@ -150,7 +153,7 @@ export function Sidebar() {
                       : "text-muted-foreground hover:text-foreground")
                   }
                 >
-                  {m === "fresh" ? "Fresh reset" : "Restore existing"}
+                  {m === "fresh" ? t.sidebar.freshReset : t.sidebar.restoreExisting}
                 </button>
               );
             })}
@@ -159,8 +162,7 @@ export function Sidebar() {
           {!supportsFreshReset && (
             <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              {targetName} doesn't support an automated fresh reset yet — only "Restore existing" is
-              available for this target.
+              {t.sidebar.noFreshResetNotice(targetName)}
             </p>
           )}
 
@@ -183,44 +185,34 @@ export function Sidebar() {
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   {activeTarget?.name === "naviq"
-                    ? "Starts NaViQ's dev server automatically if it isn't already running. Deletes existing data and reseeds the test account."
-                    : "Requires Docker Desktop running. Delete existing data and seed a new instance."}
+                    ? t.sidebar.naviqFreshResetHint
+                    : t.sidebar.genericFreshResetHint}
                 </p>
               )}
               {envStatus?.error && (
                 <p className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                  Error preparing environment: {envStatus.error}
+                  {t.sidebar.errorPreparingEnvironment(envStatus.error)}
                 </p>
               )}
             </>
           ) : targetUp ? (
             <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-xs text-muted-foreground">
               <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-              Reusing the existing environment as-is, no reset — same data as your last session. Run
-              analysis below whenever you're ready.
+              {t.sidebar.restoreReusingExisting}
             </p>
           ) : (
             <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-xs text-muted-foreground">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              {activeTarget?.name === "naviq" ? (
-                <>
-                  No environment detected. Restore mode won't start it for you — use Fresh reset
-                  above, which also starts NaViQ's dev server automatically (no command line
-                  needed).
-                </>
-              ) : (
-                <>
-                  No environment detected. Restore mode won't start one for you — start it manually
-                  (docker compose up -d in mattermost/), or switch to Fresh reset above.
-                </>
-              )}
+              {activeTarget?.name === "naviq"
+                ? t.sidebar.restoreNaviqNoEnv
+                : t.sidebar.restoreGenericNoEnv}
             </p>
           )}
         </section>
 
         <section>
           <h2 className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground">
-            ANALYSIS PHASES
+            {t.sidebar.analysisPhasesHeading}
           </h2>
           <ul data-tour="analysis-phases" className="space-y-1.5 text-sm">
             {phases.map((ph, index) => {
@@ -244,7 +236,7 @@ export function Sidebar() {
                   ) : (
                     <Circle className="h-4 w-4 text-muted-foreground/60" />
                   )}
-                  <span>{ph.label}</span>
+                  <span>{t.phaseLabels[ph.id as PhaseId]}</span>
                 </li>
               );
             })}
@@ -254,7 +246,7 @@ export function Sidebar() {
         {/* API error */}
         {status?.error && (
           <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            Error: {status.error}
+            {t.sidebar.errorLine(status.error)}
           </p>
         )}
       </div>

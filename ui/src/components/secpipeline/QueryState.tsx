@@ -1,5 +1,6 @@
 import { Loader2 } from "lucide-react";
 import type { ApiError } from "@/lib/api";
+import { useLang } from "@/hooks/use-lang";
 import { Callout } from "./Callout";
 
 /**
@@ -18,18 +19,20 @@ export function QueryState<T>({
   emptyMessage: string;
   children: (data: T) => React.ReactNode;
 }) {
+  const { t } = useLang();
+
   if (query.isLoading) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Loading...
+        {t.queryState.loading}
       </div>
     );
   }
   if (query.isError) {
     const detail =
-      (query.error as ApiError)?.detail ?? (query.error as Error)?.message ?? "unknown";
-    return <Callout>Error loading: {detail}</Callout>;
+      (query.error as ApiError)?.detail ?? (query.error as Error)?.message ?? t.common.unknown;
+    return <Callout>{t.queryState.errorLoading(detail)}</Callout>;
   }
   if (query.data == null || empty(query.data)) {
     return <Callout>{emptyMessage}</Callout>;

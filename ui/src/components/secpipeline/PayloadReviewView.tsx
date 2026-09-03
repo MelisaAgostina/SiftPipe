@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { usePipelineStatus, useB5, useValidatedPayloads, useValidatePayloads } from "@/lib/queries";
 import type { ApiError } from "@/lib/api";
+import { useLang } from "@/hooks/use-lang";
+import type { Strings } from "@/lib/strings";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +13,7 @@ import { Callout } from "./Callout";
 import { QueryState } from "./QueryState";
 
 export function PayloadReviewView({ onValidated }: { onValidated: () => void }) {
+  const { t } = useLang();
   const { data: status } = usePipelineStatus();
   const b5Query = useB5();
   const validatedQuery = useValidatedPayloads();
@@ -35,14 +38,17 @@ export function PayloadReviewView({ onValidated }: { onValidated: () => void }) 
       { approved_indices: [...selected].sort((a, b) => a - b), comment },
       {
         onSuccess: () => {
-          toast.success("Validation sent — continuing with B7 → B9");
+          toast.success(t.payloadReviewView.validationSent);
           setSelected(new Set());
           setComment("");
           onValidated();
         },
         onError: (err) => {
-          const detail = (err as ApiError)?.detail ?? (err as Error)?.message ?? "unknown error";
-          toast.error(`Could not validate: ${detail}`);
+          const detail =
+            (err as ApiError)?.detail ??
+            (err as Error)?.message ??
+            t.payloadReviewView.unknownError;
+          toast.error(t.payloadReviewView.couldNotValidate(detail));
         },
       },
     );
@@ -53,7 +59,7 @@ export function PayloadReviewView({ onValidated }: { onValidated: () => void }) 
       <QueryState
         query={b5Query}
         empty={(d) => d.payloads.length === 0}
-        emptyMessage="No payloads generated yet. Run the pipeline (B3→B5) first."
+        emptyMessage={t.payloadReviewView.noPayloadsYet}
       >
         {(b5) =>
           !waiting ? (
@@ -88,20 +94,21 @@ function AlreadyPastB6({
 }: {
   validatedQuery: ReturnType<typeof useValidatedPayloads>;
 }) {
+  const { t } = useLang();
   return (
     <QueryState
       query={validatedQuery}
       empty={(d) => d.payloads.length === 0}
-      emptyMessage="Waiting for the pipeline to reach B6…"
+      emptyMessage={t.payloadReviewView.waitingForB6}
     >
       {(validated) => (
         <div className="space-y-3">
-          <Callout>
-            Already validated — {validated.payloads.length} target(s) approved in this run.
-          </Callout>
+          <Callout>{t.payloadReviewView.alreadyValidated(validated.payloads.length)}</Callout>
           {validated.comment && (
             <div className="rounded border border-border bg-muted/40 px-3 py-2 text-xs text-foreground">
-              <span className="font-semibold text-muted-foreground">Reviewer note: </span>
+              <span className="font-semibold text-muted-foreground">
+                {t.payloadReviewView.reviewerNotePrefix}
+              </span>
               {validated.comment}
             </div>
           )}
@@ -110,7 +117,7 @@ function AlreadyPastB6({
               <Card key={i}>
                 <CardHeader>
                   <CardTitle className="text-sm">
-                    {g.target_desc ?? g.target ?? "unknown target"}
+                    {g.target_desc ?? g.target ?? t.common.unknownTarget}
                   </CardTitle>
                   <CardDescription>{g.rationale}</CardDescription>
                 </CardHeader>
@@ -160,6 +167,7 @@ function InteractiveReview({
   onSubmit: () => void;
   submitting: boolean;
 }) {
+  const { t } = useLang();
   const selectableCount = useMemo(
     () => payloads.filter((g) => g.payloads.length > 0).length,
     [payloads],
@@ -167,21 +175,18 @@ function InteractiveReview({
 
   return (
     <div className="space-y-4">
-      <Callout>
-        The pipeline is paused, waiting for review. Choose which payloads to run against Mattermost
-        in B7.
-      </Callout>
+      <Callout>{t.payloadReviewView.pausedForReview}</Callout>
 
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          {selected.size} of {selectableCount} selected
+          {t.payloadReviewView.selectedCount(selected.size, selectableCount)}
         </p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={onSelectAll} disabled={submitting}>
-            Select all
+            {t.payloadReviewView.selectAll}
           </Button>
           <Button variant="outline" size="sm" onClick={onSelectNone} disabled={submitting}>
-            Deselect all
+            {t.payloadReviewView.deselectAll}
           </Button>
         </div>
       </div>
@@ -200,7 +205,7 @@ function InteractiveReview({
                 />
                 <div className="min-w-0 flex-1">
                   <CardTitle className="text-sm">
-                    {g.target_desc ?? g.target ?? "unknown target"}
+                    {g.target_desc ?? g.target ?? t.common.unknownTarget}
                   </CardTitle>
                   <CardDescription>
                     {[g.owasp_category, g.cwe_id, g.field_name, g.page_url]
@@ -214,7 +219,7 @@ function InteractiveReview({
                 <div className="flex flex-wrap gap-2">
                   {g.payloads.length === 0 ? (
                     <span className="text-xs italic text-muted-foreground">
-                      no payloads (generation failed)
+                      {t.payloadReviewView.noPayloadsGenerationFailed}
                     </span>
                   ) : (
                     g.payloads.map((p, j) => (
@@ -232,19 +237,19 @@ function InteractiveReview({
 
       <div className="space-y-2">
         <label className="text-xs font-semibold tracking-wider text-muted-foreground">
-          COMMENT (OPTIONAL)
+          {t.payloadReviewView.commentLabel}
         </label>
         <Textarea
           value={comment}
           onChange={(e) => onCommentChange(e.target.value)}
-          placeholder="Notes about this validation..."
+          placeholder={t.payloadReviewView.commentPlaceholder}
           disabled={submitting}
         />
       </div>
 
       <Button onClick={onSubmit} disabled={submitting || selected.size === 0} className="w-full">
         {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-        Validate {selected.size} payload(s) and continue to B7
+        {t.payloadReviewView.validateAndContinue(selected.size)}
       </Button>
     </div>
   );

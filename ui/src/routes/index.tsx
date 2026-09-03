@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import logo from "@/assets/siftpipe-logo.png";
 import pic from "@/assets/Sift pipe-Photoroom.png";
+import { useLang } from "@/hooks/use-lang";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -26,6 +27,7 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
+  const { t } = useLang();
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-linear-to-br from-background via-background to-card px-6 text-foreground">
       <div
@@ -51,13 +53,11 @@ function Index() {
         />
 
         <h1 className="font-title mt-2 text-5xl sm:text-5xl text-foreground uppercase tracking-[0.15em] sm:tracking-[0.2em]">
-          Hybrid security pipeline
+          {t.landing.heading}
         </h1>
 
         <p className=" mt-8 text-muted-foreground max-w-xl text-balance text-base leading-relaxed sm:text-lg">
-          SiftPipe pairs AI-driven static analysis with Playwright-powered dynamic discovery and
-          context-aware payload generation — then pauses for human sign-off before any attack runs.
-          Every result gets cross-checked and confirmed, so what you see is signal, not noise.
+          {t.landing.description}
         </p>
 
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
@@ -65,14 +65,14 @@ function Index() {
             to="/app"
             className="font-button group inline-flex items-center gap-3 rounded-full bg-primary px-10 py-6 text-lg text-primary-foreground transition-colors hover:bg-primary/90 [-webkit-text-stroke:0.6px_currentColor]"
           >
-            Open the pipeline
+            {t.landing.openPipeline}
             <span aria-hidden className="transition-transform group-hover:translate-x-0.5"></span>
           </Link>
         </div>
       </section>
 
       <footer className=" italic relative z-10 mt-16 mb-16 text-xs text-muted-foreground">
-        Fewer false positives. More real findings.
+        {t.landing.footerTagline}
       </footer>
     </main>
   );

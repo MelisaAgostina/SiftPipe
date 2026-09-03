@@ -7,6 +7,7 @@ import {
   usePipelineStatus,
   useSetTarget,
 } from "@/lib/queries";
+import { useLang, type Lang } from "@/hooks/use-lang";
 
 type EnvDotState = "inactive" | "preparing" | "ready" | "error";
 
@@ -17,17 +18,37 @@ const DOT_STYLE: Record<EnvDotState, string> = {
   error: "bg-destructive shadow-[0_0_8px_var(--destructive)]",
 };
 
-const DOT_LABEL: Record<EnvDotState, string> = {
-  inactive: "Environment not ready",
-  preparing: "Preparing environment...",
-  ready: "Environment ready",
-  error: "Environment error",
-};
+function LangToggle() {
+  const { lang, setLang, t } = useLang();
+  return (
+    <div
+      className="flex items-center gap-1 rounded-md border border-border bg-card/60 p-0.5 text-xs"
+      role="group"
+      aria-label={t.topBar.langToggleAria}
+    >
+      {(["en", "es"] as const).map((l: Lang) => (
+        <button
+          key={l}
+          onClick={() => setLang(l)}
+          className={
+            "rounded px-2 py-1 font-medium uppercase transition-colors " +
+            (l === lang
+              ? "bg-accent text-foreground ring-1 ring-border"
+              : "text-muted-foreground hover:text-foreground")
+          }
+        >
+          {l}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function TopBar() {
   // Shares the same queries (and React Query cache) Sidebar.tsx already
   // polls for the prereqs list / reset flow — this doesn't add extra
   // requests, just reads the same real state instead of a hardcoded dot.
+  const { t } = useLang();
   const { data: envHealth } = useEnvironmentHealth();
   const { data: envStatus } = useEnvironmentStatus();
   const { data: status } = usePipelineStatus();
@@ -75,24 +96,24 @@ export function TopBar() {
         {activeTarget ? (
           <>
             <div className="flex items-center gap-1 rounded-md border border-border bg-card/60 p-0.5 text-xs">
-              {activeTarget.available.map((t) => (
+              {activeTarget.available.map((opt) => (
                 <button
-                  key={t.name}
-                  onClick={() => setTargetMutation.mutate({ name: t.name })}
-                  disabled={switchDisabled || t.name === activeTarget.name}
+                  key={opt.name}
+                  onClick={() => setTargetMutation.mutate({ name: opt.name })}
+                  disabled={switchDisabled || opt.name === activeTarget.name}
                   title={
-                    switchDisabled && t.name !== activeTarget.name
-                      ? "Can't switch target while a run or environment reset is in progress"
+                    switchDisabled && opt.name !== activeTarget.name
+                      ? t.topBar.switchDisabledTooltip
                       : undefined
                   }
                   className={
                     "rounded px-2 py-1 font-medium transition-colors disabled:cursor-not-allowed " +
-                    (t.name === activeTarget.name
+                    (opt.name === activeTarget.name
                       ? "bg-accent text-foreground ring-1 ring-border"
                       : "text-muted-foreground hover:text-foreground disabled:opacity-50")
                   }
                 >
-                  {t.display_name}
+                  {opt.display_name}
                 </button>
               ))}
             </div>
@@ -101,16 +122,19 @@ export function TopBar() {
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
             )}
             {setTargetMutation.isError && (
-              <span className="text-xs text-destructive">Couldn't switch target</span>
+              <span className="text-xs text-destructive">{t.topBar.couldntSwitchTarget}</span>
             )}
           </>
         ) : (
-          <span className="text-muted-foreground">Loading target...</span>
+          <span className="text-muted-foreground">{t.topBar.loadingTarget}</span>
         )}
       </div>
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <span className={"h-2 w-2 rounded-full " + DOT_STYLE[dotState]} />
-        {DOT_LABEL[dotState]}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span className={"h-2 w-2 rounded-full " + DOT_STYLE[dotState]} />
+          {t.topBar.dotLabel[dotState]}
+        </div>
+        <LangToggle />
       </div>
     </header>
   );

@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { UIFinding } from "@/lib/types";
+import { useLang } from "@/hooks/use-lang";
 import { Tag } from "./Tag";
 
 export function FindingRow({ finding }: { finding: UIFinding }) {
+  const { t } = useLang();
   const [expanded, setExpanded] = useState(false);
   const hasMedia = Boolean(finding.screenshotUrl || finding.videoUrl);
   const hasRationale = Boolean(finding.rationale);
@@ -25,7 +27,7 @@ export function FindingRow({ finding }: { finding: UIFinding }) {
               {finding.screenshotUrl && (
                 <img
                   src={finding.screenshotUrl}
-                  alt="Screenshot captured at the moment of this finding"
+                  alt={t.findingRow.screenshotAlt}
                   className="h-32 w-auto rounded border border-border object-cover"
                 />
               )}
@@ -36,8 +38,9 @@ export function FindingRow({ finding }: { finding: UIFinding }) {
                   preload="metadata"
                   className="h-32 w-auto rounded border border-border"
                 >
-                  Your browser doesn't support embedded video —{" "}
-                  <a href={finding.videoUrl}>download the recording</a> instead.
+                  {t.findingRow.videoUnsupported}{" "}
+                  <a href={finding.videoUrl}>{t.findingRow.downloadRecording}</a>
+                  {t.findingRow.downloadRecordingSuffix}
                 </video>
               )}
             </div>

@@ -1,6 +1,13 @@
 // Pure translation functions from real backend shapes to the UI-level
 // UIFinding shape, plus the log-line tone heuristic. Kept separate from the
 // view components so they're trivially unit-testable and the views stay thin.
+//
+// Scope boundary: `vulnerability`, `evidence`, `rationale`, `category` etc.
+// below are AI-generated text from B3/B5/B8/B9 and stay English-only by
+// design (see next-steps-before-deployment.md's i18n scope-boundary
+// decision) — only the static UI chrome mixed in around them (labels like
+// "FORM"/"INPUT", the " — inputs via " connector, "unknown target") is
+// translated here.
 import type {
   B3Finding,
   B4Form,
@@ -10,6 +17,7 @@ import type {
   B9Entry,
   UIFinding,
 } from "@/lib/types";
+import type { Strings } from "@/lib/strings";
 import { mediaUrl } from "@/lib/api";
 
 export function mapB3Finding(f: B3Finding): UIFinding {
@@ -21,41 +29,41 @@ export function mapB3Finding(f: B3Finding): UIFinding {
   };
 }
 
-export function mapB4Form(f: B4Form): UIFinding {
+export function mapB4Form(f: B4Form, t: Strings): UIFinding {
   return {
     tone: "form",
-    label: "FORM",
-    title: `${f.form_name} — inputs via ${f.method}`,
+    label: t.mappers.formLabel,
+    title: t.mappers.formTitleConnector(f.form_name, f.method),
     subtitle: `${f.page_url} · action: ${f.action}`,
   };
 }
 
-export function mapB4Input(i: B4Input): UIFinding {
+export function mapB4Input(i: B4Input, t: Strings): UIFinding {
   return {
     tone: "input",
-    label: "INPUT",
+    label: t.mappers.inputLabel,
     title: `${i.name || i.id} (${i.type})`,
     subtitle: i.page_url,
   };
 }
 
-export function mapB5Group(g: B5PayloadGroup, idx: number): UIFinding {
+export function mapB5Group(g: B5PayloadGroup, idx: number, t: Strings): UIFinding {
   return {
     tone: g.debug ? "descartada" : "posible",
-    label: g.debug ? "ERROR LLM" : `${g.payloads.length} payload(s)`,
-    title: `#${idx} — ${g.target_desc ?? g.target ?? "unknown target"}`,
+    label: g.debug ? t.mappers.errorLlmLabel : `${g.payloads.length} payload(s)`,
+    title: `#${idx} — ${g.target_desc ?? g.target ?? t.common.unknownTarget}`,
     subtitle: g.debug ? (g.debug.message ?? g.debug.error) : g.rationale,
   };
 }
 
-export function mapB8Finding(f: B8Finding): UIFinding {
+export function mapB8Finding(f: B8Finding, t: Strings): UIFinding {
   const tone =
     f.result === "confirmed" ? "confirmada" : f.result === "possible" ? "posible" : "descartada";
   return {
     tone,
     label: f.result.toUpperCase(),
     title: `${f.vulnerability} — ${f.target}`,
-    subtitle: `${f.evidence} · confidence: ${f.confidence}`,
+    subtitle: t.mappers.b8ConfidenceSuffix(f.evidence, f.confidence),
     screenshotUrl: mediaUrl(f.screenshot_path),
     videoUrl: mediaUrl(f.video_path),
   };

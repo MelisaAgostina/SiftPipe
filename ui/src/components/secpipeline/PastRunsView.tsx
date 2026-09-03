@@ -2,6 +2,8 @@ import { useState } from "react";
 import { MoreVertical, Minus, TrendingDown, TrendingUp } from "lucide-react";
 import { usePastRuns, useRunComparison, useRunDetail } from "@/lib/queries";
 import { API_BASE, downloadReport } from "@/lib/api";
+import { useLang } from "@/hooks/use-lang";
+import type { Strings } from "@/lib/strings";
 import type {
   B3Result,
   B4Raw,
@@ -46,14 +48,16 @@ const STATUS_TONE: Record<RunSummary["status"], string> = {
 // than fetching GET /api/target's `available` list just for a label, since
 // a past run's own target string is already exact. Falls back to the raw
 // value for a run predating the `target` column (null) or any future
-// target name this map hasn't been updated for yet.
+// target name this map hasn't been updated for yet. These are the targets'
+// own proper names (like "Mattermost" in TopBar.tsx's picker), not UI
+// chrome, so they stay as-is across languages.
 const TARGET_LABELS: Record<string, string> = {
   mattermost: "Mattermost",
   naviq: "NaViQ",
 };
 
-function targetLabel(target: string | null): string {
-  if (!target) return "unknown target";
+function targetLabel(target: string | null, t: Strings): string {
+  if (!target) return t.common.unknownTarget;
   return TARGET_LABELS[target] ?? target;
 }
 
@@ -61,10 +65,12 @@ function RunRow({
   run,
   selected,
   onClick,
+  t,
 }: {
   run: RunSummary;
   selected: boolean;
   onClick: () => void;
+  t: Strings;
 }) {
   // A native <button> can't host the dropdown trigger's own interactive
   // button without producing invalid, nested-button markup — this plays
@@ -89,17 +95,17 @@ function RunRow({
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-foreground">
-          Run #{run.id} · {run.mode ?? "unknown"}
+          {t.pastRunsView.runLabel(run.id, run.mode ?? t.common.unknown)}
         </span>
         <div className="flex items-center gap-1.5">
           <span className={"text-xs font-semibold " + STATUS_TONE[run.status]}>
-            {run.status.toUpperCase()}
+            {t.pastRunsView.statusLabels[run.status]}
           </span>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="Run actions"
+                aria-label={t.pastRunsView.runActionsAria}
                 onClick={(e) => e.stopPropagation()}
                 className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
               >
@@ -108,7 +114,7 @@ function RunRow({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
               <DropdownMenuSub>
-                <DropdownMenuSubTrigger>Download report</DropdownMenuSubTrigger>
+                <DropdownMenuSubTrigger>{t.pastRunsView.downloadReport}</DropdownMenuSubTrigger>
                 <DropdownMenuPortal>
                   <DropdownMenuSubContent>
                     <DropdownMenuItem onSelect={() => downloadReport(run.id, "en")}>
@@ -123,7 +129,7 @@ function RunRow({
               <DropdownMenuItem
                 onSelect={() => window.open(`${API_BASE}/api/runs/${run.id}`, "_blank")}
               >
-                View raw JSON
+                {t.pastRunsView.viewRawJson}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -131,12 +137,12 @@ function RunRow({
       </div>
       <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
         <span className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground">
-          {targetLabel(run.target)}
+          {targetLabel(run.target, t)}
         </span>
         <span>{new Date(run.started_at).toLocaleString()}</span>
         {run.total_findings != null && (
           <span>
-            · {run.confirmed_findings}/{run.total_findings} confirmed
+            · {run.confirmed_findings}/{run.total_findings} {t.correlationView.statConfirmed}
           </span>
         )}
       </div>
@@ -172,17 +178,14 @@ function SeverityDeltaBadge({ severity, delta }: { severity: keyof SeverityDelta
  * of one full result list.
  */
 function ComparePanel({ runId }: { runId: number }) {
+  const { t } = useLang();
   const query = useRunComparison(runId);
 
   return (
-    <QueryState query={query} empty={() => false} emptyMessage="No comparison data available.">
+    <QueryState query={query} empty={() => false} emptyMessage={t.pastRunsView.noComparisonData}>
       {(cmp) => {
         if (cmp.previous_run_id === null) {
-          return (
-            <Callout>
-              This is the first completed run for this target — nothing to compare against yet.
-            </Callout>
-          );
+          return <Callout>{t.pastRunsView.firstCompletedRun}</Callout>;
         }
 
         const nothingToCompare =
@@ -194,22 +197,20 @@ function ComparePanel({ runId }: { runId: number }) {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card px-4 py-3">
               <span className="text-sm font-medium text-foreground">
-                vs. run #{cmp.previous_run_id}
+                {t.pastRunsView.vsRun(cmp.previous_run_id)}
               </span>
               {SEVERITY_ORDER.map((sev) => (
                 <SeverityDeltaBadge key={sev} severity={sev} delta={cmp.severity_delta[sev]} />
               ))}
             </div>
 
-            {nothingToCompare && (
-              <Callout>Neither run produced any B9-correlated findings to compare.</Callout>
-            )}
+            {nothingToCompare && <Callout>{t.pastRunsView.neitherRunHadFindings}</Callout>}
 
             {Boolean(cmp.new_findings.length) && (
               <Section
                 section={{
                   id: `run-${runId}-cmp-new`,
-                  title: `NEW SINCE RUN #${cmp.previous_run_id} · ${cmp.new_findings.length}`,
+                  title: t.pastRunsView.newSinceRun(cmp.previous_run_id, cmp.new_findings.length),
                   findings: cmp.new_findings.map(mapB9Entry),
                 }}
               />
@@ -219,7 +220,7 @@ function ComparePanel({ runId }: { runId: number }) {
               <Section
                 section={{
                   id: `run-${runId}-cmp-recurring`,
-                  title: `RECURRING · ${cmp.recurring_findings.length}`,
+                  title: t.pastRunsView.recurring(cmp.recurring_findings.length),
                   findings: cmp.recurring_findings.map(mapB9Entry),
                 }}
               />
@@ -229,7 +230,10 @@ function ComparePanel({ runId }: { runId: number }) {
               <Section
                 section={{
                   id: `run-${runId}-cmp-resolved`,
-                  title: `RESOLVED SINCE RUN #${cmp.previous_run_id} · ${cmp.resolved_findings.length}`,
+                  title: t.pastRunsView.resolvedSinceRun(
+                    cmp.previous_run_id,
+                    cmp.resolved_findings.length,
+                  ),
                   findings: cmp.resolved_findings.map(mapB9Entry),
                 }}
               />
@@ -248,13 +252,14 @@ function ComparePanel({ runId }: { runId: number }) {
  * queries — same rendering, past data.
  */
 function RunDetailView({ runId }: { runId: number }) {
+  const { t } = useLang();
   const query = useRunDetail(runId);
 
   return (
     <QueryState
       query={query}
       empty={(d) => Object.keys(d.blocks).length === 0}
-      emptyMessage="No block data was captured for this run."
+      emptyMessage={t.pastRunsView.noBlockData}
     >
       {(run) => {
         const b3 = run.blocks["B3_static"] as B3Result | undefined;
@@ -275,14 +280,14 @@ function RunDetailView({ runId }: { runId: number }) {
           !b9?.results.length;
 
         if (nothingToShow) {
-          return <Callout>This run finished without any findings to show.</Callout>;
+          return <Callout>{t.pastRunsView.noFindingsToShow}</Callout>;
         }
 
         return (
           <div className="space-y-6">
             <section className="space-y-2">
               <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
-                TREND VS. PREVIOUS RUN
+                {t.pastRunsView.trendHeading}
               </h3>
               <ComparePanel runId={run.id} />
             </section>
@@ -291,7 +296,7 @@ function RunDetailView({ runId }: { runId: number }) {
               <Section
                 section={{
                   id: `run-${run.id}-B3`,
-                  title: `B3 — STATIC ANALYSIS · ${b3!.total_scanned} files scanned`,
+                  title: t.pastRunsView.b3SectionTitle(b3!.total_scanned),
                   findings: b3!.findings.map(mapB3Finding),
                 }}
               />
@@ -301,10 +306,10 @@ function RunDetailView({ runId }: { runId: number }) {
               <Section
                 section={{
                   id: `run-${run.id}-B4`,
-                  title: "B4 — DYNAMIC DISCOVERY",
+                  title: t.pastRunsView.b4SectionTitle,
                   findings: [
-                    ...(b4Raw?.forms.map(mapB4Form) ?? []),
-                    ...(b4Raw?.inputs.map(mapB4Input) ?? []),
+                    ...(b4Raw?.forms.map((f) => mapB4Form(f, t)) ?? []),
+                    ...(b4Raw?.inputs.map((i) => mapB4Input(i, t)) ?? []),
                   ],
                 }}
               />
@@ -314,8 +319,8 @@ function RunDetailView({ runId }: { runId: number }) {
               <Section
                 section={{
                   id: `run-${run.id}-B5`,
-                  title: `B5 — PAYLOAD GENERATION · ${b5!.generated_targets} targets`,
-                  findings: b5!.payloads.map(mapB5Group),
+                  title: t.pastRunsView.b5SectionTitle(b5!.generated_targets),
+                  findings: b5!.payloads.map((g, idx) => mapB5Group(g, idx, t)),
                 }}
               />
             )}
@@ -323,7 +328,7 @@ function RunDetailView({ runId }: { runId: number }) {
             {Boolean(b6?.comment) && (
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
-                  B6 — REVIEWER NOTE
+                  {t.pastRunsView.reviewerNoteHeading}
                 </h3>
                 <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground">
                   {b6!.comment}
@@ -335,8 +340,8 @@ function RunDetailView({ runId }: { runId: number }) {
               <Section
                 section={{
                   id: `run-${run.id}-B8`,
-                  title: "B8 — Interpretation of dynamic findings",
-                  findings: b8!.findings.map(mapB8Finding),
+                  title: t.pastRunsView.b8SectionTitle,
+                  findings: b8!.findings.map((f) => mapB8Finding(f, t)),
                 }}
               />
             )}
@@ -345,7 +350,7 @@ function RunDetailView({ runId }: { runId: number }) {
               <Section
                 section={{
                   id: `run-${run.id}-B9`,
-                  title: "B9 — STATIC + DYNAMIC CORRELATION",
+                  title: t.pastRunsView.b9SectionTitle,
                   findings: b9!.results.map(mapB9Entry),
                 }}
               />
@@ -358,6 +363,7 @@ function RunDetailView({ runId }: { runId: number }) {
 }
 
 export function PastRunsView() {
+  const { t } = useLang();
   const query = usePastRuns();
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
@@ -365,7 +371,7 @@ export function PastRunsView() {
     <QueryState
       query={query}
       empty={(d) => d.runs.length === 0}
-      emptyMessage="No past runs yet — once a full pipeline run (B3→B9) completes, it shows up here for later review."
+      emptyMessage={t.pastRunsView.noPastRuns}
     >
       {(data) => (
         <div className="grid gap-6 md:grid-cols-[280px_1fr]">
@@ -376,12 +382,13 @@ export function PastRunsView() {
                 run={run}
                 selected={run.id === selectedId}
                 onClick={() => setSelectedId(run.id)}
+                t={t}
               />
             ))}
           </div>
           <div>
             {selectedId === null ? (
-              <p className="text-sm text-muted-foreground">Select a run to see its results.</p>
+              <p className="text-sm text-muted-foreground">{t.pastRunsView.selectRunPrompt}</p>
             ) : (
               <RunDetailView runId={selectedId} />
             )}

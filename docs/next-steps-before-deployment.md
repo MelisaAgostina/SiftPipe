@@ -57,8 +57,7 @@ logging/config validation makes everything built afterward easier to debug.*
       only surfaces as a crash on the first LLM call, mid-pipeline. Add a
       startup check in `main.py`/`api.py` that validates required env vars
       before `/api/run` accepts a request.
-- [ ] **Secrets via AWS Secrets Manager/SSM** instead of a hand-edited
-      `.env` on the box.
+
 
 ### Logic, implementation & modularity
 
@@ -267,7 +266,7 @@ the priority of the first item below.*
 
 ### Internationalization (en/es toggle)
 
-- [ ] **Frontend language toggle**, matching a pattern already proven
+- [X] **Frontend language toggle**, matching a pattern already proven
       elsewhere in this project: B10's PDF report
       (`blocks/report.py`) is already bilingual via plain string
       dictionaries (`REPORT_STRINGS`, `CWE_ES`/`OWASP_ES`), no library
@@ -275,24 +274,130 @@ the priority of the first item below.*
       reaching for something heavier. No i18n library is installed in
       `ui/package.json` today (checked 2026-08-28), so this is greenfield on
       the frontend side.
-- [ ] Add a `strings.ts` (or two, `en.ts`/`es.ts`) dictionary plus a small
-      `useLang()` hook backed by `localStorage` (so the choice persists
-      across reloads without a backend round-trip), or adopt `react-i18next`
-      if the string count grows past what a hand-rolled dict stays
-      comfortable with.
-- [ ] Toggle placement: `TopBar.tsx`, next to the existing target picker —
+- [X] **Decision (2026-09-02): hand-rolled dictionary, not `react-i18next`
+      — settled, not conditional.** Add `en.ts`/`es.ts` dictionaries plus a
+      small `useLang()` hook backed by `localStorage` (so the choice
+      persists across reloads without a backend round-trip), also checking
+      `navigator.language` on first load before `localStorage` has
+      anything — decided 2026-09-02, needed specifically because the login
+      page (Security, sequenced right after this item) sits in front of
+      the app shell and can't reach the `TopBar.tsx` toggle otherwise.
+      - *Why not `react-i18next`, concretely:* a real scan of
+        `ui/src/components/secpipeline/` put the genuinely user-facing
+        string count in the low hundreds — well under where a library's
+        namespace-splitting/lazy-loading starts paying for itself (roughly
+        several hundred strings or 3+ languages). Values needing
+        interpolation (`Run #{id}`, `{confirmed}/{total} confirmed`) are
+        just template-literal functions in the dict, the same shape
+        `blocks/report.py`'s `REPORT_STRINGS` already uses — not a gap
+        `react-i18next` closes that a plain object can't. A `strings.ts`
+        object declared `as const` also gets autocomplete and
+        typo-catching for free from TypeScript; `react-i18next` needs an
+        extra type-augmentation step for the same guarantee. And it's zero
+        new dependencies, consistent with every other choice in this repo.
+      - *Precedent:* OWASP ZAP and SonarQube — arguably the two most
+        internationalized tools in this exact space — both translate via
+        plain resource-bundle files decoupled from core logic, falling
+        back to English wherever nothing's translated yet. Same shape of
+        solution, not a shortcut.
+      - *Revisit only if* a third language gets added, real plural rules
+        become necessary (not the existing `payload(s)` hack), or the
+        string count grows an order of magnitude past today's scan.
+- [X] Toggle placement: `TopBar.tsx`, next to the existing target picker —
       same closed-set-of-two-buttons pattern already used there, not a
       dropdown/free-text control.
-- [ ] **The actual work is mechanical, not architectural**: externalize every
+- [X] **The actual work is mechanical, not architectural**: externalize every
       hardcoded string across `ui/src/components/secpipeline/` (`Sidebar`,
       `TopBar`, the pipeline-stage views, `FindingRow`, `PastRunsView`,
       `LogsView`, `PayloadReviewView`) into the dictionary. Sized as a few
       hours of mechanical work, not a multi-day effort — no backend changes
       needed, this is frontend-only (the PDF report's own bilingual support
       is separate and already done).
-- [ ] Do this after the empty-state/first-run guide and Driver.js tour
+
+      **Done 2026-09-03.** `ui/src/lib/strings.ts` (the shared `Strings`
+      type), `ui/src/lib/en.ts`/`es.ts` (the two dictionaries), and
+      `ui/src/hooks/use-lang.ts` (`useLang()`, a `useSyncExternalStore`-backed
+      hook so every component re-renders together on toggle, no Context
+      provider needed). Scope ended up wider than the 7 named files once
+      actually tracing what renders inside them — done with sign-off, not
+      silently: `QueryState.tsx` ("Loading...", error-prefix text — shared by
+      all 7 views), `data.ts` (phase/tab/prerequisite labels, restructured to
+      carry only stable `id`s with the label text moved into the
+      dictionaries), `Tabs.tsx`, `FirstRunGuide.tsx`, `SecPipelineApp.tsx`
+      ("Guided tour", toast titles), and `mappers.ts` (the static labels
+      mixed into `UIFinding` — "FORM"/"INPUT"/"ERROR LLM", not the AI content
+      alongside them). `tour.ts`'s `TOUR_STEPS` constant became
+      `buildTourSteps(t)` so the guided tour renders in whichever language is
+      active; `TourStep`'s own shape (and `buildDriveSteps.ts` plus its 3
+      tests) stayed untouched.
+
+      Two categories of string were deliberately left English-only beyond the
+      AI-content boundary below: backend enum/status values shown verbatim
+      (B8's `result`, B9's `classification`, `severity`, B3's `confidence`) —
+      treated the same as the AI-generated text they classify, not chrome —
+      and the "English"/"Español" labels on the *report-language* picker in
+      the Past Runs download menu, which name the report's own language
+      choice rather than describe UI chrome. `RunSummary.status`
+      (running/completed/error) is different — pipeline lifecycle state, not
+      AI output — and is translated.
+- [X] Do this after the empty-state/first-run guide and Driver.js tour
       above, so new UI text only needs to be externalized once instead of
       twice.
+- [X] **Scope boundary: AI-generated finding text (vulnerability names,
+      evidence, rationale from B3/B5/B8/B9) stays English-only, regardless
+      of the toggle.** Raised as a real design question, not silently
+      assumed, so the decision is recorded here rather than left implicit.
+
+      **Decision (2026-09-02): keep the toggle scoped to UI chrome only.**
+      Weighed one real alternative, not skipped by default:
+
+      - *The alternative considered:* let the user pick an "analysis
+        language" at run-start — a separate control from the
+        always-instant chrome toggle, since it can only take effect the
+        moment a run starts — thread it into B3/B5/B8's prompts so
+        findings come back in that language, and show a clear inline
+        warning next to the Run button ("findings will be generated in
+        &lt;language&gt;") so there's no silent mismatch between what the
+        toggle promises and what a run actually produces. Would also get
+        its own Driver.js tour step.
+      - *Why it's not the default choice:* English is the standard working
+        language of the software/security industry — CWE/CVE entries,
+        OWASP documentation, CVSS descriptions, and the vast majority of
+        the source code, commit messages, and library documentation this
+        pipeline analyzes are already in English. Findings that quote
+        source code verbatim (the `evidence` fields) stay English/code
+        regardless of analysis language, so translating only the prose
+        around them buys partial, inconsistent bilingualism at real
+        engineering cost.
+      - *What it would cost if built anyway:* real backend work across
+        multiple prompts (B3/B5/B8), not the "frontend-only, a few hours"
+        scope the rest of this section has; a second, run-time-only
+        control distinct from the chrome toggle; and an explicit
+        commitment to surfacing the mismatch (a run's findings staying in
+        whatever language was active when it started, not the language
+        you're currently browsing in) rather than hiding it.
+      - *Precedent:* neither OWASP ZAP nor SonarQube — arguably the two
+        most internationalized tools in this space — translate freshly
+        generated finding text; both only translate a closed, pre-written
+        vocabulary (their own rule/alert catalog), which is exactly what
+        `CWE_ES`/`OWASP_ES` already do here. Neither has an LLM writing
+        new prose per scan the way B3/B5/B8/B9 do, so there's no
+        established pattern to follow either way for that specific piece.
+      - *Net:* keep AI-generated finding text English-only, matching both
+        the PDF report's existing precedent and the industry's own default
+        working language. Revisit only if a specific audience need (e.g. a
+        non-English-fluent stakeholder reviewing findings directly, rather
+        than just the UI chrome around them) makes this a real requirement
+        rather than a nice-to-have.
+
+      **Verified 2026-09-03**, live in the browser against real historical
+      run data (#21, no pipeline run triggered, no API cost): toggling ES
+      translated every chrome string (headings, tabs, buttons, empty/error
+      states, section titles with real interpolated counts, the guided tour)
+      while `mattermost-src/...` vulnerability titles, CWE/evidence text,
+      rationale, and the CONFIRMED/POSSIBLE/DISCARDED/HIGH/MEDIUM labels
+      stayed in English throughout — confirms the mapper-level boundary
+      actually holds at runtime, not just by code inspection.
 
 ### Security (before the AWS jury deployment specifically)
 
@@ -354,6 +459,59 @@ pass further down exercises it directly instead of a stand-in.*
         password, so it needs to be a real generated secret set at deploy
         time, never a default or placeholder left in source.
 
+      **Sequencing addendum (2026-09-02): build this after Internationalization,
+      not before.** Two reasons, not just "keep the plan tidy":
+      - *Avoids a retrofit.* The login page is new UI with its own hardcoded
+        copy. Built before the i18n dictionary exists, that copy has to be
+        found and migrated back into it later; built after, it's authored
+        natively against `useLang()` from the start — written once, not
+        written then rewritten.
+      - *The login page needs the browser-language default specifically.*
+        It sits in front of the app shell, so `TopBar.tsx`'s language
+        toggle isn't reachable from it yet — `useLang()` checking
+        `navigator.language` on first load (agreed on 2026-09-02, not yet
+        built) is the *only* way a Spanish-speaking visitor's first screen
+        shows in Spanish at all. Skipping ahead to Security first would
+        ship a login page that can't do this.
+      This matches the doc's own top-of-file execution order (`architecture
+      → business logic → UI → i18n → security`), so it isn't a new
+      constraint — just made explicit here since it came up directly while
+      scoping this item.
+
+      **AWS-compatibility check (2026-09-02), against a real reference
+      implementation reviewed but not merged:** a full FastAPI/TanStack
+      Router version of this design was drafted and reviewed (constant-time
+      password check via `hmac.compare_digest`, signed HMAC-SHA256 session
+      token, `GET /api/session` for the frontend route guard, in-memory
+      rate limiting) — sound on its own terms, but checked against
+      `AWS_HOSTING_TODO.md`'s actual plan (frontend → Cloudflare Pages,
+      backend → a separate AWS EC2 host) turned up real, not hypothetical,
+      gaps to fix before wiring it in for real:
+      - *Cross-domain cookie, the one that actually breaks it.* Cloudflare
+        Pages and the EC2 host are different registrable domains, not
+        subdomains of one domain (unlike `localhost:5173` ↔
+        `localhost:8000` today, which are "same site" despite the
+        different ports). A `SameSite=Lax` cookie — what both drafts used
+        — is silently **not sent** cross-domain: login would return 200,
+        but the cookie would never actually arrive on the next request.
+        Needs `SameSite=None` + `Secure=True` in the deployed environment
+        specifically (HTTPS-only, and both attributes required together),
+        while staying `Lax` for local dev — an environment-conditional
+        setting, not a hardcoded one.
+      - *The reverse proxy breaks IP-based rate limiting unless configured
+        for it.* The AWS plan puts nginx in front of `api.py`. Without
+        forwarding + trusting the real client IP, the login rate limiter's
+        `request.client.host` sees nginx's address for every visitor, not
+        each visitor's own — collapsing the whole rate limit into one
+        shared bucket. Needs a trusted `X-Forwarded-For` read once nginx
+        (or Caddy, if that swap happens) is actually in front of it.
+      - *Same open secrets-handling gap as Architecture's Secrets Manager
+        item, not a new one.* `SIFTPIPE_ADMIN_PASSWORD` and the session
+        secret land in the EC2 box's hand-edited `.env` under the current
+        plan, same as `ANTHROPIC_API_KEY` today — consistent with that
+        item staying deferred, just worth knowing these two inherit it too
+        rather than being a separately-decided exception.
+
 ### The highest-leverage item
 
 *Code and feature work above should be stable before this — containerizing
@@ -400,6 +558,9 @@ otherwise you're validating a deployment path you're about to replace.*
 
 *Only once the containerized build has passed the QA pass above — this is
 real time and (small) money, so validate locally first.*
+
+- [ ] **Secrets via AWS Secrets Manager/SSM** instead of a hand-edited
+      `.env` on the box.
 
 - [ ] `playwright install --with-deps chromium` on the server.
 - [ ] `git submodule update --init --depth 1` after cloning on the server.
