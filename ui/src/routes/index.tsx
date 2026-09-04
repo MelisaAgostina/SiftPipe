@@ -50,7 +50,7 @@ function Index() {
         <img
           src={logo}
           alt="SiftPipe logo"
-          className="mb-0 mt-16 block w-lg h-auto object-contain select-none invert"
+          className="mb-0 mt-8 block w-80 h-auto object-contain select-none invert"
           draggable={false}
         />
 
@@ -65,7 +65,7 @@ function Index() {
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
           <Link
             to={authenticated ? "/app" : "/login"}
-            className="font-button group inline-flex items-center gap-3 rounded-full bg-primary px-10 py-6 text-lg text-primary-foreground transition-colors hover:bg-primary/90 [-webkit-text-stroke:0.6px_currentColor]"
+            className="font-button group inline-flex items-center gap-3 rounded-full bg-primary px-8 py-4 text-base text-primary-foreground transition-colors hover:bg-primary/90 [-webkit-text-stroke:0.6px_currentColor]"
           >
             {authenticated ? t.landing.openPipeline : t.landing.logIn}
             <span aria-hidden className="transition-transform group-hover:translate-x-0.5"></span>
@@ -73,7 +73,7 @@ function Index() {
         </div>
       </section>
 
-      <footer className=" italic relative z-10 mt-16 mb-16 text-xs text-muted-foreground">
+      <footer className=" italic relative z-10 mt-8 mb-8 text-xs text-muted-foreground">
         {t.landing.footerTagline}
       </footer>
     </main>

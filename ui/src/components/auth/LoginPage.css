@@ -78,6 +78,29 @@
   opacity: 0.6;
 }
 
+/* Overrides the browser's own autofill styling (a yellow background in
+   Firefox, a similar tint in Chrome) so a recognized/saved password field
+   still matches the site's own dark theme instead of flashing the
+   browser's default. The long transition-delay is the standard trick for
+   -webkit-autofill specifically: Chrome/Edge ignore background-color on
+   autofilled inputs outright, but do respect an inset box-shadow, and
+   defer applying its own yellow tint until this transition would complete
+   — 5000s never does, so it never gets the chance to. Firefox (:autofill,
+   :-moz-autofill) does respect background-color/color directly. */
+.pp-input:-webkit-autofill,
+.pp-input:-webkit-autofill:hover,
+.pp-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #0d1310 inset;
+  -webkit-text-fill-color: #eef2ef;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+.pp-input:autofill,
+.pp-input:-moz-autofill {
+  background-color: #0d1310;
+  color: #eef2ef;
+}
+
 .pp-reveal {
   position: absolute;
   right: 16px;

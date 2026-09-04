@@ -565,6 +565,43 @@ pass further down exercises it directly instead of a stand-in.*
       `Depends()` (a custom authenticated file-serving route, most likely)
       — flagged for a decision rather than silently left as a surprise.
 
+- [X] **CSRF protection, and the auth-flow bugs live-testing it turned up
+      (2026-09-04).** The `X-Requested-With` header check from the prior
+      session had unit tests but no real-browser confirmation; tested
+      directly against the running app this round — request carrying the
+      header returns `200`, request without it returns `403`. Confirmed
+      correct, not just test-green.
+      - *Real, separate bug found and fixed: post-login redirect was
+        completely broken.* This UI is TanStack Start, SSR by default.
+        `LoginPage.tsx` redirected via `window.location.href` — a hard
+        navigation — which meant `/app`'s `beforeLoad` session check ran on
+        the *server* on the next page load, and Node's `fetch()` there has
+        no access to the browser's cookie jar. Every login was succeeding
+        and then silently bouncing back to `/login` anyway. Fixed by
+        switching to the router's client-side `navigate()` instead:
+        `LoginPage.tsx` now takes an `onAuthenticated` callback, and
+        `login.tsx` supplies it. TDD'd, then live-verified in the browser.
+      - *Landing page now reflects auth state* instead of relying on
+        `/app`'s guard to silently redirect. New `useSessionAuthenticated()`
+        hook: "Open the pipeline" goes to `/app` when already logged in,
+        "Log in" goes to `/login` otherwise.
+      - *Logout implemented.* The backend endpoint already existed
+        (`POST /api/logout`, from the session-gate work above) but nothing
+        in the UI called it. Added an icon button in `TopBar.tsx`, a
+        `useLogoutHandler()` hook, and a confirmation toast — required
+        moving `<Toaster/>` to the root layout so it survives the
+        navigation away from the app shell.
+      - *Mid-session-expiry page* built from a reviewed mockup (picked
+        "Plate 403" over two other variants). Wired to fire only when a
+        session dies *mid-use* — a visitor who was never logged in still
+        gets the plain silent redirect, not this page. Live testing caught
+        a real race (a stale in-flight request could resolve after
+        re-login and falsely re-trigger the expiry page) — fixed and
+        stress-tested.
+      - Repo cleanup alongside this work: removed `.playwright-mcp/`,
+        `.ruff_cache/`, and stray screenshots; added `.playwright-mcp/` to
+        `.gitignore`.
+
 ### The highest-leverage item
 
 *Code and feature work above should be stable before this — containerizing
