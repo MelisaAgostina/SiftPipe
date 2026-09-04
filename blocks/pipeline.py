@@ -14,12 +14,22 @@ same definitions from here too, on equal footing with api.py, instead of
 being the thing api.py reaches into.
 """
 
-# ruff: noqa: E402 - load_dotenv() must run before importing blocks/* modules
-# that read env vars at import time (PLAYWRIGHT_HEADLESS, MM_URL, NAVIQ_URL,
-# SIFTPIPE_HISTORY_DB), so the imports below can't all sit above it.
+# ruff: noqa: E402 - load_dotenv() (and load_aws_secrets() right after it)
+# must run before importing blocks/* modules that read env vars at import
+# time (PLAYWRIGHT_HEADLESS, MM_URL, NAVIQ_URL, SIFTPIPE_HISTORY_DB), so the
+# imports below can't all sit above them.
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Backfills whatever's still missing from an AWS SSM Parameter Store path
+# (a no-op locally - see blocks/aws_secrets.py) - has to run here, not any
+# later, because this same module builds its Anthropic client below at
+# import time; anything that filled in os.environ after that line would
+# already be too late.
+from blocks.aws_secrets import load_aws_secrets
+
+load_aws_secrets()
 
 import json
 import logging

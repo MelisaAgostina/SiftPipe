@@ -2,12 +2,12 @@ import json
 import os
 import threading
 from pathlib import Path
+from typing import Optional
 
 import requests
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -190,20 +190,62 @@ RESULTS_DIR = Path("results")
 EVIDENCE_DIR = Path("evidence")
 
 # ── Static evidence files (B7 screenshots + per-payload videos) ───────────────
-# StaticFiles requires the mounted directory to exist at import time — create it
-# up front instead of waiting for a pipeline run. Subdirectories are created on
-# demand by the blocks that write into them and don't need to exist yet for the
-# mount itself to work.
-# Two mounts, not one: current results/*.json still lives under RESULTS_DIR,
-# but B7's screenshots/videos now live under EVIDENCE_DIR (blocks/targets.py's
-# evidence_dir()), deliberately outside results/ so a Fresh Reset's wipe of
-# results/ doesn't also destroy every past run's evidence — see evidence_dir()'s
-# docstring. /media stays mounted on RESULTS_DIR for backward compatibility with
-# screenshot_path/video_path values already stored in older run_history rows.
+# Create both directories up front instead of waiting for a pipeline run —
+# /media and /evidence below need them to exist by the time a request can
+# arrive. Subdirectories are created on demand by the blocks that write into
+# them and don't need to exist yet.
+# Two directories, not one: current results/*.json still lives under
+# RESULTS_DIR, but B7's screenshots/videos now live under EVIDENCE_DIR
+# (blocks/targets.py's evidence_dir()), deliberately outside results/ so a
+# Fresh Reset's wipe of results/ doesn't also destroy every past run's
+# evidence — see evidence_dir()'s docstring. /media stays scoped to
+# RESULTS_DIR for backward compatibility with screenshot_path/video_path
+# values already stored in older run_history rows.
 RESULTS_DIR.mkdir(exist_ok=True)
 EVIDENCE_DIR.mkdir(exist_ok=True)
-app.mount("/media", StaticFiles(directory=str(RESULTS_DIR)), name="media")
-app.mount("/evidence", StaticFiles(directory=str(EVIDENCE_DIR)), name="evidence")
+
+
+def _safe_file_path(base_dir: Path, file_path: str) -> Optional[Path]:
+    """
+    Resolves `file_path` against `base_dir` and returns the real file's
+    absolute path, or None if it doesn't exist, isn't a file, or (via a
+    "../" segment) resolves outside base_dir entirely. Needed because
+    StaticFiles can't take a Depends() — see the routes below — so this is
+    hand-rolled instead of getting path traversal protection for free the
+    way StaticFiles itself already had it.
+    """
+    candidate = (base_dir / file_path).resolve()
+    if not candidate.is_relative_to(base_dir.resolve()):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+# Replaces the old app.mount("/media", StaticFiles(...)) /
+# app.mount("/evidence", StaticFiles(...)) — a real bug: FastAPI dependencies
+# attach to router *routes*, never to app.mount(), so both mounts served
+# every screenshot/video/result file with zero login check regardless of
+# require_session below. Declared on `app` (not `protected`) and gated by
+# require_session alone, not require_csrf_header too: every URL these serve
+# gets rendered as a plain <img src>/<video src> (see ui/src/lib/api.ts's
+# mediaUrl()), which can't attach a custom header — and a read-only GET that
+# only displays a screenshot isn't the class of request CSRF protection
+# exists for in the first place (no state change).
+@app.get("/media/{file_path:path}")
+def get_media_file(file_path: str, _=Depends(require_session)):
+    resolved = _safe_file_path(RESULTS_DIR, file_path)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(resolved)
+
+
+@app.get("/evidence/{file_path:path}")
+def get_evidence_file(file_path: str, _=Depends(require_session)):
+    resolved = _safe_file_path(EVIDENCE_DIR, file_path)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(resolved)
 
 
 def log(message: str):

@@ -248,21 +248,44 @@ the priority of the first item below.*
       driver.js highlights it (TDD'd, 3 unit tests). Live-verified in the
       browser end to end, including the actual tab switch to "Review (B6)"
       rendering real payload-review content behind the tour popover.
-- [~] **Add frontend test coverage.** Framework now installed and wired —
+- [X] **Add frontend test coverage.** Framework installed and wired —
       `vitest` + `@testing-library/react` (+ `jest-dom`, `user-event`,
       `jsdom`), a standalone `vitest.config.ts` (kept separate from the
       app's `vite.config.ts`, which is wrapped by
       `@lovable.dev/vite-tanstack-config`'s TanStack Start/Cloudflare
       plugins — irrelevant to component tests and safer not to fight), and
-      `npm test` running clean. 11 tests exist today, but all were written
-      as TDD for *new* logic added elsewhere in this pass (the error-toast
-      hook, the tour's tab-switching, `FirstRunGuide`'s branch) — writing
-      *backfill* coverage for the existing content-heavy views
-      (`Sidebar`, `PastRunsView`, etc.) is deliberately still deferred until
-      after Internationalization, per this item's own note: those tests
-      would assert on hardcoded English strings that i18n is about to move
-      into a dictionary, so writing them now means rewriting them almost
-      immediately after.
+      `npm test` running clean. The first 11 tests were TDD for *new* logic
+      added elsewhere in an earlier pass (the error-toast hook, the tour's
+      tab-switching, `FirstRunGuide`'s branch); *backfill* coverage for the
+      existing content-heavy views was deliberately deferred until after
+      Internationalization landed, per this item's own earlier note — those
+      tests would have asserted on hardcoded English strings i18n was about
+      to move into a dictionary.
+
+      **Backfill done 2026-09-04**, now that i18n is in. Triaged all 15
+      previously-untested `secpipeline/` components by real complexity
+      first: 3 pure-presentational leaves with no branching logic
+      (`Callout`, `Section`, `Tag`) skipped as not worth it — a test would
+      just re-assert the JSX exists — the other 11 covered, highest-value
+      first (`Sidebar`, `PastRunsView` — the two this item's own note
+      named — then `TopBar`, `PayloadReviewView`, `QueryState`,
+      `CorrelationView`, `PipelineView`, `FindingRow`, `Tabs`, `LogsView`,
+      `Unauthorized`, `SecPipelineApp` last since it's mostly hook-wiring,
+      more integration- than unit-shaped). 96 new tests (122 total across
+      the suite), all passing, zero new TypeScript or lint errors. Real
+      gaps caught along the way, not
+      just characterizing existing behavior as correct by default:
+      `jsdom` has no `Element.scrollTo` (added a stub to
+      `src/test/setup.ts`, same pattern as the existing `ResizeObserver`
+      one, so any future scrolling component gets it for free); several
+      tests initially double-matched text/buttons shared between a
+      highlight box and the full findings list below it, or between
+      "Select all"/"Deselect all", catching real query-ambiguity rather
+      than a code bug. `SecPipelineApp` stubs every child view (each
+      already covered by its own file) so it only exercises its own
+      orchestration — the session-expired gate, the once-per-wait-cycle
+      auto-switch to the review tab, error-toast wiring — not
+      re-verifying children's internals a second time.
 
 ### Internationalization (en/es toggle)
 
@@ -554,16 +577,24 @@ pass further down exercises it directly instead of a stand-in.*
       before the app shell is even reachable — the exact scenario this
       sequencing decision was made for).
 
-      **Known gap, not yet decided:** `/media` and `/evidence`
-      (`app.mount(...)` StaticFiles, serving B7 screenshots/videos) aren't
-      covered by `require_session` — FastAPI dependencies attach to router
-      *routes*, not to `app.mount()`. A URL only becomes visible by being
-      referenced somewhere behind the login gate, so this isn't wide open,
-      but it means someone with a direct evidence URL (shared out of band,
-      or brute-forced) could view it without logging in. Not fixed here
-      since gating a static mount needs a different mechanism than
-      `Depends()` (a custom authenticated file-serving route, most likely)
-      — flagged for a decision rather than silently left as a surprise.
+      **Fixed 2026-09-04.** `/media` and `/evidence` (`app.mount(...)`
+      StaticFiles, serving B7/B4 screenshots/videos) weren't covered by
+      `require_session` — FastAPI dependencies attach to router *routes*,
+      not to `app.mount()`, so both mounts served every file with zero
+      login check regardless. Replaced both mounts in `api.py` with
+      explicit `GET /media/{file_path:path}` and
+      `GET /evidence/{file_path:path}` routes, gated by `require_session`
+      alone (not the full `protected` router's CSRF check — these URLs
+      render as plain `<img src>`/`<video src>` in the UI, which can't
+      attach a custom header, and a read-only GET isn't the class of
+      request CSRF protection exists for). A new `_safe_file_path()` helper
+      resolves the requested path against the base directory and rejects
+      anything that escapes it via `../`. TDD'd
+      (`tests/test_media_routes.py`, 9 tests) and live-verified against the
+      real running server: unauthenticated requests — including a
+      traversal attempt — get 401 before the file logic even runs; a
+      logged-in session gets the real file; an authenticated traversal
+      attempt still gets 404, not the underlying file.
 
 - [X] **CSRF protection, and the auth-flow bugs live-testing it turned up
       (2026-09-04).** The `X-Requested-With` header check from the prior
@@ -628,6 +659,56 @@ mid-feature-churn just means rebuilding the image repeatedly for no reason.*
       provisioning is one launch instead of a manual checklist —
       reproducibility matters more here since the plan is spin-up → demo →
       tear down, not maintain forever.
+- [ ] **Deploy script: connect to the server, pull the latest code, and
+      restart the service.** Once the box exists (Docker above), updating it
+      needs some repeatable way to get new code from git onto the running
+      server and restart the container(s) — not a new problem, just one
+      that doesn't have an answer yet.
+
+      **Decision (2026-09-04): a manually-triggered GitHub Actions workflow
+      (`workflow_dispatch`), not a plain local script and not auto-deploy on
+      every push — settled, not conditional.** Weighed three shapes, not
+      skipped by default:
+
+      - *Plain local script* (SSH in, `git pull`, rebuild, restart), run by
+        hand from this machine: the simplest option, and the smallest
+        possible secret-exposure surface — nothing new gets stored in
+        GitHub at all. Rejected mainly for one property it lacks: it only
+        runs from whichever machine already has the script and SSH access,
+        which matters if the live demo ever needs redeploying from a
+        borrowed laptop right before presenting, and it leaves no deploy
+        record beyond personal shell/SSH history.
+      - *Auto-deploy on every push to main/dev-beta:* the opposite failure
+        mode. A careless push — even a typo commit — would redeploy the
+        live box immediately, with no gate between "I pushed" and "the demo
+        server just changed." That's the worst possible timing risk for a
+        box whose entire purpose is staying stable through one specific
+        defense. It also needs the exact same AWS/SSH credentials sitting
+        in GitHub Secrets as the manually-triggered option below, so it
+        buys real risk without buying back any of the local script's
+        safety in return.
+      - *What was chosen instead:* the same deploy steps an auto-deploying
+        pipeline would run (pull, rebuild, restart), written once as
+        versioned YAML — but fired only when explicitly requested from
+        GitHub's Actions tab (`workflow_dispatch`), never on a push. This
+        keeps the local script's core property — nothing changes on the
+        live box unless a human deliberately decides it should, at a
+        moment they chose — while adding a timestamped, commit-linked run
+        history for every actual deploy, and the ability to trigger one
+        from any machine with GitHub access, not just whichever laptop
+        holds the script.
+      - *What it costs regardless of which automated option gets picked:*
+        AWS access (or an SSH private key) has to live in a GitHub Secret
+        either way once GitHub is the thing doing the deploying — the
+        manual-trigger design doesn't remove that exposure, only the
+        "fires without anyone asking" risk sitting on top of it. Worth
+        naming directly rather than treating the chosen option as free
+        compared to the plain local script.
+      - *Net:* matches this project's actual deploy volume — a handful of
+        updates total before the box is torn down, not a continuously
+        iterated service — while preserving the one property that actually
+        matters for a defense-day demo: nothing about the live server
+        changes unless someone chooses that exact moment for it to.
 
 ### Testing / QA
 

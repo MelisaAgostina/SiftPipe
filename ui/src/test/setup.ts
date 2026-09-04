@@ -9,3 +9,8 @@ class ResizeObserverStub {
   disconnect() {}
 }
 globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
+
+// jsdom doesn't implement Element.scrollTo either - LogsView.tsx calls it
+// to auto-scroll to the newest log line, and any future component that
+// scrolls its own container will hit the same gap.
+Element.prototype.scrollTo ??= function scrollTo() {};
