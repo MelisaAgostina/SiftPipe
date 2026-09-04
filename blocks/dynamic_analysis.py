@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 from blocks.mattermost_auth import find_working_selector
-from blocks.targets import MATTERMOST
+from blocks.targets import MATTERMOST, discovery_evidence_dir
 from blocks.crawler import GENERIC_DENYLIST, DEFAULT_MAX_PAGES, select_action_links, select_links_to_visit
 
 load_dotenv()
@@ -118,7 +118,7 @@ def _goto_with_retry(page, url, attempts=2, **kwargs):
     raise last_exc
 
 
-def discover_attack_surface(target=None, base_url=None, login_id=None, password=None, max_pages=None):
+def discover_attack_surface(target=None, base_url=None, login_id=None, password=None, max_pages=None, run_id=None):
     """
     Logs into `target` (a blocks.targets.TargetProfile; defaults to
     Mattermost for zero behavior change on existing callers) and crawls its
@@ -126,12 +126,22 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
     post-login landing page instead of a hardcoded route list — see
     MULTI_TARGET_PLAN.md Phase 2. `extract_forms()` itself needed no changes,
     it was already generic DOM querying.
+
+    `run_id` (blocks/run_history.py's row id; defaults to "adhoc" for
+    direct/test callers that don't track run history, matching B7's
+    run_payloads()) scopes the discovery video and login/team-setup error
+    screenshots under discovery_evidence_dir() instead of the old fixed
+    results/videos/{target}/... path — real bug: without it, every new run
+    of the same target overwrote the previous run's capture, and Fresh
+    Reset's wipe of results/ destroyed them outright.
     """
     target = target or MATTERMOST
     base_url = base_url or target.base_url
     login_id = login_id or target.username
     password = password or target.password
     max_pages = max_pages or DEFAULT_MAX_PAGES
+    run_id = run_id if run_id is not None else "adhoc"
+    base = discovery_evidence_dir(target.name, run_id)
 
     attack_surface = {
         "forms": [],
@@ -143,11 +153,11 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
     login_ok = False
     denylist = GENERIC_DENYLIST + target.extra_denylist
 
-    os.makedirs(f"results/videos/{target.name}", exist_ok=True)
+    os.makedirs(f"{base}/videos", exist_ok=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
-        context = browser.new_context(record_video_dir=f"results/videos/{target.name}/")
+        context = browser.new_context(record_video_dir=f"{base}/videos/")
         # Mattermost redirects every first-ever page load to /landing (the
         # "View in Browser" vs. "View in Desktop App" interstitial) unless
         # localStorage already has this flag — set before any Mattermost JS
@@ -199,19 +209,19 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                         pass
 
                 if not login_clicked:
-                    os.makedirs("results", exist_ok=True)
+                    os.makedirs(base, exist_ok=True)
                     try:
-                        page.screenshot(path="results/login_error.png")
+                        page.screenshot(path=f"{base}/login_error.png")
                     except Exception:
                         pass
                     try:
-                        with open("results/login_page.html", "w", encoding="utf-8") as hh:
+                        with open(f"{base}/login_page.html", "w", encoding="utf-8") as hh:
                             hh.write(page.content())
                     except Exception:
                         pass
                     raise Exception(
-                        "Login button not found or clickable — saved results/login_error.png "
-                        "and results/login_page.html for inspection"
+                        f"Login button not found or clickable — saved {base}/login_error.png "
+                        f"and {base}/login_page.html for inspection"
                     )
 
                 # target.authenticated_selectors is the generic replacement for
@@ -291,9 +301,9 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                         print(f"[B4] {msg}")
                         errors.append({"stage": "team_setup", "message": msg})
                         try:
-                            os.makedirs("results", exist_ok=True)
-                            page.screenshot(path="results/create_team_error.png")
-                            with open("results/create_team_page.html", "w", encoding="utf-8") as hh:
+                            os.makedirs(base, exist_ok=True)
+                            page.screenshot(path=f"{base}/create_team_error.png")
+                            with open(f"{base}/create_team_page.html", "w", encoding="utf-8") as hh:
                                 hh.write(page.content())
                         except Exception:
                             pass
@@ -366,7 +376,7 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
             except Exception:
                 video_path = None
             if video_path and os.path.exists(video_path):
-                final_path = f"results/videos/{target.name}/b4_discovery.webm"
+                final_path = f"{base}/b4_discovery.webm"
                 try:
                     if os.path.exists(final_path):
                         os.remove(final_path)

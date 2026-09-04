@@ -134,11 +134,11 @@ def run_static_analysis(pipeline_results, target_profile=None):
     return _static_scanner_run_static_analysis(pipeline_results, ask_llm, target_profile)
 
 
-def run_dynamic_discovery(pipeline_results, target=None):
+def run_dynamic_discovery(pipeline_results, target=None, run_id=None):
     target = target or MATTERMOST
     logger.info("Executing B4: Dynamic Discovery...")
 
-    attack_surface = discover_attack_surface(target=target)
+    attack_surface = discover_attack_surface(target=target, run_id=run_id)
     summary = {
         "status": attack_surface.get("status", "complete"),
         "forms_found": len(attack_surface.get("forms", [])),

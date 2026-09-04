@@ -221,3 +221,17 @@ def evidence_dir(target_name: str, run_id) -> str:
     immune to this, only the binary evidence files weren't.
     """
     return f"evidence/{target_name}/{run_id}"
+
+
+def discovery_evidence_dir(target_name: str, run_id) -> str:
+    """
+    Per-run, per-target subdirectory of evidence_dir() for B4's discovery
+    video and login/team-setup error screenshots, e.g.
+    discovery_evidence_dir("naviq", 23) -> "evidence/naviq/23/discovery".
+    Real bug found live: discover_attack_surface() (blocks/dynamic_analysis.py)
+    wrote these to a fixed results/videos/{target}/... path with no run_id —
+    unlike B7's evidence, every new run of the same target overwrote the
+    previous run's capture, and results/ being wiped on every Fresh Reset
+    (blocks/environment.py's clear_results_folder()) destroyed them outright.
+    """
+    return f"{evidence_dir(target_name, run_id)}/discovery"

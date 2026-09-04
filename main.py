@@ -52,7 +52,7 @@ def main():
     run_id = run_history.start_run(mode=args.mode, target=target.name)
     try:
         run_static_analysis(pipeline_results, target)
-        run_dynamic_discovery(pipeline_results, target)
+        run_dynamic_discovery(pipeline_results, target, run_id)
         generate_payloads(client=client, target_profile=target)
         run_human_review(pipeline_results, target)
         execute_attacks(target, run_id)

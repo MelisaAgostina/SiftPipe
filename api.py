@@ -277,7 +277,7 @@ def run_pipeline_until_b6():
 
             pipeline_state["current_block"] = "B4"
             log(">> B4 - Dynamic discovery started")
-            run_dynamic_discovery(pipeline_results, ACTIVE_TARGET)
+            run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"])
             log("OK B4 completed")
 
             pipeline_state["current_block"] = "B5"
