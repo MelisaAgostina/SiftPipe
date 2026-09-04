@@ -1,4 +1,5 @@
-import { Database, Loader2 } from "lucide-react";
+import { Database, Loader2, LogOut } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import logo from "@/assets/siftpipe-logo.png";
 import {
   useActiveTarget,
@@ -8,6 +9,7 @@ import {
   useSetTarget,
 } from "@/lib/queries";
 import { useLang, type Lang } from "@/hooks/use-lang";
+import { useLogoutHandler } from "@/hooks/use-logout-handler";
 
 type EnvDotState = "inactive" | "preparing" | "ready" | "error";
 
@@ -41,6 +43,23 @@ function LangToggle() {
         </button>
       ))}
     </div>
+  );
+}
+
+function LogoutButton() {
+  const { t } = useLang();
+  const navigate = useNavigate();
+  const handleLogout = useLogoutHandler(() => navigate({ to: "/" }));
+
+  return (
+    <button
+      onClick={handleLogout}
+      aria-label={t.topBar.logoutAria}
+      title={t.topBar.logoutAria}
+      className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <LogOut className="h-4 w-4" />
+    </button>
   );
 }
 
@@ -135,6 +154,7 @@ export function TopBar() {
           {t.topBar.dotLabel[dotState]}
         </div>
         <LangToggle />
+        <LogoutButton />
       </div>
     </header>
   );

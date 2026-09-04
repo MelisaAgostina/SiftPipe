@@ -19,11 +19,6 @@ import type {
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
-// Only meaningful once the backend is deployed with SIFTPIPE_API_KEY set — see
-// api.py's require_api_key(). Unset in local dev, where the backend accepts
-// requests with no key at all.
-const API_KEY = import.meta.env.VITE_API_KEY;
-
 /**
  * Turns a backend-relative path into a URL servable by one of api.py's two
  * static mounts. Evidence written by newer runs looks like
@@ -66,9 +61,17 @@ async function parseDetail(res: Response): Promise<string | undefined> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (API_KEY) headers.set("X-API-Key", API_KEY);
+  // Required by api.py's require_csrf_header on every protected route: a
+  // plain cross-site <form> POST (the classic CSRF vector, since the
+  // session cookie now rides along cross-site once SameSite=None is in
+  // play for the deployed cross-domain case) can't set a custom header,
+  // so this alone rules it out — with no new server-side state needed.
+  headers.set("X-Requested-With", "XMLHttpRequest");
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  // credentials: "include" so the session cookie set by POST /api/login
+  // rides along on every later request — without it, the browser sends
+  // requests as if logged out even right after a successful login.
+  const res = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: "include" });
   if (!res.ok) {
     const detail = await parseDetail(res);
     throw new ApiError(
@@ -81,6 +84,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const getHealth = () => request<{ status: string }>("/api/health");
+
+// ── Auth ─────────────────────────────────────────────────────────────────
+export const login = (password: string) =>
+  request<{ authenticated: boolean }>("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+
+export const logout = () => request<{ authenticated: boolean }>("/api/logout", { method: "POST" });
+
+/** Never throws — a network error or a non-2xx response both just mean
+ * "treat this as not authenticated," which is what every caller (the route
+ * guard, the login page) wants regardless of why the check failed. */
+export async function checkSession(): Promise<boolean> {
+  try {
+    const data = await request<{ authenticated: boolean }>("/api/session");
+    return data.authenticated === true;
+  } catch {
+    return false;
+  }
+}
+
 export const getStatus = () => request<PipelineStatus>("/api/status");
 export const runPipeline = () => request<RunResponse>("/api/run", { method: "POST" });
 export const getLogs = () => request<LogsResponse>("/api/logs");
@@ -117,10 +143,10 @@ export const validatePayloads = (body: ValidateRequest) =>
  * own fetch) since this response is a PDF blob, not JSON.
  */
 export async function downloadReport(runId: number, lang: "en" | "es" = "en"): Promise<void> {
-  const headers = new Headers();
-  if (API_KEY) headers.set("X-API-Key", API_KEY);
-
-  const res = await fetch(`${API_BASE}/api/runs/${runId}/report?lang=${lang}`, { headers });
+  const res = await fetch(`${API_BASE}/api/runs/${runId}/report?lang=${lang}`, {
+    credentials: "include",
+    headers: { "X-Requested-With": "XMLHttpRequest" },
+  });
   if (!res.ok) {
     const detail = await parseDetail(res);
     throw new ApiError(`GET /api/runs/${runId}/report failed (${res.status})`, res.status, detail);
@@ -149,7 +175,10 @@ export async function downloadReport(runId: number, lang: "en" | "es" = "en"): P
  * fresh/partial run, not an error — so it resolves to null instead of throwing.
  */
 export async function getBlockResult<T>(blockName: string): Promise<T | null> {
-  const res = await fetch(`${API_BASE}/api/results/${blockName}`);
+  const res = await fetch(`${API_BASE}/api/results/${blockName}`, {
+    credentials: "include",
+    headers: { "X-Requested-With": "XMLHttpRequest" },
+  });
   if (res.status === 404) return null;
   if (!res.ok) {
     const detail = await parseDetail(res);

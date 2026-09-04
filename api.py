@@ -4,13 +4,14 @@ import threading
 from pathlib import Path
 
 import requests
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
-from blocks import report, run_history
+from blocks import auth, report, run_history
 from blocks.analyze_results import analyze_results
 from blocks.correlate_results import correlate_results
 from blocks.environment import MM_PING_URL, dispatch_fresh_reset, ensure_naviq_server_running, stop_naviq_server
@@ -45,6 +46,12 @@ app.add_middleware(
     ],
     allow_methods=["*"],
     allow_headers=["*"],
+    # Required for the session cookie (below) to survive a cross-origin
+    # request at all — without this, the browser silently refuses to send
+    # or receive it, and login would return 200 while nothing actually
+    # persists. allow_origins can't be "*" together with this (it already
+    # isn't, see the explicit list above).
+    allow_credentials=True,
     # Cross-origin fetch() hides all response headers except a small
     # CORS-safelisted set by default — Content-Disposition isn't in it, so
     # without this the frontend can't read the filename get_run_report()
@@ -52,13 +59,30 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
+# ── Session cookie (login gate) ─────────────────────────────────────────────
+# same_site="lax" works for today's same-site-different-port local dev
+# (localhost:5173 <-> localhost:8000) but silently stops the cookie being
+# sent at all once frontend/backend split across genuinely different
+# registrable domains (Cloudflare Pages <-> an EC2 host) — same signal
+# FRONTEND_ORIGIN already uses elsewhere in this file for "are we deployed",
+# reused here rather than inventing a second one. Secure=True requires
+# HTTPS, which is only true once actually deployed — hence also conditional.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SIFTPIPE_SESSION_SECRET", ""),
+    same_site="none" if _extra_origins else "lax",
+    https_only=bool(_extra_origins),
+)
+
 
 @app.on_event("startup")
 def _on_startup():
-    """Fail fast on a missing required env var (e.g. ANTHROPIC_API_KEY) at
-    server boot, before any request - including /api/run - can be accepted,
-    instead of only surfacing it as a crash on the first LLM call mid-pipeline."""
+    """Fail fast on a missing required env var (e.g. ANTHROPIC_API_KEY,
+    SIFTPIPE_ADMIN_PASSWORD) at server boot, before any request - including
+    /api/run or /api/login - can be accepted, instead of only surfacing it
+    as a crash on the first LLM call or login attempt."""
     validate_required_env_vars()
+    auth.validate_required_env_vars()
 
 
 @app.on_event("shutdown")
@@ -67,14 +91,54 @@ def _on_shutdown():
     (ensure_naviq_server_running) orphaned after a clean API shutdown."""
     stop_naviq_server()
 
-# ── Auth on destructive endpoints ───────────────────────────────────────────
-# Unset (local dev) means no check at all — every request is accepted, same as
-# before this existed. Once deployed, set SIFTPIPE_API_KEY and the matching
-# VITE_API_KEY on the frontend build; this isn't meant to stop a determined
-# attacker (a key baked into a public frontend bundle is readable in devtools),
-# just to stop a stray bot from hitting an open reset endpoint on an unlisted
-# demo link nobody's advertising.
-SIFTPIPE_API_KEY = os.getenv("SIFTPIPE_API_KEY")
+# ── Auth: session-cookie login gate ─────────────────────────────────────────
+# Replaces the old require_api_key()/SIFTPIPE_API_KEY stopgap (a key baked
+# into the public frontend bundle, readable in devtools - never real access
+# control). Every route gated by construction: `protected` below carries
+# require_session as a router-level dependency, so a route only avoids the
+# gate by being declared directly on `app` instead (health/login/session/
+# logout, the four that must stay reachable without already being logged
+# in).
+def _client_ip(request: Request) -> str:
+    """request.client.host is the direct TCP peer - correct for local dev,
+    but once nginx sits in front of this in production every visitor would
+    otherwise share nginx's own address, collapsing the rate limiter below
+    into one shared bucket instead of one per real visitor. FRONTEND_ORIGIN
+    being set is the same "we're actually deployed" signal used for the
+    cookie's SameSite/Secure settings above - trust X-Forwarded-For only
+    then, since only a trusted proxy should be setting it."""
+    if _extra_origins:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def require_session(request: Request) -> None:
+    if not request.session.get("authenticated"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+def require_csrf_header(request: Request) -> None:
+    """CSRF defense, needed specifically because of the SameSite/Secure
+    setup above: same_site="none" (the deployed, cross-domain case)
+    deliberately lets the session cookie ride along on cross-site requests
+    too - otherwise cross-domain login wouldn't work at all - but that's
+    also exactly what a CSRF attack depends on. A plain HTML <form
+    method="post"> on an attacker's page (or an <img>/<script> for a GET)
+    reaches this API with the victim's real session cookie attached, no
+    JavaScript required, completely outside CORS's reach (CORS only
+    governs script-initiated fetch/XHR, never a native form submission or
+    resource load). Requiring a custom header closes it: a plain form
+    can't set one, and a script that does triggers a CORS preflight the
+    origin allowlist above would reject for anywhere not on it. Checked
+    after require_session (see `protected`'s dependency order) so a
+    request missing both reports the more useful 401, not this 403."""
+    if request.headers.get("x-requested-with") != "XMLHttpRequest":
+        raise HTTPException(status_code=403, detail="Missing required CSRF header")
+
+
+protected = APIRouter(dependencies=[Depends(require_session), Depends(require_csrf_header)])
 
 # ── Active target profile (MULTI_TARGET_PLAN.md Phase 1/5) ─────────────────
 # SIFTPIPE_TARGET only picks the *initial* value now — resolved eagerly so a
@@ -85,11 +149,6 @@ SIFTPIPE_API_KEY = os.getenv("SIFTPIPE_API_KEY")
 # time, not at def time, so a reassignment is picked up by all of them
 # without needing a mutable wrapper object.
 ACTIVE_TARGET = get_target(os.getenv("SIFTPIPE_TARGET", "mattermost"))
-
-
-def require_api_key(x_api_key: str | None = Header(default=None)):
-    if SIFTPIPE_API_KEY and x_api_key != SIFTPIPE_API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # ── Estado global del pipeline ─────────────────────────────────────────────────
 pipeline_state = {
@@ -279,14 +338,50 @@ class SetTargetRequest(BaseModel):
     name: str   # must match a key in blocks.targets.TARGETS ("mattermost" | "naviq")
 
 
+class LoginRequest(BaseModel):
+    password: str
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+# Four routes live directly on `app` rather than `protected`, deliberately:
+# a visitor who isn't logged in yet still needs to reach /api/login itself,
+# /api/session (the frontend route guard's "am I logged in" check), and
+# /api/health (infra/uptime checks). /api/logout stays reachable the same
+# way so a client with an already-expired/invalid session can still clear
+# it without first needing a valid one.
 
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
 
 
-@app.get("/api/target")
+@app.post("/api/login")
+def login(body: LoginRequest, request: Request):
+    ip = _client_ip(request)
+    if not auth.check_rate_limit(ip):
+        raise HTTPException(status_code=429, detail="Too many attempts, try again later")
+
+    if not auth.verify_password(body.password):
+        auth.record_failed_attempt(ip)
+        raise HTTPException(status_code=401, detail="Incorrect password")
+
+    auth.reset_attempts(ip)
+    request.session["authenticated"] = True
+    return {"authenticated": True}
+
+
+@app.get("/api/session")
+def session_status(request: Request):
+    return {"authenticated": bool(request.session.get("authenticated"))}
+
+
+@app.post("/api/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"authenticated": False}
+
+
+@protected.get("/api/target")
 def get_active_target():
     """Active target + the closed set the picker in TopBar.tsx can switch
     between (MULTI_TARGET_PLAN.md Phase 5 Task 5.3) — not a generic
@@ -303,7 +398,7 @@ def get_active_target():
     }
 
 
-@app.post("/api/target", dependencies=[Depends(require_api_key)])
+@protected.post("/api/target")
 def set_active_target(body: SetTargetRequest):
     """Switches the active target at runtime. Blocked while a run or an
     environment reset is in flight — ACTIVE_TARGET is a single process-wide
@@ -343,7 +438,7 @@ def set_active_target(body: SetTargetRequest):
     }
 
 
-@app.get("/api/environment/health")
+@protected.get("/api/environment/health")
 def environment_health():
     """Chequeo rápido y no bloqueante: ¿el target activo ya está arriba y
     respondiendo? Permite que la UI decida si hace falta un fresh reset antes
@@ -360,7 +455,7 @@ def environment_health():
     return {"target_up": target_up, "target": ACTIVE_TARGET.name}
 
 
-@app.post("/api/environment/reset", dependencies=[Depends(require_api_key)])
+@protected.post("/api/environment/reset")
 def reset_environment():
     """Corre el fresh reset del target activo en background — Mattermost
     (Docker down, wipe de volúmenes, up, seed) o NaViQ (borra db.sqlite3,
@@ -384,7 +479,7 @@ def reset_environment():
     return {"message": "Environment reset started"}
 
 
-@app.get("/api/environment/status")
+@protected.get("/api/environment/status")
 def environment_status():
     """Estado del reset de entorno — se puede pollear igual que /api/status."""
     return {
@@ -394,12 +489,12 @@ def environment_status():
     }
 
 
-@app.get("/api/environment/logs")
+@protected.get("/api/environment/logs")
 def environment_logs():
     return {"logs": env_state["logs"]}
 
 
-@app.post("/api/run", dependencies=[Depends(require_api_key)])
+@protected.post("/api/run")
 def run_pipeline():
     """Arranca el pipeline desde B3. Rechaza si ya está corriendo."""
     if pipeline_state["running"]:
@@ -412,7 +507,7 @@ def run_pipeline():
     return {"message": "Pipeline started"}
 
 
-@app.get("/api/status")
+@protected.get("/api/status")
 def get_status():
     """Estado actual del pipeline — React hace polling cada 2s a este endpoint."""
     return {
@@ -424,13 +519,13 @@ def get_status():
     }
 
 
-@app.get("/api/logs")
+@protected.get("/api/logs")
 def get_logs():
     """Devuelve todos los logs acumulados en memoria."""
     return {"logs": pipeline_state["logs"]}
 
 
-@app.get("/api/results")
+@protected.get("/api/results")
 def get_results():
     """Lee los JSONs de /results/ que pertenecen al target activo y los
     devuelve juntos, bajo su block_name canónico (sin el prefijo de target
@@ -455,7 +550,7 @@ def get_results():
     return data
 
 
-@app.get("/api/results/{block_name}")
+@protected.get("/api/results/{block_name}")
 def get_block_result(block_name: str):
     """Devuelve el resultado de un bloque específico del target activo. Ej:
     /api/results/B3_static -> results/{ACTIVE_TARGET.name}_B3_static.json"""
@@ -466,13 +561,13 @@ def get_block_result(block_name: str):
         return json.load(f)
 
 
-@app.get("/api/runs")
+@protected.get("/api/runs")
 def get_runs():
     """Newest-first list of past pipeline runs (see blocks/run_history.py)."""
     return {"runs": run_history.list_runs()}
 
 
-@app.get("/api/runs/{run_id}")
+@protected.get("/api/runs/{run_id}")
 def get_run(run_id: int):
     """Full snapshot of one past run — same {block_name: json} shape as
     GET /api/results, so the frontend can reuse the same rendering logic."""
@@ -482,7 +577,7 @@ def get_run(run_id: int):
     return run
 
 
-@app.get("/api/runs/{run_id}/compare")
+@protected.get("/api/runs/{run_id}/compare")
 def get_run_comparison(run_id: int):
     """New vs. recurring vs. resolved findings, and the severity-count
     delta, against the previous completed run of the same target (see
@@ -493,7 +588,7 @@ def get_run_comparison(run_id: int):
     return comparison
 
 
-@app.get("/api/runs/{run_id}/report")
+@protected.get("/api/runs/{run_id}/report")
 def get_run_report(run_id: int, lang: str = "en"):
     """PDF export of one past run — blocks/report.py renders a deterministic
     HTML document from the same snapshot GET /api/runs/{run_id} returns
@@ -512,7 +607,7 @@ def get_run_report(run_id: int, lang: str = "en"):
     )
 
 
-@app.post("/api/validate", dependencies=[Depends(require_api_key)])
+@protected.post("/api/validate")
 def validate_payloads(body: ValidatePayloadsRequest):
     """
     B6 — recibe los payloads aprobados por la investigadora.
@@ -548,7 +643,7 @@ def validate_payloads(body: ValidatePayloadsRequest):
     return {"message": "Validation received. Continuing with B7 → B9."}
 
 
-@app.post("/api/reset", dependencies=[Depends(require_api_key)])
+@protected.post("/api/reset")
 def reset_pipeline():
     """Limpia el estado para poder correr el pipeline de nuevo."""
     if pipeline_state["running"]:
@@ -563,3 +658,10 @@ def reset_pipeline():
         "logs": [],
     })
     return {"message": "State reset"}
+
+
+# All routes above that used `protected` instead of `app` only actually take
+# effect once mounted here - FastAPI resolves routes from the app instance a
+# server was actually started with, so this must run after every route
+# decorator above it, not just after the router is created.
+app.include_router(protected)

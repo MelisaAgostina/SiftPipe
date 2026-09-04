@@ -2,3 +2,4 @@
 -r requirements.txt
 ruff==0.14.4
 pre-commit==4.0.1
+httpx==0.28.1  # fastapi.testclient.TestClient needs this - see tests/test_api_auth.py

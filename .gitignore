@@ -37,6 +37,7 @@ ui/.tanstack/
 # Playwright
 playwright-report/
 test-results/
+.playwright-mcp/
 
 # NaVi-Q source (private repo) — plain local clone, not a submodule, so
 # SiftPipe's own repo never depends on NaVi-Q repo access (see

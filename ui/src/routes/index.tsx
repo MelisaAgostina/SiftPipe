@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import logo from "@/assets/siftpipe-logo.png";
 import pic from "@/assets/Sift pipe-Photoroom.png";
 import { useLang } from "@/hooks/use-lang";
+import { useSessionAuthenticated } from "@/hooks/use-session-authenticated";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -28,6 +29,7 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const { t } = useLang();
+  const authenticated = useSessionAuthenticated();
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-linear-to-br from-background via-background to-card px-6 text-foreground">
       <div
@@ -62,10 +64,10 @@ function Index() {
 
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
           <Link
-            to="/app"
+            to={authenticated ? "/app" : "/login"}
             className="font-button group inline-flex items-center gap-3 rounded-full bg-primary px-10 py-6 text-lg text-primary-foreground transition-colors hover:bg-primary/90 [-webkit-text-stroke:0.6px_currentColor]"
           >
-            {t.landing.openPipeline}
+            {authenticated ? t.landing.openPipeline : t.landing.logIn}
             <span aria-hidden className="transition-transform group-hover:translate-x-0.5"></span>
           </Link>
         </div>

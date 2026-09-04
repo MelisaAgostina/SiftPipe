@@ -69,6 +69,10 @@ export const en: Strings = {
     couldntSwitchTarget: "Couldn't switch target",
     loadingTarget: "Loading target...",
     langToggleAria: "Language",
+    logoutAria: "Log out",
+    loggedOutTitle: "Logged out",
+    loggedOutDescription: "Pipeline data stays right where you left it. See you next time!",
+    logoutErrorTitle: "Couldn't log out — try again.",
   },
   pipelineView: {
     liveHintRunning: "What you're seeing here is the pipeline running live against Mattermost.",
@@ -183,7 +187,32 @@ export const en: Strings = {
     description:
       "SiftPipe pairs AI-driven static analysis with Playwright-powered dynamic discovery and context-aware payload generation — then pauses for human sign-off before any attack runs. Every result gets cross-checked and confirmed, so what you see is signal, not noise.",
     openPipeline: "Open the pipeline",
+    logIn: "Log in",
     footerTagline: "Fewer false positives. More real findings.",
+  },
+  unauthorized: {
+    errorLabel: "ERROR",
+    title: "403",
+    description: "Your session expired. Log in again to keep going.",
+    cta: "Log in again",
+  },
+  login: {
+    title: "PRIVATE ACCESS",
+    subtitle:
+      "The cat guards this end of the pipe. Whisper the password and it might just let you through.",
+    passwordPlaceholder: "password",
+    passwordAriaLabel: "Password",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
+    checking: "CHECKING…",
+    submit: "OPEN THE PIPELINE",
+    successTitle: "YOU'RE IN",
+    successSubtitle: (countdown) =>
+      `The cat stepped aside. Redirecting to the pipeline in ${countdown}…`,
+    errorTooManyAttempts: "TOO MANY TRIES — THE CAT NEEDS A BREAK. TRY AGAIN LATER.",
+    errorServer: "SOMETHING'S WRONG ON OUR END, NOT YOURS. TRY AGAIN SOON.",
+    errorWrongPassword: "WRONG PASSWORD — THE CAT ISN'T LETTING YOU IN YET.",
+    errorNetwork: "COULDN'T REACH THE PIPELINE. CHECK YOUR CONNECTION.",
   },
   mappers: {
     formLabel: "FORM",

@@ -405,7 +405,7 @@ the priority of the first item below.*
 image ships with the real security posture already in it, and the Live QA
 pass further down exercises it directly instead of a stand-in.*
 
-- [ ] **Real session-cookie login gate**, replacing the current
+- [X] **Real session-cookie login gate**, replacing the current
       API-key-in-the-JS-bundle pattern: Starlette's `SessionMiddleware`
       (already ships with FastAPI), a `POST /api/login` checking a shared
       passphrase against `SIFTPIPE_ADMIN_PASSWORD` and setting
@@ -511,6 +511,59 @@ pass further down exercises it directly instead of a stand-in.*
         plan, same as `ANTHROPIC_API_KEY` today — consistent with that
         item staying deferred, just worth knowing these two inherit it too
         rather than being a separately-decided exception.
+
+      **Built 2026-09-03, TDD throughout (backend: `tests/test_auth.py` +
+      `tests/test_api_auth.py` via `fastapi.testclient.TestClient`, real
+      HTTP requests through the actual middleware stack, not direct handler
+      calls — the whole point is that `SessionMiddleware` put
+      `request.session` there; frontend:
+      `LoginPage.test.tsx`, 5 RTL tests against each HTTP status branch).
+      `blocks/auth.py` is the new pure-logic layer — `verify_password()`
+      (hashes both sides to a fixed-length digest before
+      `hmac.compare_digest`, so a wrong-*length* guess can't leak timing
+      either, not just a wrong-content one), the in-memory rate limiter, and
+      its own `validate_required_env_vars()` mirroring
+      `blocks/pipeline.py`'s pattern for `ANTHROPIC_API_KEY`. `api.py` gained
+      real `SessionMiddleware` (not a hand-rolled token — considered a
+      reviewed reference implementation that used its own HMAC-SHA256
+      signing instead, went with Starlette's own library code, less custom
+      crypto for a committee to have to trust), `POST /api/login`/
+      `GET /api/session`/`POST /api/logout`, and an `APIRouter(
+      dependencies=[Depends(require_session)])` covering all 16 previously
+      open-or-key-gated routes — `require_api_key()`/`SIFTPIPE_API_KEY`
+      retired entirely rather than stacked alongside the new gate. Both
+      AWS-compatibility fixes above are live, not just designed:
+      `SameSite`/`Secure` and the trusted-`X-Forwarded-For` IP both key off
+      `FRONTEND_ORIGIN` being set (the same "are we actually deployed"
+      signal already used for CORS), and `CORSMiddleware` gained
+      `allow_credentials=True` (was missing — without it the browser
+      silently refuses to send/receive the cookie cross-origin at all).
+      `SIFTPIPE_ADMIN_PASSWORD` is *always* required now (not a no-op like
+      the old key when unset) — your own call, traded local-dev convenience
+      for the local rehearsal actually matching the deployed flow. New
+      runtime dep: `itsdangerous` (`SessionMiddleware`'s own signing
+      requirement). Frontend: `LoginPage`/`login.tsx` adapted from a
+      reviewed zip (its `beforeLoad`/`redirect` route-guard idiom on
+      `/app` reused close to as-is; its own `VITE_API_URL` swapped for the
+      existing `VITE_API_BASE`; every hardcoded string moved into
+      `useLang()`, since this is new UI built after the i18n dictionary
+      exists); `lib/api.ts` switched from the `X-API-Key` header to
+      `credentials: "include"` on every request. Verified live in the
+      browser: `/app` → `/login` redirect, wrong-password error message,
+      both in Spanish (localStorage-persisted language, read correctly
+      before the app shell is even reachable — the exact scenario this
+      sequencing decision was made for).
+
+      **Known gap, not yet decided:** `/media` and `/evidence`
+      (`app.mount(...)` StaticFiles, serving B7 screenshots/videos) aren't
+      covered by `require_session` — FastAPI dependencies attach to router
+      *routes*, not to `app.mount()`. A URL only becomes visible by being
+      referenced somewhere behind the login gate, so this isn't wide open,
+      but it means someone with a direct evidence URL (shared out of band,
+      or brute-forced) could view it without logging in. Not fixed here
+      since gating a static mount needs a different mechanism than
+      `Depends()` (a custom authenticated file-serving route, most likely)
+      — flagged for a decision rather than silently left as a surprise.
 
 ### The highest-leverage item
 

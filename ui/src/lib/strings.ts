@@ -49,6 +49,10 @@ export type Strings = {
     couldntSwitchTarget: string;
     loadingTarget: string;
     langToggleAria: string;
+    logoutAria: string;
+    loggedOutTitle: string;
+    loggedOutDescription: string;
+    logoutErrorTitle: string;
   };
   pipelineView: {
     liveHintRunning: string;
@@ -143,7 +147,30 @@ export type Strings = {
     heading: string;
     description: string;
     openPipeline: string;
+    logIn: string;
     footerTagline: string;
+  };
+  unauthorized: {
+    errorLabel: string;
+    title: string;
+    description: string;
+    cta: string;
+  };
+  login: {
+    title: string;
+    subtitle: string;
+    passwordPlaceholder: string;
+    passwordAriaLabel: string;
+    showPassword: string;
+    hidePassword: string;
+    checking: string;
+    submit: string;
+    successTitle: string;
+    successSubtitle: (countdown: number) => string;
+    errorTooManyAttempts: string;
+    errorServer: string;
+    errorWrongPassword: string;
+    errorNetwork: string;
   };
   mappers: {
     formLabel: string;

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { driver } from "driver.js";
 import "driver.js/dist/driver.css";
-import { Toaster } from "@/components/ui/sonner";
 import { useErrorToast } from "@/hooks/use-error-toast";
 import { useLang } from "@/hooks/use-lang";
+import { useSessionExpired } from "@/hooks/use-session-expired";
 import { useEnvironmentStatus, useLiveRunVisible, usePipelineStatus } from "@/lib/queries";
+import { clearSessionExpired } from "@/lib/session-expired-store";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { Tabs } from "./Tabs";
@@ -13,6 +14,7 @@ import { CorrelationView } from "./CorrelationView";
 import { LogsView } from "./LogsView";
 import { PastRunsView } from "./PastRunsView";
 import { PayloadReviewView } from "./PayloadReviewView";
+import { Unauthorized } from "./Unauthorized";
 import { buildDriveSteps } from "./buildDriveSteps";
 import { buildTourSteps } from "./tour";
 import type { TabId } from "./data";
@@ -22,6 +24,20 @@ export function SecPipelineApp() {
   const { t } = useLang();
   const { data: status } = usePipelineStatus();
   const { data: envStatus } = useEnvironmentStatus();
+  const sessionExpired = useSessionExpired();
+
+  // /app's beforeLoad (routes/app.tsx) already re-checked the session and
+  // confirmed it valid before this component was ever allowed to mount -
+  // so a leftover sessionExpired=true from a previous mount is guaranteed
+  // stale here. Real bug hit live: request() never passes an AbortSignal
+  // to fetch(), so a still-in-flight poll from the old session can resolve
+  // with a 401 *after* logging back in and landing on a fresh mount,
+  // re-flipping the flag through router.tsx's QueryCache onError - this
+  // clears that race the moment a session actually gets vouched for again,
+  // rather than plumbing cancellation through every query.
+  useEffect(() => {
+    clearSessionExpired();
+  }, []);
 
   // Same status.error / environment-status.error fields the Sidebar already
   // renders as static text — this fires a toast the instant either appears,
@@ -41,6 +57,8 @@ export function SecPipelineApp() {
 
   const liveRunVisible = useLiveRunVisible();
 
+  if (sessionExpired) return <Unauthorized />;
+
   const startTour = () => {
     driver({
       showProgress: true,
@@ -55,7 +73,6 @@ export function SecPipelineApp() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <Toaster />
       <TopBar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />

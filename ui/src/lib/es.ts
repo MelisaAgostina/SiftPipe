@@ -70,6 +70,10 @@ export const es: Strings = {
     couldntSwitchTarget: "No se pudo cambiar de objetivo",
     loadingTarget: "Cargando objetivo...",
     langToggleAria: "Idioma",
+    logoutAria: "Cerrar sesión",
+    loggedOutTitle: "Sesión cerrada",
+    loggedOutDescription: "Los datos del pipeline siguen donde los dejaste. ¡Hasta la próxima!",
+    logoutErrorTitle: "No se pudo cerrar sesión — intenta de nuevo.",
   },
   pipelineView: {
     liveHintRunning: "Esto es el pipeline ejecutándose en vivo contra Mattermost.",
@@ -188,7 +192,32 @@ export const es: Strings = {
     description:
       "SiftPipe combina análisis estático impulsado por IA con descubrimiento dinámico mediante Playwright y generación de payloads sensible al contexto — y luego se detiene para una aprobación humana antes de ejecutar cualquier ataque. Cada resultado se verifica y confirma de forma cruzada, así que lo que ves es señal, no ruido.",
     openPipeline: "Abrir el pipeline",
+    logIn: "Iniciar sesión",
     footerTagline: "Menos falsos positivos. Más hallazgos reales.",
+  },
+  unauthorized: {
+    errorLabel: "ERROR",
+    title: "403",
+    description: "Tu sesión expiró. Inicia sesión de nuevo para continuar.",
+    cta: "Iniciar sesión de nuevo",
+  },
+  login: {
+    title: "ACCESO PRIVADO",
+    subtitle:
+      "El gato custodia este extremo del pipe. Susurra la contraseña y tal vez te deje pasar.",
+    passwordPlaceholder: "contraseña",
+    passwordAriaLabel: "Contraseña",
+    showPassword: "Mostrar contraseña",
+    hidePassword: "Ocultar contraseña",
+    checking: "VERIFICANDO…",
+    submit: "ABRIR EL PIPELINE",
+    successTitle: "YA ESTÁS ADENTRO",
+    successSubtitle: (countdown) =>
+      `El gato se hizo a un lado. Redirigiendo al pipeline en ${countdown}…`,
+    errorTooManyAttempts: "DEMASIADOS INTENTOS — EL GATO NECESITA UN DESCANSO. INTENTA MÁS TARDE.",
+    errorServer: "ALGO FALLÓ DE NUESTRO LADO, NO DEL TUYO. INTENTA DE NUEVO PRONTO.",
+    errorWrongPassword: "CONTRASEÑA INCORRECTA — EL GATO TODAVÍA NO TE DEJA PASAR.",
+    errorNetwork: "NO SE PUDO CONECTAR AL PIPELINE. REVISÁ TU CONEXIÓN.",
   },
   mappers: {
     formLabel: "FORMULARIO",
