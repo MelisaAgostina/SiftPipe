@@ -2,7 +2,7 @@ import json
 import os
 
 from blocks.taxonomy import infer_taxonomy, cwe_info
-from blocks.scoring import compute_score
+from blocks.scoring import compute_score, confidence_for_match
 from blocks.targets import MATTERMOST, result_path
 
 # Safety cap on LLM-judge calls per run, same rationale as B3's MAX_FILES:
@@ -277,11 +277,11 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
                 source = "Hybrid (Static + Dynamic)"
             else:
                 status = "POSSIBLE"
-                conf = "MEDIUM"
+                conf = confidence_for_match(match_tier)
                 source = "Dynamic"
         elif dyn_result == "possible":
             status = "POSSIBLE"
-            conf = "MEDIUM "
+            conf = confidence_for_match(match_tier)
             source = "Dynamic"
         else:
             if match_found:
@@ -336,7 +336,10 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
             "target": b3.get("file", "unknown"),
             "video_path": None,
             "classification": "POSSIBLE",
-            "confidence": "MEDIUM",
+            # B3's own real confidence for this specific finding, not a flat
+            # stand-in - two static-only findings with different underlying
+            # confidence shouldn't both display the same label.
+            "confidence": str(b3.get("confidence") or "medium").upper(),
             "source": "Static",
             "match_tier": "none",
             "score": score,

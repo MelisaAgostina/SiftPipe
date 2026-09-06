@@ -203,6 +203,11 @@ export type RunComparison = {
   new_findings: B9Entry[];
   recurring_findings: B9Entry[];
   resolved_findings: B9Entry[];
+  // blocks/run_history.py's _dynamically_verified() split: only present
+  // here when a live attack (source "Dynamic"/"Hybrid") actually disproved
+  // it. A static-only finding disappearing lands here instead - it isn't
+  // verified as fixed, just not re-flagged by B3's latest (partial) scan.
+  unverified_findings: B9Entry[];
   severity_delta: SeverityDelta;
 };
 

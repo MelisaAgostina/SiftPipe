@@ -190,6 +190,7 @@ class TestRunHistory(unittest.TestCase):
         self.assertEqual(len(comparison["new_findings"]), 1)
         self.assertEqual(comparison["recurring_findings"], [])
         self.assertEqual(comparison["resolved_findings"], [])
+        self.assertEqual(comparison["unverified_findings"], [])
         self.assertEqual(comparison["severity_delta"]["HIGH"], 1)
 
     def test_compare_identifies_new_recurring_and_resolved_findings(self):
@@ -197,20 +198,21 @@ class TestRunHistory(unittest.TestCase):
         Findings are matched across runs by (cwe_id, target) - same file/CWE
         pair recurring means the same underlying issue, not a coincidentally
         similar one. Run 1 has SQLi in handler.go and XSS in view.go; run 2
-        (same target) still has the SQLi (recurring), lost the XSS (resolved),
-        and gained a new path-traversal finding in upload.go (new).
+        (same target) still has the SQLi (recurring), lost the XSS (resolved -
+        source "Dynamic" means a live attack actually disproved it), and
+        gained a new path-traversal finding in upload.go (new).
         """
         first = run_history.start_run(mode="fresh", target="mattermost")
         self._write_b9([
-            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH"},
-            {"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "view.go", "severity": "MEDIUM"},
+            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH", "source": "Hybrid (Static + Dynamic)"},
+            {"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "view.go", "severity": "MEDIUM", "source": "Dynamic"},
         ])
         run_history.finish_run(first, "completed")
 
         second = run_history.start_run(mode="restore", target="mattermost")
         self._write_b9([
-            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "CRITICAL"},
-            {"vulnerability": "Path Traversal", "cwe_id": "CWE-22", "target": "upload.go", "severity": "HIGH"},
+            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "CRITICAL", "source": "Hybrid (Static + Dynamic)"},
+            {"vulnerability": "Path Traversal", "cwe_id": "CWE-22", "target": "upload.go", "severity": "HIGH", "source": "Dynamic"},
         ])
         run_history.finish_run(second, "completed")
 
@@ -220,9 +222,34 @@ class TestRunHistory(unittest.TestCase):
         self.assertEqual([f["cwe_id"] for f in comparison["new_findings"]], ["CWE-22"])
         self.assertEqual([f["cwe_id"] for f in comparison["recurring_findings"]], ["CWE-89"])
         self.assertEqual([f["cwe_id"] for f in comparison["resolved_findings"]], ["CWE-79"])
+        self.assertEqual(comparison["unverified_findings"], [])
         # CRITICAL +1 (the recurring SQLi got worse), MEDIUM -1 (XSS resolved), HIGH net 0 (one gained, one - actually lost from previous's HIGH)
         self.assertEqual(comparison["severity_delta"]["CRITICAL"], 1)
         self.assertEqual(comparison["severity_delta"]["MEDIUM"], -1)
+
+    def test_a_disappearing_static_only_finding_is_unverified_not_resolved(self):
+        """
+        A finding whose only evidence is one AI static-analysis pass (source
+        "Static", never dynamically attacked) disappearing between runs is
+        not proof of a fix - B3 only scans MAX_FILES=10 files per run and
+        the same file can get a different confidence rating from the LLM on
+        a re-scan. Calling that "resolved" would overclaim, so it must land
+        in unverified_findings instead of resolved_findings.
+        """
+        first = run_history.start_run(mode="fresh", target="mattermost")
+        self._write_b9([
+            {"vulnerability": "Insecure Random", "cwe_id": "CWE-338", "target": "apitestlib.go", "severity": "MEDIUM", "source": "Static"},
+        ])
+        run_history.finish_run(first, "completed")
+
+        second = run_history.start_run(mode="restore", target="mattermost")
+        self._write_b9([])
+        run_history.finish_run(second, "completed")
+
+        comparison = run_history.compare_with_previous(second)
+
+        self.assertEqual(comparison["resolved_findings"], [])
+        self.assertEqual([f["cwe_id"] for f in comparison["unverified_findings"]], ["CWE-338"])
 
     def test_compare_ignores_other_targets_and_non_completed_runs_as_previous(self):
         """The "previous run" must be the same target AND a completed run -

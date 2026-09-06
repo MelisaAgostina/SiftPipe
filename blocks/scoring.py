@@ -63,6 +63,28 @@ def severity_for_score(score):
     return "LOW"
 
 
+# "Confidence" answers a different question than severity: not "how bad would
+# this be if real" but "how sure are we it's real." Previously this was a
+# flat hardcoded label per classification branch in correlate_results.py -
+# every "POSSIBLE" finding showed "MEDIUM" regardless of whether it was
+# corroborated by an exact CWE match or had no corroboration at all, making
+# the field carry no real information. This ties it to match_tier instead -
+# the same "how strongly do the static and dynamic sides agree" signal
+# already used in the score formula above, just read as a standalone label
+# for the ambiguous (POSSIBLE) cases where it actually adds information.
+CONFIDENCE_FOR_MATCH_TIER = {
+    "cwe": "REALLY HIGH",    # exact CWE-ID match between the static and dynamic evidence
+    "judge": "HIGH",         # LLM judged both sides to describe the same underlying issue
+    "owasp": "MEDIUM",       # same OWASP category only, not confirmed as the same specific issue
+    "text": "LOW",           # legacy free-text match, no real taxonomy agreement
+    "none": "LOW",           # nothing on the other side corroborates this at all
+}
+
+
+def confidence_for_match(match_tier):
+    return CONFIDENCE_FOR_MATCH_TIER.get(match_tier, "LOW")
+
+
 def compute_score(static_confidence, dynamic_result, dynamic_confidence, match_tier):
     """Returns (score: float in [0, 1], severity: str)."""
     dyn = _dynamic_score(dynamic_result, dynamic_confidence)

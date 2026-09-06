@@ -61,6 +61,7 @@ OWASP_SCOPE = {
 DEFAULT_EXTENSIONS = MATTERMOST.source_extensions
 DEFAULT_EXCLUDE_DIRS = MATTERMOST.source_exclude_dirs
 DEFAULT_RELEVANT_DIRS = MATTERMOST.source_relevant_dirs
+DEFAULT_EXCLUDE_FILE_SUFFIXES = MATTERMOST.source_exclude_file_suffixes
 
 
 def scan_and_save_files(
@@ -69,6 +70,7 @@ def scan_and_save_files(
     extensions=DEFAULT_EXTENSIONS,
     exclude_dirs=DEFAULT_EXCLUDE_DIRS,
     relevant_dirs=DEFAULT_RELEVANT_DIRS,
+    exclude_file_suffixes=DEFAULT_EXCLUDE_FILE_SUFFIXES,
 ):
     """
     relevant_dirs=None means "no directory-name filter at all" - just
@@ -77,6 +79,14 @@ def scan_and_save_files(
     project-specific and arbitrary (blog/, users/, evaluation/, ...), so
     filtering by extension alone is the correct generalization there rather
     than inventing a fake allowlist.
+
+    exclude_file_suffixes catches test files colocated with production code
+    (foo_test.go, foo.test.tsx, tests.py) that exclude_dirs can't - those
+    live in the same directory as real application code, not their own
+    "tests/" folder. See TargetProfile.source_exclude_file_suffixes in
+    blocks/targets.py for why this matters: with MAX_FILES capping B3's
+    scan to 10 files (blocks/static_scanner.py), test scaffolding was
+    silently eating half that budget.
     """
     source_files = []
 
@@ -85,7 +95,7 @@ def scan_and_save_files(
     for root, dirs, files in os.walk(source_dir):
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
         for file in files:
-            if file.endswith(extensions):
+            if file.endswith(extensions) and not file.endswith(tuple(exclude_file_suffixes)):
                 # Only include files located under relevant application directories
                 if relevant_dirs is None or any(part in relevant_dirs for part in Path(root).parts):
                     source_files.append(os.path.join(root, file))
@@ -147,6 +157,34 @@ CODE TO ANALYZE:
 
 MAX_FILES = 10  # could scan more but it would consume a lot of tokens during development, so we limit it for now. In production, you might want to remove this limit or set it higher.
 
+# Path substrings suggesting security-relevant logic (auth, permissions,
+# secrets, uploads, ...) - files matching one of these get scanned before
+# anything else. With MAX_FILES this small, which 10 files get picked
+# matters far more than the arbitrary order os.walk()/the filesystem happens
+# to return them in - real gap found 2026-09-05: Mattermost's scan was
+# landing on whatever sorted first alphabetically in server/channels/api4/
+# (access_control_test.go, ai_bridge_test_helper.go, ...), not on anything
+# chosen for being likely to contain a real vulnerability.
+SECURITY_RELEVANT_KEYWORDS = (
+    "auth", "permission", "session", "login", "password", "token", "admin",
+    "upload", "download", "payment", "webhook", "exec", "sql", "inject",
+    "crypto", "secret", "access_control", "sanitiz", "validat", "escape",
+)
+
+
+def rank_by_security_relevance(files):
+    """
+    Stable sort (Python's sort() preserves original relative order within
+    each group) - security-relevant paths first, everything else keeps its
+    original order after them. Pure and easy to unit test on its own,
+    separate from the actual file-reading/LLM-calling loop below.
+    """
+    def _rank(file_path):
+        path_lower = file_path.lower()
+        return 0 if any(kw in path_lower for kw in SECURITY_RELEVANT_KEYWORDS) else 1
+
+    return sorted(files, key=_rank)
+
 
 def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
     """
@@ -172,8 +210,11 @@ def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
         extensions=target_profile.source_extensions,
         exclude_dirs=target_profile.source_exclude_dirs,
         relevant_dirs=target_profile.source_relevant_dirs,
+        exclude_file_suffixes=target_profile.source_exclude_file_suffixes,
     )
     logger.info(f"Total files listed: {len(files)}")
+
+    files = rank_by_security_relevance(files)
 
     results = []
 

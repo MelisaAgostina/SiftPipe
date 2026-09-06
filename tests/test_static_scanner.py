@@ -9,6 +9,7 @@ from blocks.static_scanner import (
     OWASP_SCOPE,
     get_analysis_prompt,
     load_files_list,
+    rank_by_security_relevance,
     scan_and_save_files,
 )
 
@@ -116,6 +117,37 @@ class TestScanAndSaveFiles(unittest.TestCase):
         found_normalized = {Path(f).as_posix() for f in found}
         self.assertEqual(found_normalized, {(self.source_dir / "users/models.py").as_posix()})
 
+    def test_exclude_file_suffixes_catches_test_files_colocated_with_real_code(self):
+        """
+        Real gap found live 2026-09-05: Go's *_test.go and Django's tests.py
+        both sit right next to production code in the same directory, so
+        exclude_dirs (directory-name-only) can never catch them - half of
+        Mattermost's tiny MAX_FILES=10 scan budget was landing on exactly
+        this kind of file.
+        """
+        self._touch("api4/handler.go")
+        self._touch("api4/handler_test.go")
+        self._touch("users/views.py")
+        self._touch("users/tests.py")
+
+        output_file = self.source_dir / "files_list.txt"
+        found = scan_and_save_files(
+            str(self.source_dir),
+            output_file=str(output_file),
+            extensions=(".go", ".py"),
+            relevant_dirs=None,
+            exclude_file_suffixes={"_test.go", "tests.py"},
+        )
+
+        found_normalized = {Path(f).as_posix() for f in found}
+        self.assertEqual(
+            found_normalized,
+            {
+                (self.source_dir / "api4/handler.go").as_posix(),
+                (self.source_dir / "users/views.py").as_posix(),
+            },
+        )
+
 
 class TestLoadFilesList(unittest.TestCase):
 
@@ -157,6 +189,34 @@ class TestGetAnalysisPrompt(unittest.TestCase):
         prompt = get_analysis_prompt("os.system(user_input)")
         self.assertIn("cwe_id", prompt)
         self.assertIn("CWE-89", prompt)
+
+
+class TestRankBySecurityRelevance(unittest.TestCase):
+    """
+    Real gap found live 2026-09-05: with MAX_FILES=10 capping B3's scan of
+    a 5,314-file codebase, which 10 files get picked matters more than the
+    arbitrary order os.walk() returns them in. Files whose path suggests
+    auth/permission/upload/etc. logic should be scanned first.
+    """
+
+    def test_security_relevant_paths_are_moved_first(self):
+        files = ["misc/notes.go", "api4/access_control.go", "utils/format.go"]
+
+        ranked = rank_by_security_relevance(files)
+
+        self.assertEqual(ranked[0], "api4/access_control.go")
+
+    def test_relative_order_is_preserved_within_each_group(self):
+        files = ["z_auth.go", "a_auth.go", "z_misc.go", "a_misc.go"]
+
+        ranked = rank_by_security_relevance(files)
+
+        self.assertEqual(ranked, ["z_auth.go", "a_auth.go", "z_misc.go", "a_misc.go"])
+
+    def test_no_security_relevant_files_leaves_order_unchanged(self):
+        files = ["b.go", "a.go", "c.go"]
+
+        self.assertEqual(rank_by_security_relevance(files), files)
 
 
 class TestOwaspScopeCodes(unittest.TestCase):

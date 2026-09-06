@@ -371,6 +371,18 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
     except Exception as e:
         result["error"] = str(e)
         print(f"[B7]   Error en payload {pid}: {e}")
+        # Screenshot on the failure path too - previously only the happy
+        # path (line ~369 above) ever took one, so every failed/timed-out
+        # attack (the case you most want to see) left screenshot_path
+        # pointing at a file that was never written, while the video
+        # (recorded unconditionally via record_video_dir) always existed.
+        # Best-effort: the page may already be unusable depending on what
+        # failed, so a screenshot error here shouldn't shadow the real one.
+        try:
+            os.makedirs(f"{base}/dynamic", exist_ok=True)
+            page.screenshot(path=result["screenshot_path"])
+        except Exception:
+            pass
 
     finally:
         # Video only finalizes to disk once the context is closed, so resolve

@@ -109,6 +109,8 @@ export type Strings = {
     newSinceRun: (id: number, count: number) => string;
     recurring: (count: number) => string;
     resolvedSinceRun: (id: number, count: number) => string;
+    unverifiedSinceRun: (id: number, count: number) => string;
+    unverifiedExplainer: string;
   };
   logsView: {
     emptyMessage: string;

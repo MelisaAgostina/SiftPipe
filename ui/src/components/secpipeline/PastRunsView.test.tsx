@@ -105,6 +105,7 @@ describe("PastRunsView", () => {
         new_findings: [],
         recurring_findings: [],
         resolved_findings: [],
+        unverified_findings: [],
         severity_delta: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
       }) as never,
     );
@@ -131,6 +132,7 @@ describe("PastRunsView", () => {
         new_findings: [],
         recurring_findings: [],
         resolved_findings: [],
+        unverified_findings: [],
         severity_delta: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
       }) as never,
     );
@@ -165,6 +167,7 @@ describe("PastRunsView", () => {
         new_findings: [],
         recurring_findings: [],
         resolved_findings: [],
+        unverified_findings: [],
         severity_delta: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
       });
 
@@ -178,6 +181,7 @@ describe("PastRunsView", () => {
         new_findings: [],
         recurring_findings: [],
         resolved_findings: [],
+        unverified_findings: [],
         severity_delta: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
       });
 
@@ -191,6 +195,7 @@ describe("PastRunsView", () => {
         new_findings: [b9Entry({ vulnerability: "New SQLi" })],
         recurring_findings: [b9Entry({ vulnerability: "Recurring XSS" }), b9Entry()],
         resolved_findings: [],
+        unverified_findings: [],
         severity_delta: { CRITICAL: 0, HIGH: 2, MEDIUM: 0, LOW: 0 },
       });
 
@@ -207,10 +212,26 @@ describe("PastRunsView", () => {
         new_findings: [],
         recurring_findings: [],
         resolved_findings: [b9Entry({ vulnerability: "Fixed SQLi" })],
+        unverified_findings: [],
         severity_delta: { CRITICAL: -1, HIGH: 0, MEDIUM: 0, LOW: 0 },
       });
 
       expect(screen.getByText("CRITICAL -1")).toBeInTheDocument();
+    });
+
+    it("renders unverified findings separately from resolved ones, with a caveat", () => {
+      selectRunWithComparison({
+        run_id: 3,
+        previous_run_id: 2,
+        new_findings: [],
+        recurring_findings: [],
+        resolved_findings: [],
+        unverified_findings: [b9Entry({ vulnerability: "No longer flagged", source: "Static" })],
+        severity_delta: { CRITICAL: 0, HIGH: 0, MEDIUM: -1, LOW: 0 },
+      });
+
+      expect(screen.getByText("NO LONGER DETECTED SINCE RUN #2 · 1")).toBeInTheDocument();
+      expect(screen.getByText(/never tested with a real attack/i)).toBeInTheDocument();
     });
   });
 });

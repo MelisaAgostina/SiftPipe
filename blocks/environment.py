@@ -19,6 +19,7 @@ MM_URL = os.getenv("MM_URL", "http://localhost:8065")
 MM_PING_URL = f"{MM_URL}/api/v4/system/ping"
 READY_TIMEOUT = 120                      # seconds to wait for Mattermost to boot (first-boot DB migrations can be slow)
 POLL_INTERVAL = 2                        # seconds between readiness checks
+WEBAPP_READY_TIMEOUT = 90                # seconds to wait for the React webapp itself to render (see wait_for_mattermost_webapp)
 
 # mattermost/.env bind-mounts Postgres/Mattermost data to host paths under
 # mattermost/volumes/ (see POSTGRES_DATA_PATH / MATTERMOST_DATA_PATH etc.).
@@ -116,6 +117,62 @@ def wait_for_mattermost(url=MM_PING_URL, timeout=READY_TIMEOUT, interval=POLL_IN
     raise TimeoutError(
         f"[env] Mattermost did not respond within {timeout}s. "
         f"Check 'docker compose logs' in {MATTERMOST_DIR}/ for diagnostics."
+    )
+
+
+def wait_for_mattermost_webapp(timeout=WEBAPP_READY_TIMEOUT, interval=3, log_fn=print):
+    """
+    wait_for_mattermost() above only confirms the backend API answers a
+    ping - it says nothing about whether the React webapp's own JS bundle
+    has actually finished compiling/serving, which can lag well behind the
+    backend right after a fresh container start (dev-mode asset serving,
+    not a prebuilt production bundle). Real gap found 2026-09-05: B4 hit
+    its 15s post-login wait_for_selector timeout ~2 minutes after
+    container start, while B7 - running ~3 minutes further into the same
+    session, once the webapp had caught up - logged in fine. Both use the
+    exact same login flow (blocks/dynamic_analysis.py, blocks/
+    dynamic_injector.py), so this wasn't a real login bug, just a race
+    between "container reports healthy" and "webapp can actually render."
+
+    Confirms readiness the same way B4/B7 themselves need it to work:
+    loads the real login page in a real (throwaway, headless) browser and
+    waits for the login form to render, instead of trusting a lightweight
+    API ping that says nothing about the frontend.
+    """
+    from playwright.sync_api import sync_playwright
+    from blocks.targets import MATTERMOST
+
+    log_fn("[env] Waiting for Mattermost's webapp to render...")
+    start = time.time()
+    last_error = None
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            while time.time() - start < timeout:
+                # Same landing-page skip B4/B7 themselves use (blocks/dynamic_analysis.py,
+                # blocks/dynamic_injector.py) - Mattermost redirects a fresh /login
+                # visit to a splash page (/landing#/login) first; without this,
+                # the login form never appears regardless of webapp readiness.
+                context = browser.new_context()
+                context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
+                page = context.new_page()
+                try:
+                    page.goto(MATTERMOST.login_url, wait_until="domcontentloaded", timeout=10000)
+                    page.wait_for_selector(", ".join(MATTERMOST.login_id_selectors), timeout=5000, state="attached")
+                    elapsed = round(time.time() - start, 1)
+                    log_fn(f"[env] Mattermost webapp ready after {elapsed}s.")
+                    return
+                except Exception as e:
+                    last_error = e
+                finally:
+                    context.close()
+                time.sleep(interval)
+        finally:
+            browser.close()
+
+    raise TimeoutError(
+        f"[env] Mattermost's login page never rendered within {timeout}s "
+        f"(last error: {last_error}). Check 'docker compose logs' in {MATTERMOST_DIR}/ for diagnostics."
     )
 
 
@@ -329,6 +386,14 @@ def naviq_create_test_account(log_fn=print):
     allauth also needs a verified EmailAddress row. Same pattern NaViQ's own
     scripts/mark_email_verified.py uses, run via `manage.py shell -c` (the
     documented pattern for one-off DB scripts per NaViQ's own CLAUDE.md).
+
+    is_staff=True so B4/B7 can reach navitools/ (both it and downloads/ gate
+    on `not settings.X_LIVE and not request.user.is_staff` — identical
+    shape, both flags default False in NaViQ's own settings). Since is_staff
+    is also Django's real admin-panel flag, this account being staff now
+    unlocks /downloads/ and /admin/ too — NAVIQ.extra_denylist in
+    targets.py is the compensating control that keeps those out of scope,
+    not the account's permission level.
     """
     username = os.getenv("NAVIQ_USERNAME", "siftpipe_test")
     password = os.getenv("NAVIQ_PASSWORD")
@@ -345,6 +410,7 @@ def naviq_create_test_account(log_fn=print):
         f"user, created = User.objects.get_or_create(username={username!r}, defaults={{'email': {email!r}}})\n"
         f"user.email = {email!r}\n"
         f"user.set_password({password!r})\n"
+        "user.is_staff = True\n"
         "user.save()\n"
         "EmailAddress.objects.filter(user=user).delete()\n"
         f"EmailAddress.objects.create(user=user, email={email!r}, verified=True, primary=True)\n"
@@ -487,11 +553,14 @@ def fresh_reset(log_fn=print, interactive=True):
     1. Verify Docker is reachable
     2. Tear down existing container and wipe bind-mounted volumes
     3. Bring up a new container
-    4. Wait until Mattermost responds
-    5. Create the System Admin account (falls back to a manual prompt, unless
+    4. Wait until Mattermost's backend responds
+    5. Wait until Mattermost's webapp itself actually renders (see
+       wait_for_mattermost_webapp - the backend answering first doesn't
+       mean the frontend is ready yet)
+    6. Create the System Admin account (falls back to a manual prompt, unless
        interactive=False — see wait_for_admin_setup)
-    6. Seed fictitious victim user/team/channel/post
-    7. Clear old results
+    7. Seed fictitious victim user/team/channel/post
+    8. Clear old results
     """
     log_fn("\n=== INITIATING FRESH RESET ===")
     check_docker_available()
@@ -499,6 +568,7 @@ def fresh_reset(log_fn=print, interactive=True):
     wipe_volumes(log_fn=log_fn)
     docker_up(log_fn=log_fn)
     wait_for_mattermost(log_fn=log_fn)
+    wait_for_mattermost_webapp(log_fn=log_fn)
     create_admin_account(log_fn=log_fn, interactive=interactive)
     run_seed_script(log_fn=log_fn)
     clear_results_folder(log_fn=log_fn)

@@ -146,6 +146,9 @@ export const es: Strings = {
     newSinceRun: (id, count) => `NUEVOS DESDE LA EJECUCIÓN #${id} · ${count}`,
     recurring: (count) => `RECURRENTES · ${count}`,
     resolvedSinceRun: (id, count) => `RESUELTOS DESDE LA EJECUCIÓN #${id} · ${count}`,
+    unverifiedSinceRun: (id, count) => `YA NO DETECTADOS DESDE LA EJECUCIÓN #${id} · ${count}`,
+    unverifiedExplainer:
+      "Solo se basan en un análisis estático — no fueron probados con un ataque real, así que no re-detectarlos no confirma que se hayan corregido.",
   },
   logsView: {
     emptyMessage: "Todavía no hay logs — ejecuta el pipeline para ver la salida en vivo.",

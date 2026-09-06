@@ -239,6 +239,26 @@ def _finding_key(finding):
     return (label, finding.get("target"))
 
 
+def _dynamically_verified(finding):
+    """
+    True only for a finding whose evidence includes an actual live attack
+    attempt (source is "Dynamic" or "Hybrid (Static + Dynamic)") - as
+    opposed to a static-only finding (source "Static") that came from one
+    AI pass over one file, with no B7/B8 attack ever run against it.
+
+    Matters for compare_with_previous() below: a dynamic finding
+    disappearing between runs means a live exploit attempt that used to
+    succeed no longer does - real, verified evidence of a fix. A
+    static-only finding disappearing just means B3's next AI re-scan
+    (still capped at MAX_FILES=10 files, blocks/static_scanner.py) didn't
+    happen to flag it again - it says nothing about whether the
+    underlying code changed at all. Calling both "resolved" overclaims for
+    the static-only case, which is why they're split into separate buckets
+    instead of one.
+    """
+    return "Dynamic" in str(finding.get("source", ""))
+
+
 def _severity_counts(findings):
     counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
     for finding in findings:
@@ -275,6 +295,7 @@ def compare_with_previous(run_id):
             "new_findings": current_findings,
             "recurring_findings": [],
             "resolved_findings": [],
+            "unverified_findings": [],
             "severity_delta": _severity_diff([], current_findings),
         }
 
@@ -284,11 +305,16 @@ def compare_with_previous(run_id):
     previous_keys = {_finding_key(f) for f in previous_findings}
     current_keys = {_finding_key(f) for f in current_findings}
 
+    disappeared = [f for f in previous_findings if _finding_key(f) not in current_keys]
+
     return {
         "run_id": run_id,
         "previous_run_id": previous_id,
         "new_findings": [f for f in current_findings if _finding_key(f) not in previous_keys],
         "recurring_findings": [f for f in current_findings if _finding_key(f) in previous_keys],
-        "resolved_findings": [f for f in previous_findings if _finding_key(f) not in current_keys],
+        # Split by whether disappearing actually means something: see
+        # _dynamically_verified()'s docstring.
+        "resolved_findings": [f for f in disappeared if _dynamically_verified(f)],
+        "unverified_findings": [f for f in disappeared if not _dynamically_verified(f)],
         "severity_delta": _severity_diff(previous_findings, current_findings),
     }

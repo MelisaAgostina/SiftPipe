@@ -62,6 +62,19 @@ class TargetProfile:
     source_extensions: tuple       # file extensions to include - target's real tech stack, not a generic guess
     source_exclude_dirs: frozenset  # directory names never walked at all (deps, migrations, vcs)
     source_relevant_dirs: frozenset  # None = no directory-name filter; otherwise only files under one of these dir names are included
+    # Filename suffixes skipped regardless of directory - source_exclude_dirs
+    # can't catch these because they're colocated with real application code,
+    # not sitting in their own directory: Go's *_test.go convention and
+    # Django's per-app tests.py both put test files right next to production
+    # code. Left unfiltered, they burn a meaningful fraction of B3's tiny
+    # MAX_FILES budget (blocks/static_scanner.py) on test scaffolding instead
+    # of real code - confirmed live 2026-09-05: 5 of Mattermost's first 10
+    # scanned files were test/test-helper files, and both of B3's only two
+    # real findings against Mattermost that session came from exactly those
+    # files (a fixture's use of math/rand, a test helper's permission check -
+    # neither a real vulnerability). Defaults to empty so it's opt-in per
+    # target, not a behavior change for any profile that doesn't set it.
+    source_exclude_file_suffixes: frozenset = frozenset()
 
     @property
     def base_url(self) -> str:
@@ -125,6 +138,11 @@ MATTERMOST = TargetProfile(
         # barely reachable at all before this fix
         "components", "actions", "client", "selectors", "reducers", "hooks", "plugins",
     }),
+    # Go and the webapp's Jest/RTL setup both colocate test files with
+    # production code (foo.go + foo_test.go, foo.tsx + foo.test.tsx) rather
+    # than putting them in their own directory - source_exclude_dirs above
+    # can't catch these at all.
+    source_exclude_file_suffixes=frozenset({"_test.go", ".test.tsx", ".test.ts", ".test.jsx", ".test.js"}),
 )
 
 # Selectors confirmed live against the real local instance during Phase 0
@@ -156,14 +174,24 @@ NAVIQ = TargetProfile(
     # not built yet. --mode fresh against --target naviq fails loudly until
     # then instead of silently reusing Mattermost's Docker reset.
     supports_fresh_reset=True,
-    # Real MercadoPago/PayPal payment infrastructure (MULTI_TARGET_PLAN.md's
-    # "Prerequisites" section) — /webhooks/ (webhook receivers) and any
-    # /downloads/<slug>/buy/ (real purchase flow) must stay out of B4's
-    # crawl and B7's injection, even against the local instance. "/buy/" is
-    # deliberately the substring (not "/downloads/" wholesale) — the rest
-    # of /downloads/ is an ordinary product listing, legitimate crawl
-    # surface.
-    extra_denylist=["/webhooks/", "/buy/"],
+    # Updated 2026-09-04 for the new vendored version (see
+    # naviq-src/naviq/CLAUDE.md; stack unchanged: Django 5.2.16, Python
+    # 3.10). The owner declared the whole `downloads/` app (real
+    # MercadoPago/PayPal payment infra) off-limits this round — wider than
+    # the old version's scope, which only narrowed to "/buy/" because the
+    # rest of /downloads/ was ordinary product-listing crawl surface. Now
+    # blocked wholesale: "/downloads/" (superset of the old "/buy/") plus
+    # "/webhooks/" (separate top-level prefix, downloads/webhook_urls.py).
+    # "/admin/" is here for a different reason: NAVIQ_USERNAME was granted
+    # is_staff=True (blocks/environment.py::naviq_create_test_account) so
+    # B4/B7 can reach navitools/ (in scope, staff-gated) — but is_staff is
+    # also Django's real admin-panel flag, and downloads/admin.py registers
+    # a PurchaseAdmin action that calls a real Resend API (downloads/emails.py)
+    # for delivery emails, reachable at /admin/downloads/purchase/, i.e.
+    # outside the "/downloads/" prefix above. Denylisting "/admin/" is what
+    # actually keeps the off-limits app's side effects out of scope now that
+    # the crawl account has staff rights.
+    extra_denylist=["/webhooks/", "/downloads/", "/admin/"],
     # Real gap found 2026-08-10: B3 never ran against NaViQ at all - not
     # just the wrong path, the wrong tech stack. Mattermost's scan config
     # (.go/.ts/.tsx/.js/.jsx under Go-style dir names) matches zero files in
@@ -174,11 +202,21 @@ NAVIQ = TargetProfile(
     # extension + exclude. source_exclude_dirs keeps this out of NaViQ's own
     # real Python venv living inside the source tree
     # (naviq-src/naviq/.venv310) and Django's generated migrations - neither
-    # is hand-written application code.
+    # is hand-written application code. "downloads" is excluded outright
+    # (2026-09-04) per the owner's off-limits call above — B3's static scan
+    # shouldn't read that app's source either. "navitools" (new this
+    # version, staff-gated but in scope) needs no entry here — it's already
+    # covered since there's no allowlist, just this excludelist.
     source_dir="naviq-src/naviq",
     source_extensions=(".py",),
-    source_exclude_dirs=frozenset({"node_modules", "vendor", "tests", ".git", ".venv310", "__pycache__", "migrations"}),
+    source_exclude_dirs=frozenset({"node_modules", "vendor", "tests", ".git", ".venv310", "__pycache__", "migrations", "downloads"}),
     source_relevant_dirs=None,
+    # Django puts each app's tests in a bare tests.py file right next to its
+    # real views/models (blog/tests.py, users/tests.py, ...), not inside a
+    # "tests/" directory - source_exclude_dirs above only catches the few
+    # apps (evaluation/tests/, navitools/tests/) that happen to use the
+    # directory form.
+    source_exclude_file_suffixes=frozenset({"tests.py"}),
 )
 
 TARGETS = {p.name: p for p in (MATTERMOST, NAVIQ)}

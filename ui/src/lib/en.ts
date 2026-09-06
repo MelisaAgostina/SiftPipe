@@ -142,6 +142,9 @@ export const en: Strings = {
     newSinceRun: (id, count) => `NEW SINCE RUN #${id} · ${count}`,
     recurring: (count) => `RECURRING · ${count}`,
     resolvedSinceRun: (id, count) => `RESOLVED SINCE RUN #${id} · ${count}`,
+    unverifiedSinceRun: (id, count) => `NO LONGER DETECTED SINCE RUN #${id} · ${count}`,
+    unverifiedExplainer:
+      "Based on static analysis alone — never tested with a real attack, so not being re-detected doesn't confirm a fix.",
   },
   logsView: {
     emptyMessage: "No logs yet — run the pipeline to see live output.",

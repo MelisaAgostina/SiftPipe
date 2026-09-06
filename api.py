@@ -609,7 +609,21 @@ def get_runs():
     return {"runs": run_history.list_runs()}
 
 
-@protected.get("/api/runs/{run_id}")
+SAFE_TO_NAVIGATE = APIRouter(dependencies=[Depends(require_session)])
+
+
+# On `app`/SAFE_TO_NAVIGATE (require_session only), not `protected`, for the
+# same reason get_media_file()/get_evidence_file() above are: the Past Runs
+# view's "View raw JSON" action (ui/src/components/secpipeline/
+# PastRunsView.tsx) opens this URL with a plain window.open(url, "_blank") -
+# a real top-level navigation can't attach a custom header, so it 403'd on
+# "Missing required CSRF header" every single time (bug found live
+# 2026-09-05). This is also a pure read with no state change - not the
+# class of request CSRF protection exists for - so exempting it here rather
+# than reworking the frontend into a fetch()+blob-URL download (like
+# downloadReport() in ui/src/lib/api.ts does for the PDF report) keeps the
+# simpler "just open it in a tab" UX intact.
+@SAFE_TO_NAVIGATE.get("/api/runs/{run_id}")
 def get_run(run_id: int):
     """Full snapshot of one past run — same {block_name: json} shape as
     GET /api/results, so the frontend can reuse the same rendering logic."""
@@ -707,3 +721,4 @@ def reset_pipeline():
 # server was actually started with, so this must run after every route
 # decorator above it, not just after the router is created.
 app.include_router(protected)
+app.include_router(SAFE_TO_NAVIGATE)

@@ -14,6 +14,28 @@ load_dotenv()
 PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
 
 
+def _still_authenticated(page, target):
+    """
+    Layout-agnostic replacement for checking target.authenticated_selectors
+    on every single page visited mid-crawl. A DOM selector like
+    ".channel-header" only exists on *some* page layouts (a normal channel
+    view) - Mattermost's Threads view, System Console, and any other
+    alternate layout would always fail that check even with a perfectly
+    valid session, which is what a narrower, per-path patch (checking for
+    "/threads" by name) used to paper over. That doesn't scale: the next
+    differently-laid-out page just fails the same way again.
+
+    The one thing every authenticated route shares, regardless of its own
+    layout, is that the app's own client-side router would have redirected
+    back to the login page if the session had actually expired - so the
+    URL is the layout-independent signal. Checking for target.login_path
+    in the URL catches both a plain redirect and Mattermost's own
+    "/landing#/login" splash-page redirect (login_path is still a
+    substring of that).
+    """
+    return target.login_path not in page.url
+
+
 def extract_forms(page, page_label):
     forms = []
     for form in page.query_selector_all("form"):
@@ -147,7 +169,7 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
         "forms": [],
         "inputs": [],
         "endpoints": set(),
-        "action_links": set()
+        "action_links": set(),
     }
     errors = []
     login_ok = False
@@ -334,7 +356,15 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
 
                     try:
                         _goto_with_retry(page, url, wait_until="domcontentloaded")
-                        page.wait_for_selector(", ".join(target.authenticated_selectors), timeout=8000, state="attached")
+                        if not _still_authenticated(page, target):
+                            raise Exception(f"Redirected to {target.login_path} - session no longer valid")
+                        # Best-effort only, past this point: a mismatch just means this
+                        # page's layout doesn't have the usual marker (see
+                        # _still_authenticated) - not proof the page itself failed.
+                        try:
+                            page.wait_for_selector(", ".join(target.authenticated_selectors), timeout=3000, state="attached")
+                        except Exception:
+                            pass
                         successful_pages.append(url)
 
                         label = urlsplit(url).path or url

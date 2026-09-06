@@ -231,7 +231,7 @@ class TestApiRoutes(unittest.TestCase):
         first = rh.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
         os.makedirs("results", exist_ok=True)
         with open(f"results/{api.ACTIVE_TARGET.name}_B9_correlation.json", "w", encoding="utf-8") as f:
-            json.dump({"results": [{"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "h.go", "severity": "HIGH"}]}, f)
+            json.dump({"results": [{"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "h.go", "severity": "HIGH", "source": "Dynamic"}]}, f)
         rh.finish_run(first, "completed")
 
         second = rh.start_run(mode="restore", target=api.ACTIVE_TARGET.name)

@@ -191,7 +191,8 @@ function ComparePanel({ runId }: { runId: number }) {
         const nothingToCompare =
           !cmp.new_findings.length &&
           !cmp.recurring_findings.length &&
-          !cmp.resolved_findings.length;
+          !cmp.resolved_findings.length &&
+          !cmp.unverified_findings.length;
 
         return (
           <div className="space-y-4">
@@ -237,6 +238,22 @@ function ComparePanel({ runId }: { runId: number }) {
                   findings: cmp.resolved_findings.map(mapB9Entry),
                 }}
               />
+            )}
+
+            {Boolean(cmp.unverified_findings.length) && (
+              <div className="space-y-2">
+                <Callout>{t.pastRunsView.unverifiedExplainer}</Callout>
+                <Section
+                  section={{
+                    id: `run-${runId}-cmp-unverified`,
+                    title: t.pastRunsView.unverifiedSinceRun(
+                      cmp.previous_run_id,
+                      cmp.unverified_findings.length,
+                    ),
+                    findings: cmp.unverified_findings.map(mapB9Entry),
+                  }}
+                />
+              </div>
             )}
           </div>
         );
