@@ -445,7 +445,10 @@ function RunDetailView({ runId }: { runId: number }) {
           <div className="space-y-6">
             <section className="space-y-2">
               <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
-                {t.pastRunsView.trendHeading}
+                {t.pastRunsView.trendHeading}{" "}
+                <span className="font-normal tracking-normal text-muted-foreground/70">
+                  {t.pastRunsView.trendHeadingClarifier}
+                </span>
               </h3>
               <ComparePanel runId={run.id} />
             </section>

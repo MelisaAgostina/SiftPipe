@@ -21,7 +21,8 @@ import {
   useRunPipeline,
 } from "@/lib/queries";
 import { Sidebar } from "./Sidebar";
-import type { PipelineStatus } from "@/lib/types";
+import { en } from "@/lib/en";
+import type { BlockId, PipelineStatus } from "@/lib/types";
 
 const runMutate = vi.fn();
 const resetMutate = vi.fn();
@@ -205,5 +206,52 @@ describe("Sidebar", () => {
     const buttons = screen.getAllByRole("button", { name: /preparing environment/i });
     expect(buttons).toHaveLength(2);
     buttons.forEach((button) => expect(button).toBeDisabled());
+  });
+
+  it.each<BlockId>(["B4", "B7"])(
+    "shows the 'could take a few minutes' hint while %s is active",
+    (block) => {
+      // B4 (form/input discovery) and B7 (payload submission) both drive
+      // Playwright end-to-end. Locally the browser window is visible, so it's
+      // obvious something's happening; headless=True in the AWS deployment
+      // gives no such feedback, so a juror could mistake several quiet
+      // minutes for the app being stuck without this hint.
+      setup({ status: { running: true, current_block: block } });
+
+      expect(screen.getByText(/this could take a few minutes/i)).toBeInTheDocument();
+    },
+  );
+
+  it.each<BlockId>(["B3", "B5", "B6"])(
+    "does not show the long-running hint while %s is active",
+    (block) => {
+      setup({ status: { running: true, current_block: block } });
+
+      expect(screen.queryByText(/this could take a few minutes/i)).not.toBeInTheDocument();
+    },
+  );
+
+  it("collapses to a slim rail and back, without losing the run button permanently", () => {
+    setup();
+
+    expect(screen.getByRole("button", { name: /run analysis/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+    expect(screen.queryByRole("button", { name: /run analysis/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/analysis phases/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /expand sidebar/i }));
+    expect(screen.getByRole("button", { name: /run analysis/i })).toBeInTheDocument();
+  });
+
+  it("keeps the running state visible on the collapsed rail", () => {
+    // The sidebar isn't just navigation - it's the only place a live phase
+    // run is visible from every tab. Collapsing must not hide "is it still
+    // going?", so the rail keeps a status icon with an accessible label.
+    setup({ status: { running: true } });
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByLabelText(en.sidebar.running)).toBeInTheDocument();
   });
 });

@@ -59,6 +59,9 @@ export const en: Strings = {
     restoreGenericNoEnv:
       "No environment detected. Restore mode won't start one for you — start it manually (docker compose up -d in mattermost/), or switch to Fresh reset above.",
     errorLine: (msg) => `Error: ${msg}`,
+    longRunningPhaseHint: "This could take a few minutes",
+    collapseSidebarAria: "Collapse sidebar",
+    expandSidebarAria: "Expand sidebar",
   },
   topBar: {
     dotLabel: {
@@ -135,6 +138,7 @@ export const en: Strings = {
     noBlockData: "No block data was captured for this run.",
     noFindingsToShow: "This run finished without any findings to show.",
     trendHeading: "TREND VS. PREVIOUS RUN",
+    trendHeadingClarifier: "(change in finding count, by severity)",
     reviewerNoteHeading: "REVIEWER NOTE",
     b3SectionTitle: (scanned) => `STATIC ANALYSIS · ${scanned} files scanned`,
     b4SectionTitle: "DYNAMIC DISCOVERY",

@@ -44,6 +44,9 @@ export type Strings = {
     restoreNaviqNoEnv: string;
     restoreGenericNoEnv: string;
     errorLine: (msg: string) => string;
+    longRunningPhaseHint: string;
+    collapseSidebarAria: string;
+    expandSidebarAria: string;
   };
   topBar: {
     dotLabel: Record<EnvDotStateId, string>;
@@ -102,6 +105,7 @@ export type Strings = {
     noBlockData: string;
     noFindingsToShow: string;
     trendHeading: string;
+    trendHeadingClarifier: string;
     reviewerNoteHeading: string;
     b3SectionTitle: (scanned: number) => string;
     b4SectionTitle: string;

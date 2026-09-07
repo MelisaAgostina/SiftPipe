@@ -9,6 +9,7 @@ import type {
   ResultsBulk,
   RunComparison,
   RunDetail,
+  RunPipelineRequest,
   RunResponse,
   RunsListResponse,
   SetTargetRequest,
@@ -108,7 +109,12 @@ export async function checkSession(): Promise<boolean> {
 }
 
 export const getStatus = () => request<PipelineStatus>("/api/status");
-export const runPipeline = () => request<RunResponse>("/api/run", { method: "POST" });
+export const runPipeline = (body: RunPipelineRequest) =>
+  request<RunResponse>("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 export const getLogs = () => request<LogsResponse>("/api/logs");
 export const getResultsAll = () => request<ResultsBulk>("/api/results");
 export const getRuns = () => request<RunsListResponse>("/api/runs");

@@ -20,6 +20,7 @@ class FakeThread:
     what it was asked to run instead of running it.
     """
     started = []
+    started_args = []
 
     def __init__(self, target=None, args=(), daemon=None):
         self.target = target
@@ -27,12 +28,14 @@ class FakeThread:
 
     def start(self):
         FakeThread.started.append(self.target)
+        FakeThread.started_args.append(self.args)
 
 
 class TestApiRoutes(unittest.TestCase):
 
     def setUp(self):
         FakeThread.started = []
+        FakeThread.started_args = []
         self._cwd = os.getcwd()
         self._tmp = tempfile.TemporaryDirectory()
         os.chdir(self._tmp.name)
@@ -81,6 +84,19 @@ class TestApiRoutes(unittest.TestCase):
         api.run_pipeline()
         self.assertEqual(len(FakeThread.started), 1)
         self.assertEqual(FakeThread.started[0], api.run_pipeline_until_b6)
+
+    def test_run_passes_requested_mode_to_the_pipeline_thread(self):
+        """Real bug found live: the Sidebar's fresh/restore toggle was never
+        reaching run_history - every run got recorded as mode="api" regardless
+        of what the user picked, so past-run cards showed "api" instead of
+        "fresh"/"restore". /api/run must forward body.mode into the thread's
+        args so run_pipeline_until_b6 records the actual selection."""
+        api.run_pipeline(api.RunPipelineRequest(mode="restore"))
+        self.assertEqual(FakeThread.started_args[0], ("restore",))
+
+    def test_run_defaults_mode_to_unknown_when_no_body_is_sent(self):
+        api.run_pipeline()
+        self.assertEqual(FakeThread.started_args[0], ("unknown",))
 
     def test_run_rejects_when_already_running(self):
         api.pipeline_state["running"] = True

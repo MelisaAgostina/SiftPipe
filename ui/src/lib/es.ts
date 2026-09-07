@@ -59,6 +59,9 @@ export const es: Strings = {
     restoreGenericNoEnv:
       "No se detectó ningún entorno. El modo de restauración no iniciará uno por ti — inícialo manualmente (docker compose up -d en mattermost/), o cambia a Reinicio limpio arriba.",
     errorLine: (msg) => `Error: ${msg}`,
+    longRunningPhaseHint: "Esto puede tardar varios minutos",
+    collapseSidebarAria: "Contraer barra lateral",
+    expandSidebarAria: "Expandir barra lateral",
   },
   topBar: {
     dotLabel: {
@@ -138,6 +141,7 @@ export const es: Strings = {
     noBlockData: "No se capturaron datos de bloques para esta ejecución.",
     noFindingsToShow: "Esta ejecución terminó sin hallazgos que mostrar.",
     trendHeading: "TENDENCIA VS. EJECUCIÓN ANTERIOR",
+    trendHeadingClarifier: "(cambio en la cantidad de hallazgos, por severidad)",
     reviewerNoteHeading: "NOTA DEL REVISOR",
     b3SectionTitle: (scanned) => `ANÁLISIS ESTÁTICO · ${scanned} archivos escaneados`,
     b4SectionTitle: "DESCUBRIMIENTO DINÁMICO",

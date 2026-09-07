@@ -295,14 +295,14 @@ def _fail_pipeline(e):
     run_history.finish_run(pipeline_state["run_id"], "error")
 
 
-def run_pipeline_until_b6():
+def run_pipeline_until_b6(mode="unknown"):
     """Corre B3 → B5 y pausa esperando revisión humana."""
     pipeline_state["running"] = True
     pipeline_state["completed"] = False
     pipeline_state["error"] = None
     pipeline_state["logs"] = []
     pipeline_state["waiting_for_human"] = False
-    pipeline_state["run_id"] = run_history.start_run(mode="api", target=ACTIVE_TARGET.name)
+    pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
 
     try:
         with pipeline_results_lock:
@@ -378,6 +378,10 @@ class ValidatePayloadsRequest(BaseModel):
 
 class SetTargetRequest(BaseModel):
     name: str   # must match a key in blocks.targets.TARGETS ("mattermost" | "naviq")
+
+
+class RunPipelineRequest(BaseModel):
+    mode: str = "unknown"   # "fresh" | "restore", whichever the sidebar toggle had selected
 
 
 class LoginRequest(BaseModel):
@@ -537,14 +541,14 @@ def environment_logs():
 
 
 @protected.post("/api/run")
-def run_pipeline():
+def run_pipeline(body: RunPipelineRequest = RunPipelineRequest()):
     """Arranca el pipeline desde B3. Rechaza si ya está corriendo."""
     if pipeline_state["running"]:
         raise HTTPException(status_code=409, detail="Pipeline is already running")
     if pipeline_state["waiting_for_human"]:
         raise HTTPException(status_code=409, detail="Waiting for human review in B6")
 
-    thread = threading.Thread(target=run_pipeline_until_b6, daemon=True)
+    thread = threading.Thread(target=run_pipeline_until_b6, args=(body.mode,), daemon=True)
     thread.start()
     return {"message": "Pipeline started"}
 

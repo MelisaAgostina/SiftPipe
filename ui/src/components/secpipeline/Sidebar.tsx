@@ -1,5 +1,15 @@
 import { useState } from "react";
-import { AlertTriangle, Check, Circle, PlayCircle, Loader2, RotateCcw, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Circle,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PlayCircle,
+  Loader2,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import {
   useActiveTarget,
   useEnvironmentHealth,
@@ -31,6 +41,12 @@ export function Sidebar() {
   // makes that existing choice explicit in the UI instead of it being an
   // undiscoverable side effect of "don't click the reset button."
   const [envMode, setEnvMode] = useState<EnvMode>("fresh");
+
+  // Collapsing to a slim rail (rather than hiding the sidebar outright) keeps
+  // run status glanceable even with it out of the way - see the rail's status
+  // icon below, which mirrors buttonLabel()'s running/waiting/completed states
+  // so collapsing never hides "is it still going?" from the user.
+  const [collapsed, setCollapsed] = useState(false);
 
   // current_block from the API is uppercase ("B3".."B9"); data.ts's phase ids
   // are lowercase ("b3".."b9") — lowercasing directly matches them 1:1.
@@ -130,9 +146,65 @@ export function Sidebar() {
     return t.sidebar.prepareEnvironmentFresh;
   };
 
+  // Same running/waiting/completed/error precedence as buttonLabel(), reduced
+  // to one icon + a native title tooltip so the collapsed rail still answers
+  // "is it still going?" without reproducing the full sidebar.
+  const collapsedStatus = () => {
+    if (isRunning || runMutation.isPending) {
+      return {
+        icon: <Loader2 className="h-4 w-4 animate-spin text-primary" />,
+        label: t.sidebar.running,
+      };
+    }
+    if (isWaiting) {
+      return {
+        icon: <AlertTriangle className="h-4 w-4 text-[var(--status-form)]" />,
+        label: t.sidebar.waitingForReview,
+      };
+    }
+    if (isCompleted) {
+      return {
+        icon: <Check className="h-4 w-4 text-primary" />,
+        label: t.sidebar.pipelineCompleted,
+      };
+    }
+    if (status?.error) {
+      return {
+        icon: <AlertTriangle className="h-4 w-4 text-destructive" />,
+        label: t.sidebar.errorLine(status.error),
+      };
+    }
+    return null;
+  };
+
+  const toggleButton = (
+    <button
+      onClick={() => setCollapsed((c) => !c)}
+      aria-label={collapsed ? t.sidebar.expandSidebarAria : t.sidebar.collapseSidebarAria}
+      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+    </button>
+  );
+
+  if (collapsed) {
+    const status_ = collapsedStatus();
+    return (
+      <aside className="flex w-12 shrink-0 flex-col items-center border-r border-border bg-card py-2">
+        {toggleButton}
+        {status_ && (
+          <span title={status_.label} aria-label={status_.label} className="mt-3">
+            {status_.icon}
+          </span>
+        )}
+      </aside>
+    );
+  }
+
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-card">
-      <div className="min-h-0 flex-1 space-y-8 overflow-y-auto p-5">
+      <div className="flex items-center justify-end px-2 pt-2">{toggleButton}</div>
+      <div className="min-h-0 flex-1 space-y-8 overflow-y-auto p-5 pt-2">
         <section>
           <h2 className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground">
             {t.sidebar.prerequisitesHeading}
@@ -241,11 +313,17 @@ export function Sidebar() {
           <ul data-tour="analysis-phases" className="space-y-1.5 text-sm">
             {phases.map((ph, index) => {
               const state = phaseState(index);
+              // B4 (form/input discovery) and B7 (payload submission) both drive
+              // Playwright end-to-end - fast locally where the browser window is
+              // visible, but slow and silent once headless=True in the AWS
+              // deployment. Without this hint a juror staring at a spinner for a
+              // few minutes has no way to tell "still working" from "stuck".
+              const isLongRunning = state === "active" && (ph.id === "b4" || ph.id === "b7");
               return (
                 <li
                   key={ph.id}
                   className={
-                    "flex items-center gap-2.5 rounded-md px-2.5 py-2 transition-colors " +
+                    "flex items-start gap-2.5 rounded-md px-2.5 py-2 transition-colors " +
                     (state === "active"
                       ? "bg-accent ring-1 ring-primary/40 text-foreground"
                       : state === "done"
@@ -254,13 +332,20 @@ export function Sidebar() {
                   }
                 >
                   {state === "active" ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />
                   ) : state === "done" ? (
-                    <Check className="h-4 w-4 text-primary" />
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                   ) : (
-                    <Circle className="h-4 w-4 text-muted-foreground/60" />
+                    <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
                   )}
-                  <span>{t.phaseLabels[ph.id as PhaseId]}</span>
+                  <div className="flex flex-col">
+                    <span>{t.phaseLabels[ph.id as PhaseId]}</span>
+                    {isLongRunning && (
+                      <span className="text-xs text-muted-foreground">
+                        {t.sidebar.longRunningPhaseHint}
+                      </span>
+                    )}
+                  </div>
                 </li>
               );
             })}
@@ -278,7 +363,7 @@ export function Sidebar() {
       <div className="shrink-0 border-t border-border p-5">
         <button
           data-tour="run-button"
-          onClick={() => runMutation.mutate()}
+          onClick={() => runMutation.mutate({ mode: effectiveEnvMode })}
           disabled={buttonDisabled}
           className="font-button flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-4 py-3.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
         >

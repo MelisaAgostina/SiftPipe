@@ -214,6 +214,7 @@ export type RunComparison = {
 
 export type ValidateRequest = { approved_indices: number[]; comment?: string };
 export type ValidateResponse = { message: string };
+export type RunPipelineRequest = { mode: "fresh" | "restore" };
 export type RunResponse = { message: string };
 export type ResetResponse = { message: string };
 export type ResultsBulk = Record<string, unknown | null>;
