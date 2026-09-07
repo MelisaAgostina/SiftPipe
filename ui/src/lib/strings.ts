@@ -32,6 +32,7 @@ export type Strings = {
     pipelineCompleted: string;
     preparingEnvironment: string;
     prepareEnvironmentFirst: string;
+    resetRequiredFirst: string;
     runAnalysis: string;
     resetEnvironmentFresh: string;
     prepareEnvironmentFresh: string;

@@ -75,6 +75,19 @@ export function Sidebar() {
   const targetName = activeTarget?.display_name ?? "Target";
   const supportsFreshReset = activeTarget?.supports_fresh_reset ?? true;
 
+  // env_state["completed"] (api.py) is False on server start, True only
+  // after dispatch_fresh_reset() actually finishes, and cleared on target
+  // switch - the real signal for "was a reset done", as opposed to
+  // targetUp (just "is the server reachable right now", true whether that's
+  // from a fresh reset or a Docker container that's been up for days).
+  // Real bug found live: with the toggle defaulting to "fresh" and an
+  // already-running target making targetUp true regardless, selecting
+  // Fresh and going straight to "Ejecutar análisis" (skipping the reset
+  // button entirely) silently ran the analysis against the old, unreset
+  // environment - confirmed live via Docker's own container timestamps,
+  // with nothing in the UI or the generated report showing it happened.
+  const freshResetDone = envStatus?.completed === true;
+
   // Task 5.2 (MULTI_TARGET_PLAN.md Phase 5): both current profiles happen to
   // support fresh reset, so this has never actually forced "restore" yet —
   // still wired for real so a future target with supports_fresh_reset=False
@@ -88,8 +101,18 @@ export function Sidebar() {
   // reseed steps are still running in the background. Without this guard,
   // a jury clicking Run analysis right after Fresh reset could start B3-B9
   // against a database that's still mid-reset.
+  // Fresh mode selected but never actually run - see freshResetDone above.
+  // Without this, the button looked and behaved identically whether the
+  // reset had happened or was silently skipped.
+  const freshResetPending = effectiveEnvMode === "fresh" && !freshResetDone;
+
   const buttonDisabled =
-    isRunning || isWaiting || runMutation.isPending || !targetUp || envResetting;
+    isRunning ||
+    isWaiting ||
+    runMutation.isPending ||
+    !targetUp ||
+    envResetting ||
+    freshResetPending;
 
   const buttonLabel = () => {
     if (runMutation.isPending || isRunning) return t.sidebar.running;
@@ -97,6 +120,7 @@ export function Sidebar() {
     if (isCompleted) return t.sidebar.pipelineCompleted;
     if (envResetting) return t.sidebar.preparingEnvironment;
     if (!targetUp) return t.sidebar.prepareEnvironmentFirst;
+    if (freshResetPending) return t.sidebar.resetRequiredFirst;
     return t.sidebar.runAnalysis;
   };
 

@@ -42,6 +42,7 @@ export const en: Strings = {
     pipelineCompleted: "Pipeline completed",
     preparingEnvironment: "Preparing environment...",
     prepareEnvironmentFirst: "Prepare environment first",
+    resetRequiredFirst: "Reset environment first",
     runAnalysis: "Run analysis",
     resetEnvironmentFresh: "Reset environment (fresh)",
     prepareEnvironmentFresh: "Prepare environment (fresh)",

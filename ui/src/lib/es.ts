@@ -42,6 +42,7 @@ export const es: Strings = {
     pipelineCompleted: "Pipeline completado",
     preparingEnvironment: "Preparando entorno...",
     prepareEnvironmentFirst: "Preparar entorno primero",
+    resetRequiredFirst: "Reiniciar entorno primero",
     runAnalysis: "Ejecutar análisis",
     resetEnvironmentFresh: "Reiniciar entorno (limpio)",
     prepareEnvironmentFresh: "Preparar entorno (limpio)",
