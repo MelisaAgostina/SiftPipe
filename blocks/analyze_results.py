@@ -23,12 +23,24 @@ def _load_previous_analysis(path):
     return previous
 
 
-def _is_llm_result_usable(entry):
-    """A previous entry is reusable only if it's a real classification, not a
-    placeholder left behind by a failed/rate-limited ask_llm() call."""
+def _is_llm_result_usable(entry, target, payload):
+    """A previous entry is reusable only if it's a real classification (not a
+    placeholder left behind by a failed/rate-limited ask_llm() call) AND it
+    actually classified the same target+payload this payload_id now points
+    to. payload_id is only positional within one run's own target list
+    (e.g. "1_1" = target #1, payload #1) — in restore mode the on-disk cache
+    from an older run survives (clear_results_folder() only runs on a fresh
+    reset), so the same id can land on a completely different field once the
+    crawl order or the human-approved target subset shifts between runs.
+    Without this check a stale entry for an unrelated page/field would get
+    silently reused under the new id, real bug found live 2026-09-06 against
+    NaViQ (payload_id "1_1" resolved to a run-#4 create-evaluation entry
+    instead of run #8's own navitools/history one)."""
     if not entry:
         return False
     if entry.get("vulnerability") in ("API Error", "Error de Parseo JSON"):
+        return False
+    if entry.get("target") != target or entry.get("payload") != payload:
         return False
     return entry.get("result") in ("confirmed", "possible", "discarded")
 
@@ -82,7 +94,7 @@ def analyze_results(pipeline_results, ask_llm, target_profile=None):
         # ── Resume support: reuse a prior successful classification instead
         # of spending tokens on it again ──
         prev_entry = previous.get(pid)
-        if _is_llm_result_usable(prev_entry):
+        if _is_llm_result_usable(prev_entry, target, payload):
             analyzed.append(prev_entry)
             reused += 1
             print(f"[B8] [{pid}] {target} -> reused from previous run ({prev_entry.get('result', '?').upper()})")

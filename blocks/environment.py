@@ -306,12 +306,22 @@ def clear_results_folder(path="results", retries=10, retry_delay=1.5, log_fn=pri
 # Strictly simpler than Mattermost's Docker-based reset: no container, no
 # bind-mount volumes to wipe — "fresh" just means a local SQLite file plus
 # Django's own migrate/seed management commands, all proven working by hand
-# during Phase 0. NAVIQ_VENV_PYTHON is Windows-specific (.venv310\Scripts\
-# python.exe) — matches this project's own dev environment (see NaviQ's
-# CLAUDE.md: "Windows/PowerShell is the primary dev shell"), same as the
-# rest of this codebase not attempting cross-platform paths elsewhere.
+# during Phase 0.
 NAVIQ_DIR = os.path.join("naviq-src", "naviq")
-NAVIQ_VENV_PYTHON = os.path.join(NAVIQ_DIR, ".venv310", "Scripts", "python.exe")
+# venv's own internal layout depends on the OS it was created on, not the OS
+# this code happens to run on right now (e.g. a checked-out venv committed
+# from Windows dev but executed on the Ubuntu AWS box) - Windows lays out
+# .venv310\Scripts\python.exe, Linux/Mac lay out .venv310/bin/python. Checked
+# by whichever one actually exists on disk, not sys.platform, since that's
+# what determines which path is real. Falls back to the Windows path when
+# neither exists yet (e.g. a fresh checkout with no venv created), so the
+# resulting FileNotFoundError still names a sensible expected path.
+_NAVIQ_VENV_LINUX_PYTHON = os.path.join(NAVIQ_DIR, ".venv310", "bin", "python")
+_NAVIQ_VENV_WINDOWS_PYTHON = os.path.join(NAVIQ_DIR, ".venv310", "Scripts", "python.exe")
+NAVIQ_VENV_PYTHON = (
+    _NAVIQ_VENV_LINUX_PYTHON if os.path.exists(_NAVIQ_VENV_LINUX_PYTHON)
+    else _NAVIQ_VENV_WINDOWS_PYTHON
+)
 NAVIQ_DB_PATH = os.path.join(NAVIQ_DIR, "db.sqlite3")
 NAVIQ_URL = os.getenv("NAVIQ_URL", "http://127.0.0.1:8001")
 # A local SQLite dev server starts in well under a second once the venv's

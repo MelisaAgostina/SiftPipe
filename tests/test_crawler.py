@@ -137,6 +137,56 @@ class TestSelectLinksToVisit(unittest.TestCase):
         )
         self.assertEqual(selected, ["http://x.com/first"])
 
+    def test_priority_link_survives_budget_cut_even_if_it_renders_last(self):
+        # Real gap found live 2026-09-06: NaViQ's navitools/ page links to 8
+        # real tool pages, but they render after a page's worth of ordinary
+        # nav/footer links in the DOM — without priority_paths, the old
+        # DOM-order-then-truncate logic discarded all 8 whenever the budget
+        # ran out first.
+        selected = select_links_to_visit(
+            ["/blog", "/docs", "/portfolio", "/navitools/doctor"],
+            "http://x.com", "http://x.com", visited=set(), denylist=[], budget=1,
+            priority_paths=("/navitools/",),
+        )
+        self.assertEqual(selected, ["http://x.com/navitools/doctor"])
+
+    def test_priority_link_survives_even_when_budget_is_already_zero(self):
+        """
+        Real gap found live 2026-09-06 against NaViQ: reordering priority
+        links ahead of others inside candidates[:budget] wasn't actually
+        enough - by the time navitools/ itself got crawled (discovered
+        partway through, not on the very first page), the shared page
+        budget had already hit zero from unrelated pages queued earlier,
+        and the old `if budget <= 0: return []` guard discarded everything,
+        priority included, before priority separation ever ran. Priority
+        links now get their own small admission allowance independent of
+        `budget`'s value, including zero or negative.
+        """
+        selected = select_links_to_visit(
+            ["/blog", "/navitools/doctor"],
+            "http://x.com", "http://x.com", visited=set(), denylist=[], budget=0,
+            priority_paths=("/navitools/",),
+        )
+        self.assertEqual(selected, ["http://x.com/navitools/doctor"])
+
+    def test_priority_ordering_still_respects_dom_order_within_each_group(self):
+        selected = select_links_to_visit(
+            ["/navitools/b", "/blog", "/navitools/a", "/docs"],
+            "http://x.com", "http://x.com", visited=set(), denylist=[], budget=10,
+            priority_paths=("/navitools/",),
+        )
+        self.assertEqual(selected, [
+            "http://x.com/navitools/b", "http://x.com/navitools/a",
+            "http://x.com/blog", "http://x.com/docs",
+        ])
+
+    def test_no_priority_paths_behaves_exactly_as_before(self):
+        selected = select_links_to_visit(
+            ["/a", "/b", "/c"], "http://x.com", "http://x.com", visited=set(),
+            denylist=[], budget=2,
+        )
+        self.assertEqual(selected, ["http://x.com/a", "http://x.com/b"])
+
 
 class TestLooksLikeActionLink(unittest.TestCase):
 

@@ -78,6 +78,62 @@ def extract_forms(page, page_label):
     return forms
 
 
+def _form_signature(form):
+    fields = tuple(sorted(
+        (f.get("tag"), f.get("name"), f.get("type")) for f in form.get("fields", [])
+    ))
+    buttons = tuple(sorted(
+        (b.get("tag"), b.get("name"), b.get("type"), b.get("text")) for b in form.get("submit_buttons", [])
+    ))
+    return (form.get("action"), form.get("method"), fields, buttons)
+
+
+def dedupe_forms(forms):
+    """
+    Collapses forms with the same action/method/fields/submit_buttons into
+    one entry, keeping the first occurrence. A form embedded in a shared
+    template (a Django-rendered language switcher in the base layout, a
+    footer contact form) gets extracted once per page that renders it —
+    real gap found live 2026-09-06: most of NaViQ's 36 discovered "forms"
+    were exactly these two repeated across nearly every page, crowding out
+    the handful of actually distinct forms from B5's fixed per-run budget
+    (generate_payloads.py's dynamic_targets[:20]).
+    """
+    seen = set()
+    deduped = []
+    for form in forms:
+        signature = _form_signature(form)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        deduped.append(form)
+    return deduped
+
+
+def dedupe_inputs(inputs):
+    """
+    Collapses generic visible inputs/textareas with the same (name, type)
+    into one entry, keeping the first occurrence - same fix as
+    dedupe_forms() above, applied to attack_surface["inputs"] (a separate,
+    independent discovery path: the plain `input:visible, textarea:visible`
+    DOM scan in the crawl loop below, not extract_forms()). Real gap found
+    live 2026-09-06: NaViQ's shared-template contact form fields (email/
+    name/message/website) showed up here once per page rendering the
+    footer, still eating B5's per-run target budget
+    (generate_payloads.py's dynamic_targets[:20]) the same way duplicate
+    forms did before dedupe_forms() existed.
+    """
+    seen = set()
+    deduped = []
+    for input_field in inputs:
+        key = (input_field.get("name"), input_field.get("type"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(input_field)
+    return deduped
+
+
 def build_attack_surface_records(attack_surface):
     records = []
 
@@ -187,14 +243,17 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
         context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
         page = context.new_page()
 
-        # Mattermost-specific for now — endpoint-sniffing on top of the crawl
-        # isn't part of Phase 2's scope (generalizing the *page* crawl), and
-        # NaViQ has no /api/v4/-shaped routes for this to match anyway, so it
-        # harmlessly stays empty there instead of generalizing prematurely.
+        # Background calls only (XHR/fetch, via Playwright's resource_type —
+        # not a URL shape), scoped to the target's own origin so third-party
+        # requests (fonts, analytics beacons) don't pollute the surface. This
+        # replaces the old "/api/v4/" substring match, which only ever fired
+        # for Mattermost and left NaViQ's endpoints undetected regardless of
+        # how many it actually made.
         page.on(
             "request",
             lambda request: attack_surface["endpoints"].add(request.url)
-            if "/api/v4/" in request.url else None
+            if request.resource_type in ("xhr", "fetch") and request.url.startswith(base_url)
+            else None
         )
 
         try:
@@ -381,9 +440,41 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
 
                         remaining_budget = max_pages - len(visited) - len(queue)
                         hrefs = [a.get_attribute("href") or "" for a in page.query_selector_all("a[href]")]
-                        queue.extend(select_links_to_visit(
-                            hrefs, page.url, base_url, visited, denylist, remaining_budget
-                        ))
+                        # select_links_to_visit's own `visited` check only excludes
+                        # pages already popped and processed - a URL already sitting
+                        # in `queue`, still waiting its turn, isn't in `visited` yet
+                        # and would otherwise get queued again from every other page
+                        # that links to it (e.g. a shared nav link found on nearly
+                        # every page). Real gap found live 2026-09-06 against NaViQ:
+                        # the same handful of nav/footer links got queued 2-3x over,
+                        # inflating len(queue) and starving remaining_budget well
+                        # before 20 real distinct pages had actually been claimed -
+                        # passing visited | set(queue) here (not just visited) is
+                        # what select_links_to_visit checks new links against, so a
+                        # queued-but-not-yet-visited URL is excluded too.
+                        new_links = select_links_to_visit(
+                            hrefs, page.url, base_url, visited | set(queue), denylist, remaining_budget,
+                            priority_paths=target.crawl_priority_paths,
+                        )
+                        # select_links_to_visit only reorders priority links
+                        # *within this one page's own batch* - they still land
+                        # at the tail of the overall queue, behind everything
+                        # already waiting from earlier pages. Real gap found
+                        # live 2026-09-06: navitools/ itself (linked from a
+                        # page discovered partway through the crawl, not the
+                        # very first one) was still only reached 8th of 20
+                        # pages - by then, much of the budget its own children
+                        # needed was already gone. Splitting priority links to
+                        # the front of `queue` here (global, not per-page) gets
+                        # the priority page itself visited as early as
+                        # topologically possible, maximizing the budget left
+                        # for its children once select_links_to_visit's own
+                        # admission guarantee (above) kicks in for them.
+                        priority_links = [
+                            u for u in new_links if any(p in u for p in target.crawl_priority_paths)
+                        ]
+                        normal_links = [u for u in new_links if u not in priority_links]
+                        queue = priority_links + queue + normal_links
                         attack_surface["action_links"].update(select_action_links(
                             hrefs, page.url, base_url, denylist
                         ))
@@ -415,6 +506,8 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                 except Exception as e:
                     print(f"[B4] Could not save discovery video: {e}")
 
+    attack_surface["forms"] = dedupe_forms(attack_surface["forms"])
+    attack_surface["inputs"] = dedupe_inputs(attack_surface["inputs"])
     attack_surface["endpoints"] = sorted(attack_surface["endpoints"])
     attack_surface["action_links"] = sorted(attack_surface["action_links"])
     attack_surface["status"] = _determine_status(login_ok, errors)

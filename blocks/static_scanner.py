@@ -169,21 +169,52 @@ SECURITY_RELEVANT_KEYWORDS = (
     "auth", "permission", "session", "login", "password", "token", "admin",
     "upload", "download", "payment", "webhook", "exec", "sql", "inject",
     "crypto", "secret", "access_control", "sanitiz", "validat", "escape",
+    # "decorator" added 2026-09-06: real gap found live against NaViQ -
+    # Django's convention puts view-wrapping access-control gates (e.g.
+    # navitools/decorators.py's `not settings.NAVITOOLS_LIVE and not
+    # request.user.is_staff` staff check) in a file literally named
+    # decorators.py, which none of the keywords above matched at all - it
+    # ranked 69th of 109 candidate files, nowhere near MAX_FILES=10,
+    # regardless of the admin.py-repetition issue the basename-dedup below
+    # fixes separately.
+    "decorator",
 )
 
 
 def rank_by_security_relevance(files):
     """
-    Stable sort (Python's sort() preserves original relative order within
-    each group) - security-relevant paths first, everything else keeps its
-    original order after them. Pure and easy to unit test on its own,
-    separate from the actual file-reading/LLM-calling loop below.
-    """
-    def _rank(file_path):
-        path_lower = file_path.lower()
-        return 0 if any(kw in path_lower for kw in SECURITY_RELEVANT_KEYWORDS) else 1
+    3-tier stable ordering - each tier keeps its own original relative
+    order: (1) security-relevant files, first occurrence of a given
+    basename only, (2) security-relevant files whose basename repeats,
+    (3) everything else. Pure and easy to unit test on its own, separate
+    from the actual file-reading/LLM-calling loop below.
 
-    return sorted(files, key=_rank)
+    The basename-dedup tier is a real gap found live 2026-09-06 against
+    NaViQ: a Django project names one near-boilerplate registration file
+    "admin.py" in every single app, and "admin" is one of
+    SECURITY_RELEVANT_KEYWORDS - with MAX_FILES=10, 7 identical-purpose
+    admin.py files filled the budget before navitools/decorators.py (the
+    actual staff-gating access-control logic) was ever reached, at rank 69
+    of 109 candidates. Demoting repeats of an already-seen filename keeps
+    the keyword's real signal (still first in line, still ahead of
+    everything unrelated) without letting one repeated filename crowd out
+    a different, more specific security-relevant file.
+    """
+    seen_basenames = set()
+    unique_relevant, repeated_relevant, everything_else = [], [], []
+    for file_path in files:
+        path_lower = file_path.lower()
+        if not any(kw in path_lower for kw in SECURITY_RELEVANT_KEYWORDS):
+            everything_else.append(file_path)
+            continue
+        basename = os.path.basename(file_path)
+        if basename in seen_basenames:
+            repeated_relevant.append(file_path)
+        else:
+            seen_basenames.add(basename)
+            unique_relevant.append(file_path)
+
+    return unique_relevant + repeated_relevant + everything_else
 
 
 def run_static_analysis(pipeline_results, ask_llm, target_profile=None):

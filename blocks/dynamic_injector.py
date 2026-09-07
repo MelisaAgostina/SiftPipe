@@ -47,12 +47,29 @@ _STATIC_ASSET_EXTENSIONS = (
     ".woff", ".woff2", ".ttf", ".eot", ".map",
 )
 
-# Never auto-filled by _fill_sibling_fields(): hidden fields carry
-# server-set values (CSRF tokens, foreign keys) that must survive untouched;
-# submit/button/reset/image aren't data fields; file inputs need
-# set_input_files(), same reason B7 already skips fileUploadInput targets
-# entirely in run_payloads().
-_SKIP_FIELD_TYPES = {"hidden", "submit", "button", "reset", "file", "image"}
+# Never auto-filled by _fill_sibling_fields()'s generic text/select handling:
+# hidden fields carry server-set values (CSRF tokens, foreign keys) that must
+# survive untouched; submit/button/reset/image aren't data fields. File
+# inputs used to be in this set too, but a *required* file field left empty
+# blocks the whole submission (browser-level "This field is required.")
+# before the payload field is ever processed - same bug class as the
+# sibling-field gap this function already exists to close, found live
+# against NaViQ's navitools tools (confirmed via a screenshot showing that
+# exact message with the payload still sitting unsent in the field next to
+# it). File inputs now get a dummy PNG via set_input_files() instead (see
+# the field_type == "file" branch below). B7's separate skip of
+# fileUploadInput as an injection *target* in run_payloads() is unrelated -
+# that's about not generating payloads for the file field itself, not about
+# satisfying its required-ness as a sibling.
+_SKIP_FIELD_TYPES = {"hidden", "submit", "button", "reset", "image"}
+
+# A real, minimal 1x1 transparent PNG (67 bytes) - not a stub, since
+# navitools' own client-side validation checks file type (and size) before
+# ever hitting the server, so an arbitrary byte string wouldn't pass it.
+_DUMMY_PNG_BYTES = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+    b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 # Keyword match against name/id/placeholder first (more specific than the
 # HTML type, e.g. a plain text input named "phone"), falls back to the type
@@ -262,6 +279,19 @@ def _fill_sibling_fields(page, input_selector):
                         field.check()
                     continue
 
+                if field_type == "file":
+                    # Same treatment as required checkboxes above: only a
+                    # *required* file field blocks the submission, so leave
+                    # an optional one alone. set_input_files() takes an
+                    # in-memory buffer directly - no temp file needed.
+                    if field.evaluate("el => el.required"):
+                        field.set_input_files({
+                            "name": "test.png",
+                            "mimeType": "image/png",
+                            "buffer": _DUMMY_PNG_BYTES,
+                        })
+                    continue
+
                 if field.input_value():
                     continue  # already has a value (server default etc.) - don't clobber it
 
@@ -417,10 +447,25 @@ def _check_action_link(browser, link_url, pid, target_profile, run_id):
     the navigation's own response status is the whole signal. Evidence
     dir/screenshot handling mirrors _execute_one's for consistency with
     every other B7 finding.
+
+    Also records `final_url` (page.url right after navigation) - real bug
+    found live 2026-09-06 against NaViQ: Playwright's page.goto() silently
+    follows HTTP redirects and returns the *final* response, so a protected
+    page that correctly redirects an anonymous visitor to /login/ (which
+    itself renders fine) still reports status_code 200 - the login page's
+    own status, not the original request's. Every one of that run's
+    "confirmed" Broken_Access_Control findings turned out to be exactly
+    this: the evidence screenshot showed NaViQ's real login form, not the
+    protected page, proving access was actually denied correctly. The
+    caller below now also checks final_url against target_profile.login_path
+    before treating a 200 as a real finding, the same "were we bounced back
+    to login" signal blocks/dynamic_analysis.py's _still_authenticated()
+    already uses elsewhere in this codebase.
     """
     base = evidence_dir(target_profile.name, run_id)
     result = {
         "status_code":     None,
+        "final_url":       None,
         "screenshot_path": f"{base}/dynamic/screenshot_{pid}.png",
         "error":           None,
     }
@@ -429,6 +474,7 @@ def _check_action_link(browser, link_url, pid, target_profile, run_id):
     try:
         response = page.goto(link_url, wait_until="domcontentloaded", timeout=15000)
         result["status_code"] = response.status if response else None
+        result["final_url"] = page.url
         os.makedirs(f"{base}/dynamic", exist_ok=True)
         page.screenshot(path=result["screenshot_path"])
     except Exception as e:
@@ -650,7 +696,25 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                     if any(s in payload for s in shell_syms) and "command_injection" in body_markers:
                         detections.append("Command_Injection")
 
-                    if ".." in payload and any(m in bl for m in ["root:x:", "etc/passwd", "document"]):
+                    # "document" and "etc/passwd" used to both be in this
+                    # marker list. "document" was a real false positive found
+                    # live 2026-09-06 against NaViQ - it matches almost any
+                    # HTML page, so a ".." payload against an ordinary form
+                    # that just re-rendered normally always tripped it.
+                    # "etc/passwd" turned out to be worse, found live the
+                    # same day against NaViQ's navitools tools: it's a
+                    # substring of the payload itself ("../../etc/passwd"),
+                    # so a form that simply echoes back what you typed - the
+                    # completely normal thing Django does when re-rendering a
+                    # form after a *different*, unfilled required field fails
+                    # validation (e.g. navitools' required image upload) -
+                    # trips it purely from that echo, with no file ever read.
+                    # "root:x:" is the one marker left that can't be faked
+                    # this way: it's real /etc/passwd content (a line like
+                    # "root:x:0:0:root:/root:/bin/bash"), never a substring
+                    # of any traversal payload, so reflection alone can't
+                    # produce it.
+                    if ".." in payload and "root:x:" in bl:
                         detections.append("Path_Traversal")
 
                     if status == 401:
@@ -733,7 +797,8 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                 print(f"[B7] [{link_pid}] auth-probe GET {link_url}")
                 link_r = _check_action_link(browser, link_url, link_pid, target_profile, run_id)
                 link_status = link_r.get("status_code")
-                if link_status is not None and 200 <= link_status < 300:
+                redirected_to_login = target_profile.login_path in (link_r.get("final_url") or "")
+                if link_status is not None and 200 <= link_status < 300 and not redirected_to_login:
                     anomalies += 1
                     vuln_taxonomy = infer_taxonomy({"vulnerability": "Broken_Access_Control"})
                     link_finding = {

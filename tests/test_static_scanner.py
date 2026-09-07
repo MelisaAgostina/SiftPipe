@@ -218,6 +218,34 @@ class TestRankBySecurityRelevance(unittest.TestCase):
 
         self.assertEqual(rank_by_security_relevance(files), files)
 
+    def test_repeated_basename_does_not_crowd_out_a_different_relevant_file(self):
+        """
+        Real gap found live 2026-09-06 against NaViQ: 7 apps each have their
+        own "admin.py" (matches keyword "admin"), which filled MAX_FILES=10
+        before navitools/decorators.py (matches the newly-added "decorator"
+        keyword - see SECURITY_RELEVANT_KEYWORDS' own comment) was ever
+        reached. Two separate bugs combined to cause that: "decorators.py"
+        matched no keyword at all (fixed by adding "decorator"), and even
+        once it does match, repeats of a different basename ("admin.py")
+        would still crowd it out without this dedup (what this test covers).
+        """
+        files = [
+            "blog/admin.py", "contact/admin.py", "evaluation/admin.py",
+            "home/admin.py", "navitools/admin.py", "portfolio/admin.py",
+            "users/admin.py", "navitools/decorators.py", "misc/notes.py",
+        ]
+
+        ranked = rank_by_security_relevance(files)
+
+        # First admin.py keeps its top-tier spot; decorators.py (a different,
+        # still-unseen basename) joins it in that same top tier instead of
+        # being pushed behind six more admin.py repeats.
+        self.assertEqual(ranked[0], "blog/admin.py")
+        self.assertIn("navitools/decorators.py", ranked[:2])
+        # The repeated admin.py files still rank ahead of the truly
+        # unrelated file - the keyword's signal isn't thrown away entirely.
+        self.assertLess(ranked.index("contact/admin.py"), ranked.index("misc/notes.py"))
+
 
 class TestOwaspScopeCodes(unittest.TestCase):
     """

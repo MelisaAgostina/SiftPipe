@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -68,6 +69,62 @@ class TestBuildDynamicTargets(unittest.TestCase):
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0]["field_name"], "message")
 
+    def test_file_and_radio_and_checkbox_fields_are_excluded(self):
+        """
+        Real gap found live 2026-09-06 against NaViQ's navitools tools:
+        "file" fields error out on fill() every time ("Input of type
+        "file" cannot be filled"), and worse - a form with an unfilled
+        *required* file field still submits when a different field is
+        attacked, and Django's validation-error re-render echoes the
+        submitted payload back, a false-positive source in its own right.
+        "radio"/"checkbox" hit the same "not an <input>/<textarea>"
+        Playwright error a <select> does.
+        """
+        attack_surface = {
+            "forms": [{
+                "page": "tool", "action": "http://x/navitools/doctor/", "page_url": "http://x/tool",
+                "fields": [
+                    {"id": "id_image", "name": "image", "type": "file"},
+                    {"id": "opt_a", "name": "audience", "type": "radio"},
+                    {"id": "opt_b", "name": "notify", "type": "checkbox"},
+                    {"id": "id_context", "name": "context", "type": "textarea"},
+                ],
+            }],
+            "inputs": [], "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["field_name"], "context")
+
+    def test_radio_group_does_not_produce_one_target_per_option(self):
+        """
+        Real gap found live 2026-09-06: NaViQ's audience-rewriter page has
+        one radio *group* (shared field name "audience", 5 differently-id'd
+        options) - extract_forms() captures all 5 as separate field
+        entries, which previously became 5 near-duplicate, all-unfillable
+        targets, filling B5's MAX_TARGETS=20 budget on their own and
+        leaving 4 of 9 navitools tools with zero targets generated.
+        """
+        attack_surface = {
+            "forms": [{
+                "page": "tool", "action": "http://x/navitools/audience-rewriter/", "page_url": "http://x/tool",
+                "fields": [
+                    {"id": "nt-aud-executives", "name": "audience", "type": "radio"},
+                    {"id": "nt-aud-general", "name": "audience", "type": "radio"},
+                    {"id": "nt-aud-technical", "name": "audience", "type": "radio"},
+                    {"id": "id_context", "name": "context", "type": "textarea"},
+                ],
+            }],
+            "inputs": [], "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["field_name"], "context")
+
     def test_form_with_only_hidden_fields_contributes_no_targets(self):
         attack_surface = {
             "forms": [{
@@ -100,6 +157,29 @@ class TestBuildDynamicTargets(unittest.TestCase):
         self.assertEqual(targets[0]["type"], "input")
         self.assertEqual(targets[0]["field_id"], "q")
 
+    def test_unfillable_input_types_are_excluded_too(self):
+        """
+        Real gap found live 2026-09-06: attack_surface["inputs"] (the
+        generic input:visible/textarea:visible DOM scan, separate from
+        extract_forms()) never had the file/radio/checkbox exclusion
+        applied at all - a file field already excluded via "forms" still
+        leaked back in through this separate loop for the exact same
+        physical element on NaViQ's navitools tool pages.
+        """
+        attack_surface = {
+            "forms": [],
+            "inputs": [
+                {"id": "id_image", "name": "image", "type": "file", "page_url": "http://x/tool"},
+                {"id": "q", "name": "query", "type": "text", "page_url": "http://x/search"},
+            ],
+            "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["field_id"], "q")
+
     def test_endpoints_are_fallback_only_when_nothing_else_found(self):
         attack_surface = {"forms": [], "inputs": [], "endpoints": ["http://x/api/v4/posts"]}
 
@@ -119,6 +199,53 @@ class TestBuildDynamicTargets(unittest.TestCase):
 
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0]["type"], "input")
+
+    def test_no_target_profile_leaves_order_unchanged(self):
+        """No target_profile (or one with no crawl_priority_paths, e.g.
+        Mattermost's default) - existing behavior, unaffected."""
+        attack_surface = {
+            "forms": [
+                {"page": "a", "action": "http://x/contact/send/", "page_url": "http://x/a",
+                 "fields": [{"id": None, "name": "email", "type": "text"}]},
+                {"page": "b", "action": "http://x/navitools/doctor/", "page_url": "http://x/b",
+                 "fields": [{"id": None, "name": "file", "type": "text"}]},
+            ],
+            "inputs": [], "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(targets[0]["action"], "http://x/contact/send/")
+        self.assertEqual(targets[1]["action"], "http://x/navitools/doctor/")
+
+    def test_priority_paths_move_matching_targets_first(self):
+        """
+        Real gap found live 2026-09-06 against NaViQ: B4's crawl got a
+        priority mechanism (TargetProfile.crawl_priority_paths) the same
+        day, but this function still built targets in plain forms-list
+        order - the 20-target cap (generate_payloads()) was exactly filled
+        by earlier, more mundane forms before navitools' were ever reached,
+        even though B4 now discovers them just fine.
+        """
+        attack_surface = {
+            "forms": [
+                {"page": "a", "action": "http://x/contact/send/", "page_url": "http://x/a",
+                 "fields": [{"id": None, "name": "email", "type": "text"}]},
+                {"page": "b", "action": "http://x/account/settings/", "page_url": "http://x/b",
+                 "fields": [{"id": None, "name": "username", "type": "text"}]},
+                {"page": "c", "action": "http://x/navitools/doctor/", "page_url": "http://x/c",
+                 "fields": [{"id": None, "name": "file", "type": "text"}]},
+            ],
+            "inputs": [], "endpoints": [],
+        }
+        target_profile = SimpleNamespace(crawl_priority_paths=("/navitools/",))
+
+        targets = gp.build_dynamic_targets(attack_surface, target_profile)
+
+        self.assertEqual(targets[0]["action"], "http://x/navitools/doctor/")
+        # relative order preserved within the non-priority group
+        self.assertEqual(targets[1]["action"], "http://x/contact/send/")
+        self.assertEqual(targets[2]["action"], "http://x/account/settings/")
 
 
 class TestFindRelatedStaticFindings(unittest.TestCase):

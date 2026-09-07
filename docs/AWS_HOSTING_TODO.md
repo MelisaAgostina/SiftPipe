@@ -52,6 +52,19 @@ two server-side install steps, which aren't code:
 - [ ] **Submodule checkout on the server**: `git submodule update --init
       --depth 1` after cloning (otherwise `mattermost-src/mattermost` is
       empty and B3 silently scans zero files).
+- [x] **NaViQ's venv path is Windows-only — will break on this box.**
+      Fixed 2026-09-06: `NAVIQ_VENV_PYTHON` in `blocks/environment.py` now
+      checks whether `.venv310/bin/python` (Linux/Mac layout) exists on
+      disk first, falling back to `.venv310\Scripts\python.exe` (Windows
+      layout) only if it doesn't — verified live that local Windows dev
+      still resolves to the Windows path unchanged. This only fixes the
+      *code's* path assumption, though — it doesn't put a venv on the
+      server. Still true and still needed at deploy time: `naviq-src/`
+      isn't committed to git at all (gitignored — private third-party
+      source, no redistribution rights), so it — and a `.venv310` built
+      from its own requirements inside it — needs to be copied onto this
+      server by hand, the same authorized copy already on the dev
+      machine, not pulled via `git clone`.
 
 ## 2. Step-by-step
 

@@ -733,13 +733,74 @@ real time and (small) money, so validate locally first.*
 - [ ] **Secrets via AWS Secrets Manager/SSM** instead of a hand-edited
       `.env` on the box.
 
-- [ ] `playwright install --with-deps chromium` on the server.
-- [ ] `git submodule update --init --depth 1` after cloning on the server.
 - [ ] Set an AWS Budget alert ($10 / $25 / $50).
 - [ ] Launch EC2 (t3.medium, Ubuntu 24.04, security group closed except
       80/443) + allocate an Elastic IP.
-- [ ] One-time server setup: Docker, Python, nginx, certbot, clone +
-      submodule, venv + deps, `.env` files.
+- [ ] **One-time server setup**, in this specific order — env vars have to
+      exist before anything below reads them, and Mattermost (fully
+      automated, no private code to place by hand) is worth getting green
+      before layering NaViQ's extra manual steps on top:
+      1. Install Docker, Python (whatever `python3` defaults to on Ubuntu
+         24.04 is fine for SiftPipe's own venv below — no version pin in
+         `requirements.txt`), nginx, certbot. **Also install Python 3.10
+         specifically** (Ubuntu 24.04's default `python3` is 3.12, and
+         NaViQ's stack requires 3.10 exactly — Django 5.2.16 on it, per
+         `naviq-src/naviq/CLAUDE.md`) — not in Ubuntu 24.04's default repos
+         anymore, needs the deadsnakes PPA: `sudo add-apt-repository
+         ppa:deadsnakes/ppa && sudo apt install python3.10 python3.10-venv`.
+      2. `git clone` the repo, then `git submodule update --init --depth 1`
+         (otherwise `mattermost-src/mattermost` comes down empty and B3
+         silently scans zero files against Mattermost).
+      3. Write `.env` (repo root) and `mattermost/.env` with real values.
+         `.env` needs: `ANTHROPIC_API_KEY`, `MM_ADMIN_EMAIL`/
+         `MM_ADMIN_PASS` (Mattermost's bootstrap admin, created
+         automatically via API on first fresh-reset — see step 5),
+         `NAVIQ_USERNAME`/`NAVIQ_PASSWORD` (read by step 6 below), and
+         `PLAYWRIGHT_HEADLESS=true` specifically — Playwright can't open a
+         window on a server with no display, so this one isn't optional
+         here the way it is for local dev.
+      4. SiftPipe's own environment: `python3 -m venv venv && source
+         venv/bin/activate && pip install -r requirements.txt &&
+         playwright install --with-deps chromium`.
+      5. **Mattermost**: `python main.py --mode fresh --target mattermost`
+         (from SiftPipe's own venv). Fully automated — starts the Docker
+         Compose stack, waits for it to boot, creates the System Admin
+         account via API using `MM_ADMIN_EMAIL`/`MM_ADMIN_PASS` from step
+         3. Confirm this succeeds before moving on to NaViQ below; it's
+         the simpler of the two targets and a good checkpoint.
+      6. **NaViQ** — not covered by `git clone` at all, since `naviq-src/`
+         is gitignored (private third-party source, no redistribution
+         rights), and needs real manual setup, unlike Mattermost above:
+         - Copy your own authorized `naviq-src/naviq` folder onto the
+           server by hand (`scp`/`rsync`), never `git clone`.
+         - Inside it, create NaViQ's *own* venv using **Python 3.10
+           specifically** (from step 1, not the system default):
+           `python3.10 -m venv .venv310 && source
+           .venv310/bin/activate`.
+         - Install its dependencies. **Plain `pip install -r
+           requirements.txt` is known to fail here** — this is the exact
+           command that hit `resolution-too-deep` during this project's
+           own NaViQ version upgrade: the vendored `requirements.txt`
+           pins `setuptools==58.1.0`, but `paypal-server-sdk` (via
+           `apimatic-core`) needs `>=68.0.0` — an unsatisfiable pin,
+           unrelated to this server, so it'll fail identically here.
+           Fixed locally with `uv` and a one-line override file (not by
+           hand-editing the vendored `requirements.txt`); the original
+           override file wasn't saved, so **this exact recipe hasn't been
+           re-verified live** — confirm it works before relying on it for
+           the actual deploy:
+           ```
+           pip install uv
+           echo "setuptools>=68.0.0" > overrides.txt
+           uv pip install -r requirements.txt --override overrides.txt
+           ```
+         - Run `python main.py --mode fresh --target naviq` once (from
+           SiftPipe's own venv, not NaViQ's) to migrate + seed NaViQ's DB
+           and create its test account. This is the step that depends on
+           the 2026-09-06 fix to `blocks/environment.py`'s
+           `NAVIQ_VENV_PYTHON` — without it, this fails with "file not
+           found" on this Ubuntu box, since it used to assume a Windows
+           venv layout.
 - [ ] TLS: pick a domain or use the free AWS hostname, run certbot, confirm
       nginx proxies to the API.
 - [ ] `systemd` unit for the API; confirm Mattermost's `unless-stopped`

@@ -96,13 +96,22 @@ class FakePage:
     reads a navigation's own response status rather than expect_response()'s
     queue — unset URLs (including the real login/payload navigations) get
     goto()'s old no-op None, unaffected.
+
+    `goto_final_urls` (requested url -> landed url) models Playwright's real
+    redirect-following behavior: page.goto() returns the *final* response
+    after transparently following any HTTP redirects, and page.url reflects
+    wherever navigation actually ended up, not the URL originally requested.
+    Defaults to no redirect (final url == requested url) when a URL isn't in
+    this dict, matching every existing caller that never redirects.
     """
 
-    def __init__(self, responses, goto_statuses=None):
+    def __init__(self, responses, goto_statuses=None, goto_final_urls=None):
         self._responses = responses
         self._call_idx = 0
         self.keyboard = FakeKeyboard()
         self._goto_statuses = goto_statuses or {}
+        self._goto_final_urls = goto_final_urls or {}
+        self.url = ""
 
     def _next_response(self):
         if self._call_idx < len(self._responses):
@@ -116,6 +125,7 @@ class FakePage:
 
     def goto(self, url, wait_until=None, timeout=None):
         status = self._goto_statuses.get(url)
+        self.url = self._goto_final_urls.get(url, url)
         return FakeGotoResponse(status) if status is not None else None
 
     def wait_for_selector(self, selector, timeout=None, state=None):
@@ -227,8 +237,8 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         os.chdir(self._cwd)
         self._tmp.cleanup()
 
-    def _run(self, responses, goto_statuses=None):
-        page = FakePage(responses, goto_statuses)
+    def _run(self, responses, goto_statuses=None, goto_final_urls=None):
+        page = FakePage(responses, goto_statuses, goto_final_urls)
 
         def fake_sync_playwright():
             return FakeSyncPlaywright(page)
@@ -266,6 +276,120 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         self.assertEqual(second["vulnerability"], "Unknown")
 
         self.assertEqual(result["anomalies_found"], 1)
+
+    def test_traversal_payload_against_an_ordinary_page_is_not_flagged(self):
+        """
+        Real false positive found live 2026-09-06 against NaViQ: "document"
+        used to be one of the Path_Traversal markers, but it matches almost
+        any HTML page (any inline <script> calling document.querySelector,
+        etc.) - a ".."-containing payload against a form that just
+        re-rendered normally always tripped it, with no actual traversal.
+        B8's LLM check caught and discarded both cases that session, but the
+        rule itself shouldn't fire here at all.
+        """
+        validated = {
+            "payloads": [
+                {
+                    "page_url": "http://localhost:8065/account/settings",
+                    "field_id": "id_username",
+                    "field_name": "username",
+                    "target": "id_username",
+                    "payloads": ["../../../etc/passwd"],
+                },
+            ]
+        }
+        with open(self.validated_path, "w", encoding="utf-8") as f:
+            json.dump(validated, f)
+
+        body = (
+            "<!DOCTYPE html><html><head></head><body>"
+            "<script>document.querySelector('.x');</script>"
+            "<h1>Account settings</h1></body></html>"
+        )
+        responses = [
+            None,  # auth-probe: timeout, not vulnerable
+            FakeResponse("http://localhost:8065/account/settings", 200, body, content_type="text/html"),
+        ]
+
+        result = self._run(responses)
+
+        finding = result["findings"][0]
+        self.assertNotIn("Path_Traversal", finding["detections"])
+        self.assertFalse(finding["anomaly_detected"])
+
+    def test_payload_merely_echoed_back_is_not_flagged_as_traversal(self):
+        """
+        Real false positive found live 2026-09-06 against NaViQ's navitools
+        tools, a second flavor of the same bug: "etc/passwd" was also one of
+        the Path_Traversal markers, but it's a literal substring of the
+        payload itself ("../../../etc/passwd") - a form that simply echoes
+        back what you typed (exactly what Django does re-rendering a form
+        after a *different*, unfilled required field - e.g. navitools'
+        required image upload - fails validation) trips it purely from that
+        echo, screenshot-confirmed live: the page showed "This field is
+        required" next to the payload sitting untouched in its own textarea,
+        no file ever read.
+        """
+        validated = {
+            "payloads": [
+                {
+                    "page_url": "http://localhost:8065/navitools/doctor",
+                    "field_id": "id_context",
+                    "field_name": "context",
+                    "target": "id_context",
+                    "payloads": ["../../../etc/passwd"],
+                },
+            ]
+        }
+        with open(self.validated_path, "w", encoding="utf-8") as f:
+            json.dump(validated, f)
+
+        body = (
+            "<!DOCTYPE html><html><body>"
+            "<input type=\"file\" name=\"image\" required>"
+            "<span>This field is required.</span>"
+            "<textarea name=\"context\">../../../etc/passwd</textarea>"
+            "</body></html>"
+        )
+        responses = [
+            None,  # auth-probe: timeout, not vulnerable
+            FakeResponse("http://localhost:8065/navitools/doctor", 200, body, content_type="text/html"),
+        ]
+
+        result = self._run(responses)
+
+        finding = result["findings"][0]
+        self.assertNotIn("Path_Traversal", finding["detections"])
+        self.assertFalse(finding["anomaly_detected"])
+
+    def test_real_passwd_content_is_still_detected_as_traversal(self):
+        """The one marker that survives: actual /etc/passwd content can't
+        come from mere payload reflection, so it should still fire."""
+        validated = {
+            "payloads": [
+                {
+                    "page_url": "http://localhost:8065/download",
+                    "field_id": "id_filename",
+                    "field_name": "filename",
+                    "target": "id_filename",
+                    "payloads": ["../../../etc/passwd"],
+                },
+            ]
+        }
+        with open(self.validated_path, "w", encoding="utf-8") as f:
+            json.dump(validated, f)
+
+        body = "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n"
+        responses = [
+            None,  # auth-probe: timeout, not vulnerable
+            FakeResponse("http://localhost:8065/download", 200, body, content_type="text/plain"),
+        ]
+
+        result = self._run(responses)
+
+        finding = result["findings"][0]
+        self.assertIn("Path_Traversal", finding["detections"])
+        self.assertTrue(finding["anomaly_detected"])
 
     def test_reflected_payload_is_detected_as_xss(self):
         """
@@ -465,11 +589,41 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         self.assertEqual(link_finding["owasp_category"], "A01")
 
     def test_action_link_unauthenticated_rejection_is_not_flagged(self):
+        """
+        A server-side reject that Playwright itself reports as a raw
+        non-2xx status (e.g. a plain 403 with no redirect at all).
+        """
         link_url = "http://localhost:8065/consultas/leido/5"
         with open("results/mattermost_attack_surface.json", "w", encoding="utf-8") as f:
             json.dump({"action_links": [link_url]}, f)
 
-        result = self._run([None, None, None], goto_statuses={link_url: 302})
+        result = self._run([None, None, None], goto_statuses={link_url: 403})
+
+        self.assertFalse(any(f["payload_id"] == "link_1_anon" for f in result["findings"]))
+
+    def test_redirect_to_login_is_not_flagged_even_though_final_status_is_200(self):
+        """
+        Real bug found live 2026-09-06 against NaViQ: page.goto() silently
+        follows HTTP redirects and returns the *final* response - a
+        protected page that correctly redirects an anonymous visitor to
+        /login (which itself renders fine) reports status_code 200, the
+        login page's own status, never the original 302. The old version of
+        this test used a raw goto_statuses={link_url: 302} to represent
+        "access denied", which isn't what a real redirect looks like to
+        Playwright at all - this is the real shape: final status 200, but
+        final_url is the login page. Every one of that live run's
+        "confirmed" findings was exactly this - the evidence screenshot
+        showed NaViQ's login form, not the protected page.
+        """
+        link_url = "http://localhost:8065/consultas/leido/5"
+        with open("results/mattermost_attack_surface.json", "w", encoding="utf-8") as f:
+            json.dump({"action_links": [link_url]}, f)
+
+        result = self._run(
+            [None, None, None],
+            goto_statuses={link_url: 200},
+            goto_final_urls={link_url: "http://localhost:8065/login?next=/consultas/leido/5"},
+        )
 
         self.assertFalse(any(f["payload_id"] == "link_1_anon" for f in result["findings"]))
 

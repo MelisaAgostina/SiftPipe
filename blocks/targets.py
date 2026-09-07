@@ -75,6 +75,14 @@ class TargetProfile:
     # neither a real vulnerability). Defaults to empty so it's opt-in per
     # target, not a behavior change for any profile that doesn't set it.
     source_exclude_file_suffixes: frozenset = frozenset()
+    # Path substrings that jump straight to the front of B4's crawl queue
+    # the moment they're discovered, instead of waiting in normal
+    # breadth-first order — for pages worth reaching before the shared
+    # per-run page budget (blocks/crawler.py's DEFAULT_MAX_PAGES) runs out.
+    # Applied *after* extra_denylist's filtering, never instead of it, so a
+    # denylisted path can never become reachable by being "prioritized".
+    # Defaults to empty: no behavior change for a target that doesn't set it.
+    crawl_priority_paths: tuple = ()
 
     @property
     def base_url(self) -> str:
@@ -217,6 +225,15 @@ NAVIQ = TargetProfile(
     # apps (evaluation/tests/, navitools/tests/) that happen to use the
     # directory form.
     source_exclude_file_suffixes=frozenset({"tests.py"}),
+    # navitools/ is this version's newest, never-attacked feature (see
+    # NEXT_SESSION.md) but its own landing page sits behind other public
+    # marketing pages (blog/, portfolio/, services/, docs/) in link order,
+    # so B4's plain breadth-first crawl was reaching it late — 13th of 15
+    # pages in a live run 2026-09-06 - with too little of the shared
+    # DEFAULT_MAX_PAGES budget left to also reach the 8 individual tool
+    # pages linked from it. Jumping it to the front of the queue the moment
+    # it's discovered leaves it, and its children, far more page budget.
+    crawl_priority_paths=("/navitools/",),
 )
 
 TARGETS = {p.name: p for p in (MATTERMOST, NAVIQ)}
