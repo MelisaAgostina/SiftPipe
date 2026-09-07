@@ -1,7 +1,25 @@
 import { useState } from "react";
-import { MoreVertical, Minus, TrendingDown, TrendingUp } from "lucide-react";
-import { usePastRuns, useRunComparison, useRunDetail } from "@/lib/queries";
+import { toast } from "sonner";
+import {
+  Archive,
+  ArchiveRestore,
+  Download,
+  FileJson,
+  Minus,
+  Trash2,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
+import {
+  useArchiveRun,
+  useDeleteRun,
+  usePastRuns,
+  useRunComparison,
+  useRunDetail,
+  useUnarchiveRun,
+} from "@/lib/queries";
 import { API_BASE, downloadReport } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import type { Strings } from "@/lib/strings";
 import type {
@@ -23,6 +41,7 @@ import {
   mapB8Finding,
   mapB9Entry,
 } from "./mappers";
+import { AllFindings } from "./CorrelationView";
 import { Callout } from "./Callout";
 import { QueryState } from "./QueryState";
 import { Section } from "./Section";
@@ -30,12 +49,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuPortal,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const STATUS_TONE: Record<RunSummary["status"], string> = {
   completed: "text-primary",
@@ -61,6 +86,11 @@ function targetLabel(target: string | null, t: Strings): string {
   return TARGET_LABELS[target] ?? target;
 }
 
+function runActionError(err: unknown, t: Strings): string {
+  const detail = (err as ApiError)?.detail ?? (err as Error)?.message ?? t.common.unknown;
+  return t.pastRunsView.runActionFailed(detail);
+}
+
 function RunRow({
   run,
   selected,
@@ -72,6 +102,32 @@ function RunRow({
   onClick: () => void;
   t: Strings;
 }) {
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const archiveMutation = useArchiveRun();
+  const unarchiveMutation = useUnarchiveRun();
+  const deleteMutation = useDeleteRun();
+
+  const handleArchive = () =>
+    archiveMutation.mutate(run.id, {
+      onSuccess: () => toast.success(t.pastRunsView.runArchived),
+      onError: (err) => toast.error(runActionError(err, t)),
+    });
+
+  const handleUnarchive = () =>
+    unarchiveMutation.mutate(run.id, {
+      onSuccess: () => toast.success(t.pastRunsView.runUnarchived),
+      onError: (err) => toast.error(runActionError(err, t)),
+    });
+
+  const handleDelete = () =>
+    deleteMutation.mutate(run.id, {
+      onSuccess: () => {
+        toast.success(t.pastRunsView.runDeleted);
+        setConfirmDeleteOpen(false);
+      },
+      onError: (err) => toast.error(runActionError(err, t)),
+    });
+
   // A native <button> can't host the dropdown trigger's own interactive
   // button without producing invalid, nested-button markup — this plays
   // the same row-selection role via role="button" + explicit keyboard
@@ -90,7 +146,12 @@ function RunRow({
       }}
       className={
         "w-full cursor-pointer rounded-lg border px-4 py-3 text-left transition-colors " +
-        (selected ? "border-primary bg-accent" : "border-border bg-card hover:bg-accent/50")
+        (run.archived ? "border-dashed border-muted-foreground/40 opacity-70 " : "") +
+        (selected
+          ? "border-primary bg-accent"
+          : run.archived
+            ? "bg-card hover:bg-accent/50"
+            : "border-border bg-card hover:bg-accent/50")
       }
     >
       <div className="flex items-center justify-between gap-2">
@@ -98,41 +159,14 @@ function RunRow({
           {t.pastRunsView.runLabel(run.id, run.mode ?? t.common.unknown)}
         </span>
         <div className="flex items-center gap-1.5">
+          {run.archived && (
+            <span title={t.pastRunsView.archivedBadge} aria-label={t.pastRunsView.archivedBadge}>
+              <Archive className="h-3.5 w-3.5 text-muted-foreground" />
+            </span>
+          )}
           <span className={"text-xs font-semibold " + STATUS_TONE[run.status]}>
             {t.pastRunsView.statusLabels[run.status]}
           </span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label={t.pastRunsView.runActionsAria}
-                onClick={(e) => e.stopPropagation()}
-                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              >
-                <MoreVertical className="h-4 w-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>{t.pastRunsView.downloadReport}</DropdownMenuSubTrigger>
-                <DropdownMenuPortal>
-                  <DropdownMenuSubContent>
-                    <DropdownMenuItem onSelect={() => downloadReport(run.id, "en")}>
-                      English
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => downloadReport(run.id, "es")}>
-                      Español
-                    </DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuPortal>
-              </DropdownMenuSub>
-              <DropdownMenuItem
-                onSelect={() => window.open(`${API_BASE}/api/runs/${run.id}`, "_blank")}
-              >
-                {t.pastRunsView.viewRawJson}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
       </div>
       <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -146,6 +180,113 @@ function RunRow({
           </span>
         )}
       </div>
+
+      {/* Icon-button toolbar, laid out inside the card (not a "..." menu
+          overlaying other content) so it never overflows the narrow list
+          column — see the button-sizing/overflow feedback on the earlier
+          dropdown-menu design. */}
+      <div className="mt-2 flex items-center gap-1 border-t border-border/60 pt-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              title={t.pastRunsView.downloadReport}
+              aria-label={t.pastRunsView.downloadReport}
+              onClick={(e) => e.stopPropagation()}
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuItem onSelect={() => downloadReport(run.id, "en")}>
+              English
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => downloadReport(run.id, "es")}>
+              Español
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <button
+          type="button"
+          title={t.pastRunsView.viewRawJson}
+          aria-label={t.pastRunsView.viewRawJson}
+          onClick={(e) => {
+            e.stopPropagation();
+            window.open(`${API_BASE}/api/runs/${run.id}`, "_blank");
+          }}
+          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <FileJson className="h-3.5 w-3.5" />
+        </button>
+
+        {run.archived ? (
+          <button
+            type="button"
+            title={t.pastRunsView.unarchiveAction}
+            aria-label={t.pastRunsView.unarchiveAction}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleUnarchive();
+            }}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <ArchiveRestore className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            title={t.pastRunsView.archiveAction}
+            aria-label={t.pastRunsView.archiveAction}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleArchive();
+            }}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Archive className="h-3.5 w-3.5" />
+          </button>
+        )}
+
+        {run.archived && (
+          <button
+            type="button"
+            title={t.pastRunsView.deleteAction}
+            aria-label={t.pastRunsView.deleteAction}
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmDeleteOpen(true);
+            }}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-destructive"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.pastRunsView.deleteConfirmTitle(run.id)}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.pastRunsView.deleteConfirmDescription}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="font-sans text-sm h-9 px-4">
+              {t.common.cancel}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="font-sans text-sm h-9 px-4 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
+              onClick={handleDelete}
+            >
+              {t.pastRunsView.deleteConfirmAction}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -364,13 +505,7 @@ function RunDetailView({ runId }: { runId: number }) {
             )}
 
             {Boolean(b9?.results.length) && (
-              <Section
-                section={{
-                  id: `run-${run.id}-B9`,
-                  title: t.pastRunsView.b9SectionTitle,
-                  findings: b9!.results.map(mapB9Entry),
-                }}
-              />
+              <AllFindings entries={b9!.results} t={t} title={t.pastRunsView.b9SectionTitle} />
             )}
           </div>
         );
@@ -383,6 +518,7 @@ export function PastRunsView() {
   const { t } = useLang();
   const query = usePastRuns();
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   return (
     <QueryState
@@ -390,28 +526,44 @@ export function PastRunsView() {
       empty={(d) => d.runs.length === 0}
       emptyMessage={t.pastRunsView.noPastRuns}
     >
-      {(data) => (
-        <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-          <div className="space-y-2">
-            {data.runs.map((run) => (
-              <RunRow
-                key={run.id}
-                run={run}
-                selected={run.id === selectedId}
-                onClick={() => setSelectedId(run.id)}
-                t={t}
-              />
-            ))}
+      {(data) => {
+        const archivedCount = data.runs.filter((r) => r.archived).length;
+        const visibleRuns = showArchived ? data.runs : data.runs.filter((r) => !r.archived);
+
+        return (
+          <div className="grid gap-6 md:grid-cols-[280px_1fr]">
+            <div className="space-y-2">
+              {visibleRuns.map((run) => (
+                <RunRow
+                  key={run.id}
+                  run={run}
+                  selected={run.id === selectedId}
+                  onClick={() => setSelectedId(run.id)}
+                  t={t}
+                />
+              ))}
+              {archivedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowArchived((v) => !v)}
+                  className="w-full rounded-lg border border-dashed border-border px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-accent/50"
+                >
+                  {showArchived
+                    ? t.pastRunsView.hideArchived(archivedCount)
+                    : t.pastRunsView.showArchived(archivedCount)}
+                </button>
+              )}
+            </div>
+            <div className="min-w-0">
+              {selectedId === null ? (
+                <p className="text-sm text-muted-foreground">{t.pastRunsView.selectRunPrompt}</p>
+              ) : (
+                <RunDetailView runId={selectedId} />
+              )}
+            </div>
           </div>
-          <div>
-            {selectedId === null ? (
-              <p className="text-sm text-muted-foreground">{t.pastRunsView.selectRunPrompt}</p>
-            ) : (
-              <RunDetailView runId={selectedId} />
-            )}
-          </div>
-        </div>
-      )}
+        );
+      }}
     </QueryState>
   );
 }

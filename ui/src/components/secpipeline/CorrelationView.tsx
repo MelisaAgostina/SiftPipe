@@ -1,11 +1,16 @@
+import { useMemo, useState } from "react";
+import { CircleHelp } from "lucide-react";
 import { useB8, useB9 } from "@/lib/queries";
-import type { B9Entry } from "@/lib/types";
+import type { B9Classification, B9Entry } from "@/lib/types";
 import { useLang } from "@/hooks/use-lang";
+import type { Strings } from "@/lib/strings";
 import { mapB8Finding, mapB9Entry } from "./mappers";
 import { Callout } from "./Callout";
 import { FirstRunGuide } from "./FirstRunGuide";
 import { QueryState } from "./QueryState";
 import { Section } from "./Section";
+import { Toggle } from "@/components/ui/toggle";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 function Stat({
   value,
@@ -47,6 +52,123 @@ function HighlightedHybridFinding({ entries }: { entries: B9Entry[] }) {
       <p className="mt-1 text-xs text-muted-foreground">
         {t.correlationView.hybridMatchNote(best.match_tier)}
       </p>
+    </div>
+  );
+}
+
+const CLASSIFICATION_OPTIONS: B9Classification[] = ["CONFIRMED", "POSSIBLE", "DESCARTED"];
+const SEVERITY_OPTIONS: B9Entry["severity"][] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+// scoring.py's CONFIDENCE_FOR_MATCH_TIER — the fixed set of values
+// confidence_for_match() ever produces. B9Entry.confidence sometimes carries
+// a trailing space in the real data (see types.ts), so filtering always
+// compares against the trimmed value.
+const CONFIDENCE_OPTIONS = ["REALLY HIGH", "HIGH", "MEDIUM", "LOW"];
+
+function RankingTooltip() {
+  const { t } = useLang();
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger aria-label={t.correlationView.rankingTooltipAria}>
+          <CircleHelp className="h-3.5 w-3.5 text-muted-foreground" />
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{t.correlationView.rankingTooltip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function FilterChips<T extends string>({
+  label,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  options: T[];
+  selected: Set<T>;
+  onToggle: (value: T) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs font-semibold tracking-wider text-muted-foreground">{label}</span>
+      {options.map((opt) => (
+        <Toggle
+          key={opt}
+          size="sm"
+          pressed={selected.has(opt)}
+          onPressedChange={() => onToggle(opt)}
+          className="text-xs"
+        >
+          {opt}
+        </Toggle>
+      ))}
+    </div>
+  );
+}
+
+function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
+export function AllFindings({
+  entries,
+  t,
+  title,
+}: {
+  entries: B9Entry[];
+  t: Strings;
+  title: string;
+}) {
+  const [classifications, setClassifications] = useState<Set<B9Classification>>(new Set());
+  const [severities, setSeverities] = useState<Set<B9Entry["severity"]>>(new Set());
+  const [confidences, setConfidences] = useState<Set<string>>(new Set());
+
+  const filtered = useMemo(
+    () =>
+      entries.filter(
+        (e) =>
+          (classifications.size === 0 || classifications.has(e.classification)) &&
+          (severities.size === 0 || severities.has(e.severity)) &&
+          (confidences.size === 0 || confidences.has(e.confidence.trim().toUpperCase())),
+      ),
+    [entries, classifications, severities, confidences],
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2 rounded-lg border border-border bg-card/50 px-4 py-3">
+        <FilterChips
+          label={t.correlationView.filterClassificationLabel}
+          options={CLASSIFICATION_OPTIONS}
+          selected={classifications}
+          onToggle={(v) => setClassifications((prev) => toggleInSet(prev, v))}
+        />
+        <FilterChips
+          label={t.correlationView.filterSeverityLabel}
+          options={SEVERITY_OPTIONS}
+          selected={severities}
+          onToggle={(v) => setSeverities((prev) => toggleInSet(prev, v))}
+        />
+        <FilterChips
+          label={t.correlationView.filterConfidenceLabel}
+          options={CONFIDENCE_OPTIONS}
+          selected={confidences}
+          onToggle={(v) => setConfidences((prev) => toggleInSet(prev, v))}
+        />
+      </div>
+
+      <Section
+        section={{
+          id: "B9-entries",
+          title,
+          findings: filtered.map(mapB9Entry),
+        }}
+        titleExtra={<RankingTooltip />}
+      />
     </div>
   );
 }
@@ -115,12 +237,10 @@ export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
                 />
               </div>
 
-              <Section
-                section={{
-                  id: "B9-entries",
-                  title: t.correlationView.b9AllFindingsTitle,
-                  findings: data.results.map(mapB9Entry),
-                }}
+              <AllFindings
+                entries={data.results}
+                t={t}
+                title={t.correlationView.b9AllFindingsTitle}
               />
             </section>
           );

@@ -633,6 +633,38 @@ def get_run(run_id: int):
     return run
 
 
+@protected.post("/api/runs/{run_id}/archive")
+def archive_run(run_id: int):
+    """Marks a past run archived — kept in history, just visually set aside
+    in the Past Runs list. Reversible via unarchive_run below."""
+    if not run_history.set_archived(run_id, True):
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return {"id": run_id, "archived": True}
+
+
+@protected.post("/api/runs/{run_id}/unarchive")
+def unarchive_run(run_id: int):
+    """Reverses archive_run above — no expiry, so this always works as long
+    as the run itself still exists."""
+    if not run_history.set_archived(run_id, False):
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return {"id": run_id, "archived": False}
+
+
+@protected.delete("/api/runs/{run_id}")
+def delete_run(run_id: int):
+    """Permanently deletes a run and its snapshotted block data. Only
+    archived runs can be deleted — archiving first is the deliberate,
+    reversible step before this irreversible one."""
+    run = run_history.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    if not run["archived"]:
+        raise HTTPException(status_code=409, detail="Only archived runs can be deleted")
+    run_history.delete_run(run_id)
+    return {"id": run_id, "deleted": True}
+
+
 @protected.get("/api/runs/{run_id}/compare")
 def get_run_comparison(run_id: int):
     """New vs. recurring vs. resolved findings, and the severity-count

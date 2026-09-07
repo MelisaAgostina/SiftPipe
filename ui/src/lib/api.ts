@@ -115,6 +115,12 @@ export const getRuns = () => request<RunsListResponse>("/api/runs");
 export const getRun = (runId: number) => request<RunDetail>(`/api/runs/${runId}`);
 export const getRunComparison = (runId: number) =>
   request<RunComparison>(`/api/runs/${runId}/compare`);
+export const archiveRun = (runId: number) =>
+  request<{ id: number; archived: boolean }>(`/api/runs/${runId}/archive`, { method: "POST" });
+export const unarchiveRun = (runId: number) =>
+  request<{ id: number; archived: boolean }>(`/api/runs/${runId}/unarchive`, { method: "POST" });
+export const deleteRun = (runId: number) =>
+  request<{ id: number; deleted: boolean }>(`/api/runs/${runId}`, { method: "DELETE" });
 export const resetPipeline = () => request<ResetResponse>("/api/reset", { method: "POST" });
 
 export const getActiveTarget = () => request<ActiveTarget>("/api/target");

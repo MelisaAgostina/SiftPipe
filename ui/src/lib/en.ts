@@ -4,6 +4,7 @@ export const en: Strings = {
   common: {
     unknown: "unknown",
     unknownTarget: "unknown target",
+    cancel: "Cancel",
   },
   phaseLabels: {
     b3: "Static analysis (AI)",
@@ -106,6 +107,12 @@ export const en: Strings = {
     statFalsePositives: "false positives",
     statTotalAnalyzed: "total analyzed",
     hybridMatchNote: (matchTier) => `(both sources match — match_tier: ${matchTier})`,
+    filterClassificationLabel: "Classification",
+    filterSeverityLabel: "Severity",
+    filterConfidenceLabel: "Confidence",
+    rankingTooltipAria: "How results are ranked",
+    rankingTooltip:
+      "Findings are scored by their evidence — proof from a real attack counts most, a code-only match counts less, and it goes up when both agree. Severity reads how bad that makes the finding; confidence (on ambiguous POSSIBLE findings) reads how sure we are it's real.",
   },
   findingRow: {
     screenshotAlt: "Screenshot captured at the moment of this finding",
@@ -116,7 +123,6 @@ export const en: Strings = {
   pastRunsView: {
     downloadReport: "Download report",
     viewRawJson: "View raw JSON",
-    runActionsAria: "Run actions",
     runLabel: (id, mode) => `Run #${id} · ${mode}`,
     statusLabels: {
       running: "RUNNING",
@@ -146,6 +152,20 @@ export const en: Strings = {
     unverifiedSinceRun: (id, count) => `NO LONGER DETECTED SINCE RUN #${id} · ${count}`,
     unverifiedExplainer:
       "Based on static analysis alone — never tested with a real attack, so not being re-detected doesn't confirm a fix.",
+    archiveAction: "Archive",
+    unarchiveAction: "Unarchive",
+    deleteAction: "Delete",
+    archivedBadge: "ARCHIVED",
+    showArchived: (count) => `See archived (${count})`,
+    hideArchived: (count) => `Hide archived (${count})`,
+    deleteConfirmTitle: (id) => `Delete run #${id}?`,
+    deleteConfirmDescription:
+      "This permanently removes the run and all its saved results. This can't be undone.",
+    deleteConfirmAction: "Delete permanently",
+    runArchived: "Run archived",
+    runUnarchived: "Run unarchived",
+    runDeleted: "Run deleted",
+    runActionFailed: (detail) => `Action failed: ${detail}`,
   },
   logsView: {
     emptyMessage: "No logs yet — run the pipeline to see live output.",

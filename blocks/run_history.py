@@ -48,6 +48,13 @@ def _connect():
     except sqlite3.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise
+    # Same pattern for `archived` — every pre-existing run defaults to 0
+    # (not archived), same as a freshly inserted row would.
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS run_blocks (
@@ -151,7 +158,7 @@ def list_runs():
     try:
         rows = conn.execute(
             """
-            SELECT id, started_at, finished_at, mode, target, status, total_findings, confirmed_findings
+            SELECT id, started_at, finished_at, mode, target, status, total_findings, confirmed_findings, archived
             FROM runs ORDER BY id DESC
             """
         ).fetchall()
@@ -167,6 +174,7 @@ def list_runs():
             "status": r[5],
             "total_findings": r[6],
             "confirmed_findings": r[7],
+            "archived": bool(r[8]),
         }
         for r in rows
     ]
@@ -180,7 +188,7 @@ def get_run(run_id):
     try:
         run_row = conn.execute(
             """
-            SELECT id, started_at, finished_at, mode, target, status, total_findings, confirmed_findings
+            SELECT id, started_at, finished_at, mode, target, status, total_findings, confirmed_findings, archived
             FROM runs WHERE id = ?
             """,
             (run_id,),
@@ -203,8 +211,35 @@ def get_run(run_id):
         "status": run_row[5],
         "total_findings": run_row[6],
         "confirmed_findings": run_row[7],
+        "archived": bool(run_row[8]),
         "blocks": {name: json.loads(data) for name, data in block_rows},
     }
+
+
+def set_archived(run_id, archived):
+    """Marks a run archived/unarchived. Returns False if run_id doesn't exist."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "UPDATE runs SET archived = ? WHERE id = ?", (1 if archived else 0, run_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_run(run_id):
+    """Permanently removes a run and its snapshotted block data. Returns
+    False if run_id doesn't exist."""
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        conn.execute("DELETE FROM run_blocks WHERE run_id = ?", (run_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
 
 
 def _find_previous_run_id(run_id, target):

@@ -15,6 +15,7 @@ export type Strings = {
   common: {
     unknown: string;
     unknownTarget: string;
+    cancel: string;
   };
   phaseLabels: Record<PhaseId, string>;
   tabLabels: Record<TabStringId, string>;
@@ -79,6 +80,11 @@ export type Strings = {
     statFalsePositives: string;
     statTotalAnalyzed: string;
     hybridMatchNote: (matchTier: string) => string;
+    filterClassificationLabel: string;
+    filterSeverityLabel: string;
+    filterConfidenceLabel: string;
+    rankingTooltipAria: string;
+    rankingTooltip: string;
   };
   findingRow: {
     screenshotAlt: string;
@@ -89,7 +95,6 @@ export type Strings = {
   pastRunsView: {
     downloadReport: string;
     viewRawJson: string;
-    runActionsAria: string;
     runLabel: (id: number, mode: string) => string;
     statusLabels: Record<RunStatusId, string>;
     selectRunPrompt: string;
@@ -112,6 +117,19 @@ export type Strings = {
     resolvedSinceRun: (id: number, count: number) => string;
     unverifiedSinceRun: (id: number, count: number) => string;
     unverifiedExplainer: string;
+    archiveAction: string;
+    unarchiveAction: string;
+    deleteAction: string;
+    archivedBadge: string;
+    showArchived: (count: number) => string;
+    hideArchived: (count: number) => string;
+    deleteConfirmTitle: (id: number) => string;
+    deleteConfirmDescription: string;
+    deleteConfirmAction: string;
+    runArchived: string;
+    runUnarchived: string;
+    runDeleted: string;
+    runActionFailed: (detail: string) => string;
   };
   logsView: {
     emptyMessage: string;

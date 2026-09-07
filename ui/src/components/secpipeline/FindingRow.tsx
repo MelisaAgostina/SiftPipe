@@ -20,8 +20,8 @@ export function FindingRow({ finding }: { finding: UIFinding }) {
       >
         <Tag tone={finding.tone} label={finding.label} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-foreground">{finding.title}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{finding.subtitle}</p>
+          <p className="break-words text-sm font-medium text-foreground">{finding.title}</p>
+          <p className="mt-0.5 break-words text-xs text-muted-foreground">{finding.subtitle}</p>
           {hasMedia && (
             <div className="mt-3 flex flex-wrap gap-3">
               {finding.screenshotUrl && (

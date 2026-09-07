@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  archiveRun,
+  deleteRun,
   getActiveTarget,
   getBlockResult,
   getEnvironmentHealth,
@@ -14,6 +16,7 @@ import {
   resetPipeline,
   runPipeline,
   setActiveTarget,
+  unarchiveRun,
   validatePayloads,
 } from "./api";
 import type {
@@ -177,6 +180,30 @@ export function useValidatePayloads() {
 
 export function usePastRuns() {
   return useQuery({ queryKey: ["past-runs"], queryFn: getRuns });
+}
+
+export function useArchiveRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: number) => archiveRun(runId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["past-runs"] }),
+  });
+}
+
+export function useUnarchiveRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: number) => unarchiveRun(runId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["past-runs"] }),
+  });
+}
+
+export function useDeleteRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: number) => deleteRun(runId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["past-runs"] }),
+  });
 }
 
 export function useRunDetail(runId: number | null) {

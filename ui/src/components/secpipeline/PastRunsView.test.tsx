@@ -5,9 +5,19 @@ vi.mock("@/lib/queries", () => ({
   usePastRuns: vi.fn(),
   useRunComparison: vi.fn(),
   useRunDetail: vi.fn(),
+  useArchiveRun: vi.fn(),
+  useUnarchiveRun: vi.fn(),
+  useDeleteRun: vi.fn(),
 }));
 
-import { usePastRuns, useRunComparison, useRunDetail } from "@/lib/queries";
+import {
+  usePastRuns,
+  useRunComparison,
+  useRunDetail,
+  useArchiveRun,
+  useUnarchiveRun,
+  useDeleteRun,
+} from "@/lib/queries";
 import { PastRunsView } from "./PastRunsView";
 import type { B9Entry, RunSummary } from "@/lib/types";
 
@@ -29,6 +39,7 @@ function run(overrides: Partial<RunSummary> = {}): RunSummary {
     status: "completed",
     total_findings: 5,
     confirmed_findings: 2,
+    archived: false,
     ...overrides,
   } as RunSummary;
 }
@@ -56,6 +67,9 @@ describe("PastRunsView", () => {
   beforeEach(() => {
     vi.mocked(useRunComparison).mockReturnValue(loadingQuery() as never);
     vi.mocked(useRunDetail).mockReturnValue(loadingQuery() as never);
+    vi.mocked(useArchiveRun).mockReturnValue({ mutate: vi.fn(), isPending: false } as never);
+    vi.mocked(useUnarchiveRun).mockReturnValue({ mutate: vi.fn(), isPending: false } as never);
+    vi.mocked(useDeleteRun).mockReturnValue({ mutate: vi.fn(), isPending: false } as never);
   });
 
   it("shows the empty state when there are no past runs", () => {

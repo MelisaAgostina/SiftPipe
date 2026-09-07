@@ -184,6 +184,7 @@ export type RunSummary = {
   status: RunStatus;
   total_findings: number | null;
   confirmed_findings: number | null;
+  archived: boolean;
 };
 export type RunDetail = RunSummary & {
   // Same {block_name: json} shape as GET /api/results (e.g. "B3_static",

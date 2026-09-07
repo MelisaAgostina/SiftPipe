@@ -4,6 +4,7 @@ export const es: Strings = {
   common: {
     unknown: "desconocido",
     unknownTarget: "objetivo desconocido",
+    cancel: "Cancelar",
   },
   phaseLabels: {
     b3: "Análisis estático (IA)",
@@ -109,6 +110,12 @@ export const es: Strings = {
     statFalsePositives: "falsos positivos",
     statTotalAnalyzed: "total analizados",
     hybridMatchNote: (matchTier) => `(ambas fuentes coinciden — match_tier: ${matchTier})`,
+    filterClassificationLabel: "Clasificación",
+    filterSeverityLabel: "Severidad",
+    filterConfidenceLabel: "Confianza",
+    rankingTooltipAria: "Cómo se clasifican los resultados",
+    rankingTooltip:
+      "Los hallazgos se puntúan según su evidencia — la prueba de un ataque real cuenta más, una coincidencia solo de código cuenta menos, y sube cuando ambos coinciden. La severidad indica qué tan grave es el hallazgo; la confianza (en los hallazgos POSSIBLE ambiguos) indica qué tan seguros estamos de que es real.",
   },
   findingRow: {
     screenshotAlt: "Captura de pantalla tomada en el momento de este hallazgo",
@@ -119,7 +126,6 @@ export const es: Strings = {
   pastRunsView: {
     downloadReport: "Descargar informe",
     viewRawJson: "Ver JSON sin procesar",
-    runActionsAria: "Acciones de la ejecución",
     runLabel: (id, mode) => `Ejecución #${id} · ${mode}`,
     statusLabels: {
       running: "EN EJECUCIÓN",
@@ -150,6 +156,20 @@ export const es: Strings = {
     unverifiedSinceRun: (id, count) => `YA NO DETECTADOS DESDE LA EJECUCIÓN #${id} · ${count}`,
     unverifiedExplainer:
       "Solo se basan en un análisis estático — no fueron probados con un ataque real, así que no re-detectarlos no confirma que se hayan corregido.",
+    archiveAction: "Archivar",
+    unarchiveAction: "Desarchivar",
+    deleteAction: "Eliminar",
+    archivedBadge: "ARCHIVADA",
+    showArchived: (count) => `Ver archivadas (${count})`,
+    hideArchived: (count) => `Ocultar archivadas (${count})`,
+    deleteConfirmTitle: (id) => `¿Eliminar la ejecución #${id}?`,
+    deleteConfirmDescription:
+      "Esto elimina permanentemente la ejecución y todos sus resultados guardados. No se puede deshacer.",
+    deleteConfirmAction: "Eliminar permanentemente",
+    runArchived: "Ejecución archivada",
+    runUnarchived: "Ejecución desarchivada",
+    runDeleted: "Ejecución eliminada",
+    runActionFailed: (detail) => `La acción falló: ${detail}`,
   },
   logsView: {
     emptyMessage: "Todavía no hay logs — ejecuta el pipeline para ver la salida en vivo.",

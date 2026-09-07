@@ -177,15 +177,27 @@ function InteractiveReview({
     <div className="space-y-4">
       <Callout>{t.payloadReviewView.pausedForReview}</Callout>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
           {t.payloadReviewView.selectedCount(selected.size, selectableCount)}
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={onSelectAll} disabled={submitting}>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="px-2 text-xs"
+            onClick={onSelectAll}
+            disabled={submitting}
+          >
             {t.payloadReviewView.selectAll}
           </Button>
-          <Button variant="outline" size="sm" onClick={onSelectNone} disabled={submitting}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="px-2 text-xs"
+            onClick={onSelectNone}
+            disabled={submitting}
+          >
             {t.payloadReviewView.deselectAll}
           </Button>
         </div>
@@ -247,8 +259,12 @@ function InteractiveReview({
         />
       </div>
 
-      <Button onClick={onSubmit} disabled={submitting || selected.size === 0} className="w-full">
-        {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+      <Button
+        onClick={onSubmit}
+        disabled={submitting || selected.size === 0}
+        className="h-auto w-full whitespace-normal py-3 text-center leading-snug"
+      >
+        {submitting && <Loader2 className="h-4 w-4 shrink-0 animate-spin" />}
         {t.payloadReviewView.validateAndContinue(selected.size)}
       </Button>
     </div>
