@@ -31,6 +31,7 @@ const DEFAULT_STATUS: PipelineStatus = {
   running: false,
   current_block: null,
   waiting_for_human: false,
+  waiting_for_scope_review: false,
   completed: false,
   error: null,
 };

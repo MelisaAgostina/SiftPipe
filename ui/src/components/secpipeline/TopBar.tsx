@@ -10,6 +10,7 @@ import {
 } from "@/lib/queries";
 import { useLang, type Lang } from "@/hooks/use-lang";
 import { useLogoutHandler } from "@/hooks/use-logout-handler";
+import { DiscoverTargetDialog } from "./DiscoverTargetDialog";
 
 type EnvDotState = "inactive" | "preparing" | "ready" | "error";
 
@@ -97,64 +98,82 @@ export function TopBar() {
     envStatus?.running ||
     setTargetMutation.isPending;
 
+  // The picker below only ever lists Mattermost/NaViQ (deliberately - no UI
+  // enumerates every discovered target), so an active target that isn't
+  // either of those has no pill to highlight at all. Shown as its own
+  // segment, styled exactly like a selected pill, so the active target is
+  // never displayed as "nothing selected."
+  const isDiscoveredActive =
+    activeTarget != null && !activeTarget.available.some((opt) => opt.name === activeTarget.name);
+
   return (
-    <header className="flex items-center justify-between gap-4 border-b border-border bg-card px-6 py-4">
-      <div className="flex items-center gap-3 text-lg font-semibold tracking-tight">
-        <img
-          src={logo}
-          alt="SiftPipe"
-          className="h-12 invert w-auto select-none"
-          draggable={false}
-        />
-      </div>
-      <div
-        data-tour="target-picker"
-        className="flex items-center gap-3 rounded-md border border-border bg-background/60 px-3 py-1.5 text-sm text-foreground"
-      >
-        <Database className="h-4 w-4 shrink-0 text-muted-foreground" />
-        {activeTarget ? (
-          <>
-            <div className="flex items-center gap-1 rounded-md border border-border bg-card/60 p-0.5 text-xs">
-              {activeTarget.available.map((opt) => (
-                <button
-                  key={opt.name}
-                  onClick={() => setTargetMutation.mutate({ name: opt.name })}
-                  disabled={switchDisabled || opt.name === activeTarget.name}
-                  title={
-                    switchDisabled && opt.name !== activeTarget.name
-                      ? t.topBar.switchDisabledTooltip
-                      : undefined
-                  }
-                  className={
-                    "rounded px-2 py-1 font-medium transition-colors disabled:cursor-not-allowed " +
-                    (opt.name === activeTarget.name
-                      ? "bg-accent text-foreground ring-1 ring-border"
-                      : "text-muted-foreground hover:text-foreground disabled:opacity-50")
-                  }
-                >
-                  {opt.display_name}
-                </button>
-              ))}
-            </div>
-            <span className="text-muted-foreground">{activeTarget.stack_label}</span>
-            {setTargetMutation.isPending && (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-            )}
-            {setTargetMutation.isError && (
-              <span className="text-xs text-destructive">{t.topBar.couldntSwitchTarget}</span>
-            )}
-          </>
-        ) : (
-          <span className="text-muted-foreground">{t.topBar.loadingTarget}</span>
-        )}
-      </div>
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className={"h-2 w-2 rounded-full " + DOT_STYLE[dotState]} />
-          {t.topBar.dotLabel[dotState]}
+    <header className="border-b border-border bg-card">
+      <div className="flex items-center justify-between gap-4 px-6 py-4">
+        <div className="flex items-center gap-3 text-lg font-semibold tracking-tight">
+          <img
+            src={logo}
+            alt="SiftPipe"
+            className="h-12 invert w-auto select-none"
+            draggable={false}
+          />
         </div>
-        <LangToggle />
-        <LogoutButton />
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className={"h-2 w-2 rounded-full " + DOT_STYLE[dotState]} />
+            {t.topBar.dotLabel[dotState]}
+          </div>
+          <LangToggle />
+          <LogoutButton />
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-4 border-t border-border px-6 py-3">
+        <div
+          data-tour="target-picker"
+          className="flex items-center gap-3 rounded-md border border-border bg-background/60 px-3 py-1.5 text-sm text-foreground"
+        >
+          <Database className="h-4 w-4 shrink-0 text-muted-foreground" />
+          {activeTarget ? (
+            <>
+              <div className="flex items-center gap-1 rounded-md border border-border bg-card/60 p-0.5 text-xs">
+                {activeTarget.available.map((opt) => (
+                  <button
+                    key={opt.name}
+                    onClick={() => setTargetMutation.mutate({ name: opt.name })}
+                    disabled={switchDisabled || opt.name === activeTarget.name}
+                    title={
+                      switchDisabled && opt.name !== activeTarget.name
+                        ? t.topBar.switchDisabledTooltip
+                        : undefined
+                    }
+                    className={
+                      "rounded px-2 py-1 font-medium transition-colors disabled:cursor-not-allowed " +
+                      (opt.name === activeTarget.name
+                        ? "bg-accent text-foreground ring-1 ring-border"
+                        : "text-muted-foreground hover:text-foreground disabled:opacity-50")
+                    }
+                  >
+                    {opt.display_name}
+                  </button>
+                ))}
+                {isDiscoveredActive && (
+                  <span className="rounded bg-accent px-2 py-1 font-medium text-foreground ring-1 ring-border">
+                    {activeTarget.display_name}
+                  </span>
+                )}
+              </div>
+              <span className="text-muted-foreground">{activeTarget.stack_label}</span>
+              {setTargetMutation.isPending && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+              )}
+              {setTargetMutation.isError && (
+                <span className="text-xs text-destructive">{t.topBar.couldntSwitchTarget}</span>
+              )}
+            </>
+          ) : (
+            <span className="text-muted-foreground">{t.topBar.loadingTarget}</span>
+          )}
+        </div>
+        <DiscoverTargetDialog />
       </div>
     </header>
   );

@@ -12,6 +12,14 @@ import type {
   RunPipelineRequest,
   RunResponse,
   RunsListResponse,
+  DiscoverTargetRequest,
+  DiscoverTargetResponse,
+  DiscoveryStatus,
+  EnvCheckResponse,
+  NameAvailableResponse,
+  ScopeReviewApproveRequest,
+  ScopeReviewApproveResponse,
+  ScopeReviewResult,
   SetTargetRequest,
   SetTargetResponse,
   ValidateRequest,
@@ -148,6 +156,28 @@ export const validatePayloads = (body: ValidateRequest) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+export const getScopeReview = () => request<ScopeReviewResult>("/api/scope-review");
+export const approveScopeReview = (body: ScopeReviewApproveRequest) =>
+  request<ScopeReviewApproveResponse>("/api/scope-review/approve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const checkTargetNameAvailable = (name: string) =>
+  request<NameAvailableResponse>(
+    `/api/discover-target/name-available?name=${encodeURIComponent(name)}`,
+  );
+export const checkEnvVar = (name: string) =>
+  request<EnvCheckResponse>(`/api/env-check?name=${encodeURIComponent(name)}`);
+export const startDiscovery = (body: DiscoverTargetRequest) =>
+  request<DiscoverTargetResponse>("/api/discover-target", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+export const getDiscoveryStatus = () => request<DiscoveryStatus>("/api/discover-target/status");
 
 /**
  * Downloads a run's PDF report and triggers a browser save — bypasses the

@@ -7,16 +7,27 @@ vi.mock("@/lib/queries", () => ({
   useEnvironmentStatus: vi.fn(),
   usePipelineStatus: vi.fn(),
   useSetTarget: vi.fn(),
+  // DiscoverTargetDialog renders inside TopBar (next to the target picker)
+  // and needs these too - only exercised by its own dedicated test file,
+  // just given harmless defaults here so TopBar's own tests don't crash.
+  useCheckTargetName: vi.fn(),
+  useCheckEnvVar: vi.fn(),
+  useStartDiscovery: vi.fn(),
+  useDiscoveryStatus: vi.fn(),
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("@/hooks/use-logout-handler", () => ({ useLogoutHandler: () => vi.fn() }));
 
 import {
   useActiveTarget,
+  useCheckEnvVar,
+  useCheckTargetName,
+  useDiscoveryStatus,
   useEnvironmentHealth,
   useEnvironmentStatus,
   usePipelineStatus,
   useSetTarget,
+  useStartDiscovery,
 } from "@/lib/queries";
 import { TopBar } from "./TopBar";
 
@@ -68,6 +79,10 @@ function setup(
     isPending: overrides.setTargetPending ?? false,
     isError: overrides.setTargetError ?? false,
   } as never);
+  vi.mocked(useCheckTargetName).mockReturnValue({ data: undefined, isLoading: false } as never);
+  vi.mocked(useCheckEnvVar).mockReturnValue({ data: undefined, isLoading: false } as never);
+  vi.mocked(useStartDiscovery).mockReturnValue({ mutate: vi.fn(), isPending: false } as never);
+  vi.mocked(useDiscoveryStatus).mockReturnValue({ data: undefined } as never);
 
   return render(<TopBar />);
 }
@@ -96,6 +111,18 @@ describe("TopBar", () => {
     setup();
 
     expect(screen.getByRole("button", { name: "Mattermost" })).toBeDisabled();
+  });
+
+  it("shows the active target's own name, highlighted, when it's a discovered target not in the picker", () => {
+    // The picker only ever lists Mattermost/NaViQ - a discovered target
+    // active target used to leave neither pill highlighted at all.
+    setup({ target: { name: "juiceshop", display_name: "Juiceshop" } });
+
+    expect(screen.getByText("Juiceshop").className).toMatch(/bg-accent/);
+    expect(screen.getByRole("button", { name: "Mattermost" }).className).not.toMatch(/bg-accent/);
+    expect(screen.getByRole("button", { name: "NaViQ" }).className).not.toMatch(/bg-accent/);
+    // Still switchable back to either hardcoded target from here.
+    expect(screen.getByRole("button", { name: "Mattermost" })).toBeEnabled();
   });
 
   it("clicking a different target calls the switch mutation with its name", () => {

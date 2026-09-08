@@ -16,7 +16,9 @@ yet.
 """
 
 from dataclasses import dataclass
+import json
 import os
+import re
 
 from dotenv import load_dotenv
 
@@ -241,10 +243,78 @@ DEFAULT_TARGET = "mattermost"
 
 
 def get_target(name: str = DEFAULT_TARGET) -> TargetProfile:
-    try:
+    if name in TARGETS:
         return TARGETS[name]
-    except KeyError:
+    return _load_discovered_target(name)
+
+
+VALID_TARGET_NAME = re.compile(r"^[a-z0-9_-]{1,64}$")
+
+
+def is_valid_target_name(name: str) -> bool:
+    """
+    Whitelists safe target names before they're ever used to build a
+    targets/<name>.json path — get_target()'s fallback below, plus
+    discover_target.py's own file write and api.py's discovery endpoints
+    all build that path from a name that ultimately came from a form field
+    or query param, never trusted as traversal-safe on its own. Lowercase
+    letters, digits, underscore and hyphen only (matching the convention
+    every real target name already uses, e.g. "mattermost", "juiceshop") -
+    deliberately excludes "." and "/" so a name like "../../etc/passwd" or
+    "a/b" can never resolve outside targets/.
+    """
+    return bool(VALID_TARGET_NAME.match(name))
+
+
+def _load_discovered_target(name: str) -> TargetProfile:
+    """
+    Fallback for a name that isn't one of the two profiles above: looks for
+    targets/<name>.json, the file discover_target.py (repo root, a
+    standalone script — not part of this module or imported by it) writes
+    after autonomously discovering a new site's login selectors. Kept as a
+    separate lookup rather than merged into TARGETS so MATTERMOST/NAVIQ's
+    own lookup is provably unchanged — a name that's already in TARGETS
+    never reaches this function at all.
+    """
+    if not is_valid_target_name(name):
         raise ValueError(f"Unknown target {name!r}. Available: {', '.join(sorted(TARGETS))}")
+
+    path = f"targets/{name}.json"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        raise ValueError(
+            f"Unknown target {name!r}. Available: {', '.join(sorted(TARGETS))}, "
+            f"or a targets/<name>.json file (see discover_target.py)"
+        )
+
+    return TargetProfile(
+        name=data["name"],
+        display_name=data.get("display_name") or data["name"].title(),
+        stack_label=data.get("stack_label") or "Discovered target (unreviewed)",
+        base_url_env=data["base_url_env"],
+        base_url_default=data["base_url_default"],
+        login_path=data["login_path"],
+        login_id_selectors=data["login_id_selectors"],
+        password_selectors=data["password_selectors"],
+        submit_selectors=data["submit_selectors"],
+        username_env=data["username_env"],
+        username_default=data.get("username_default", ""),
+        password_env=data["password_env"],
+        password_default=data.get("password_default", ""),
+        authenticated_selectors=data.get("authenticated_selectors", []),
+        supports_fresh_reset=data.get("supports_fresh_reset", False),
+        extra_denylist=data.get("extra_denylist", []),
+        source_dir=data.get("source_dir", ""),
+        source_extensions=tuple(data.get("source_extensions", [])),
+        source_exclude_dirs=frozenset(data.get("source_exclude_dirs", [])),
+        source_relevant_dirs=(
+            frozenset(data["source_relevant_dirs"]) if data.get("source_relevant_dirs") else None
+        ),
+        source_exclude_file_suffixes=frozenset(data.get("source_exclude_file_suffixes", [])),
+        crawl_priority_paths=tuple(data.get("crawl_priority_paths", [])),
+    )
 
 
 def result_path(target_name: str, filename: str) -> str:

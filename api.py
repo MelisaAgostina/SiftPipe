@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -26,7 +27,8 @@ from blocks.pipeline import (
     run_static_analysis,
     validate_required_env_vars,
 )
-from blocks.targets import TARGETS, get_target, result_path
+from blocks.targets import TARGETS, get_target, is_valid_target_name, result_path
+from discover_target import discover as run_discovery
 
 app = FastAPI(title="SiftPipe API")
 
@@ -155,6 +157,11 @@ pipeline_state = {
     "running": False,
     "current_block": None,   # "B3", "B4", ... o None
     "waiting_for_human": False,
+    # Separate flag from waiting_for_human above: this one pauses right
+    # after B4, before B5 ever turns anything it found into an attack
+    # target, and only ever becomes true for a discovered target (see
+    # run_pipeline_until_b6) — Mattermost/NaViQ never set it.
+    "waiting_for_scope_review": False,
     "completed": False,
     "error": None,
     "logs": [],
@@ -169,6 +176,19 @@ env_state = {
     "completed": False,
     "error": None,
     "logs": [],
+}
+
+# State for the "discover a new target" flow (discover_target.py, triggered
+# from the frontend rather than run by hand) — its own dict, separate from
+# pipeline_state, since it isn't a stage of the B3-B9 pipeline and has its
+# own lifecycle (one attempt, not resumed across a human-review pause).
+discovery_state = {
+    "running": False,
+    "error": None,     # an unexpected crash only - discover()'s own reported
+                        # failures (bad selectors, login rejected) live in
+                        # result["error"] instead, since those are normal,
+                        # inspectable outcomes, not exceptions.
+    "result": None,     # the full dict discover_target.py's discover() returns
 }
 
 # pipeline_results (blocks/pipeline.py) is a plain module-scope dict, mutated
@@ -281,6 +301,51 @@ def run_environment_reset():
         env_state["running"] = False
 
 
+def _target_name_taken(name: str) -> bool:
+    # An invalid name is never "available" either - this is also what keeps
+    # a malformed/traversal name from ever reaching the Path() check below,
+    # since every caller (start_target_discovery, check_target_name_available)
+    # treats "taken" the same as "can't use this name".
+    if not is_valid_target_name(name):
+        return True
+    return name in TARGETS or Path(f"targets/{name}.json").exists()
+
+
+def run_target_discovery(name, base_url, login_path, username_env, password_env):
+    """Background counterpart of running discover_target.py by hand: same
+    discover() call, same targets/<name>.json it writes - just triggered
+    from the frontend and polled instead of run at a terminal."""
+    discovery_state["running"] = True
+    discovery_state["error"] = None
+    discovery_state["result"] = None
+
+    # Defense in depth: start_target_discovery below already rejects a bad
+    # name before ever starting the thread that calls this function, but
+    # this function writes a file from `name` too and shouldn't have to
+    # trust every future caller to have checked first.
+    if not is_valid_target_name(name):
+        discovery_state["error"] = f"Invalid target name {name!r}"
+        discovery_state["running"] = False
+        return
+
+    try:
+        result = run_discovery(
+            name=name,
+            base_url=base_url,
+            login_path=login_path,
+            username_env=username_env,
+            password_env=password_env,
+        )
+        os.makedirs("targets", exist_ok=True)
+        with open(f"targets/{name}.json", "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
+        discovery_state["result"] = result
+    except Exception as e:
+        discovery_state["error"] = str(e)
+    finally:
+        discovery_state["running"] = False
+
+
 def _fail_pipeline(e):
     """Shared except-block bookending for run_pipeline_until_b6 and
     run_pipeline_from_b7 - previously each wrote out the same
@@ -322,12 +387,60 @@ def run_pipeline_until_b6(mode="unknown"):
             run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"])
             log("OK B4 completed")
 
+            # Discovered target (blocks/targets.py's targets/<name>.json
+            # fallback, written by discover_target.py) — nobody has looked
+            # at what this login can actually reach yet, unlike Mattermost/
+            # NaViQ's extra_denylist, which reflects a real hand-review (see
+            # NAVIQ's TargetProfile comment: its staff login also reached an
+            # unrelated admin/payment app, caught only by a human looking).
+            # Pausing here is what makes that review binding — extra_denylist
+            # itself is only checked during the crawl B4 just finished, so
+            # editing it afterward wouldn't remove anything already found.
+            # POST /api/scope-review/approve is what actually does that, by
+            # filtering attack_surface.json down to the approved pages
+            # before B5 ever reads it. Mattermost/NaViQ are always in
+            # TARGETS, so they never take this branch — their run continues
+            # exactly as it always has.
+            if ACTIVE_TARGET.name not in TARGETS:
+                pipeline_state["current_block"] = "scope_review"
+                pipeline_state["waiting_for_scope_review"] = True
+                pipeline_state["running"] = False
+                log("== SCOPE REVIEW - waiting for page approval in the UI ==")
+                return
+
             pipeline_state["current_block"] = "B5"
             log(">> B5 - Payload generation")
             generate_payloads(client=client, target_profile=ACTIVE_TARGET)
             log("OK B5 completed")
 
             # Pauses here — the UI shows the payloads for human review
+            pipeline_state["current_block"] = "B6"
+            pipeline_state["waiting_for_human"] = True
+            pipeline_state["running"] = False
+            log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
+
+    except Exception as e:
+        _fail_pipeline(e)
+
+
+def run_pipeline_from_scope_review():
+    """Corre B5 y pausa esperando revisión humana (B6) — reanuda el run que
+    run_pipeline_until_b6 dejó pausado en la revisión de alcance, una vez
+    que POST /api/scope-review/approve ya filtró attack_surface.json a solo
+    las páginas aprobadas. Duplica el bloque B5+pausa de arriba en vez de
+    compartirlo, para que esa función (y el camino ya probado de Mattermost/
+    NaViQ) no cambie."""
+    pipeline_state["running"] = True
+    pipeline_state["waiting_for_scope_review"] = False
+    pipeline_state["error"] = None
+
+    try:
+        with pipeline_results_lock:
+            pipeline_state["current_block"] = "B5"
+            log(">> B5 - Payload generation")
+            generate_payloads(client=client, target_profile=ACTIVE_TARGET)
+            log("OK B5 completed")
+
             pipeline_state["current_block"] = "B6"
             pipeline_state["waiting_for_human"] = True
             pipeline_state["running"] = False
@@ -376,8 +489,20 @@ class ValidatePayloadsRequest(BaseModel):
     comment: str = ""
 
 
+class ScopeReviewApproveRequest(BaseModel):
+    approved_pages: list[str]   # page_url values kept; anything else is dropped
+
+
 class SetTargetRequest(BaseModel):
     name: str   # must match a key in blocks.targets.TARGETS ("mattermost" | "naviq")
+
+
+class DiscoverTargetRequest(BaseModel):
+    name: str
+    base_url: str
+    login_path: str
+    username_env: str
+    password_env: str
 
 
 class RunPipelineRequest(BaseModel):
@@ -455,7 +580,7 @@ def set_active_target(body: SetTargetRequest):
     over from the target that was active before."""
     global ACTIVE_TARGET
 
-    if pipeline_state["running"] or pipeline_state["waiting_for_human"]:
+    if pipeline_state["running"] or pipeline_state["waiting_for_human"] or pipeline_state["waiting_for_scope_review"]:
         raise HTTPException(status_code=409, detail="Cannot switch target while the pipeline is running")
     if env_state["running"]:
         raise HTTPException(status_code=409, detail="Cannot switch target while the environment is being prepared")
@@ -469,6 +594,7 @@ def set_active_target(body: SetTargetRequest):
         "running": False,
         "current_block": None,
         "waiting_for_human": False,
+        "waiting_for_scope_review": False,
         "completed": False,
         "error": None,
         "logs": [],
@@ -482,6 +608,49 @@ def set_active_target(body: SetTargetRequest):
         "stack_label": ACTIVE_TARGET.stack_label,
         "supports_fresh_reset": ACTIVE_TARGET.supports_fresh_reset,
     }
+
+
+@protected.get("/api/discover-target/name-available")
+def check_target_name_available(name: str):
+    return {"available": not _target_name_taken(name)}
+
+
+@protected.get("/api/env-check")
+def check_env_var(name: str):
+    """Whether an env var is currently set on the server - never returns
+    the value, just presence, so the discovery form can catch a typo'd
+    credential variable name before wasting a real discovery attempt."""
+    return {"name": name, "present": bool(os.getenv(name))}
+
+
+@protected.post("/api/discover-target")
+def start_target_discovery(body: DiscoverTargetRequest):
+    # Checked before the "already in use" check below on purpose: an
+    # invalid name is also "taken" as far as _target_name_taken is
+    # concerned, but that message would be misleading here - this one says
+    # what's actually wrong with it.
+    if not is_valid_target_name(body.name):
+        raise HTTPException(
+            status_code=400,
+            detail="Target name can only use lowercase letters, digits, underscores, and hyphens",
+        )
+    if discovery_state["running"]:
+        raise HTTPException(status_code=409, detail="A discovery is already running")
+    if _target_name_taken(body.name):
+        raise HTTPException(status_code=400, detail=f"Target name {body.name!r} is already in use")
+
+    thread = threading.Thread(
+        target=run_target_discovery,
+        args=(body.name, body.base_url, body.login_path, body.username_env, body.password_env),
+        daemon=True,
+    )
+    thread.start()
+    return {"message": "Discovery started"}
+
+
+@protected.get("/api/discover-target/status")
+def get_discovery_status():
+    return discovery_state
 
 
 @protected.get("/api/environment/health")
@@ -547,6 +716,8 @@ def run_pipeline(body: RunPipelineRequest = RunPipelineRequest()):
         raise HTTPException(status_code=409, detail="Pipeline is already running")
     if pipeline_state["waiting_for_human"]:
         raise HTTPException(status_code=409, detail="Waiting for human review in B6")
+    if pipeline_state["waiting_for_scope_review"]:
+        raise HTTPException(status_code=409, detail="Waiting for scope review after B4")
 
     thread = threading.Thread(target=run_pipeline_until_b6, args=(body.mode,), daemon=True)
     thread.start()
@@ -560,6 +731,7 @@ def get_status():
         "running": pipeline_state["running"],
         "current_block": pipeline_state["current_block"],
         "waiting_for_human": pipeline_state["waiting_for_human"],
+        "waiting_for_scope_review": pipeline_state["waiting_for_scope_review"],
         "completed": pipeline_state["completed"],
         "error": pipeline_state["error"],
     }
@@ -697,6 +869,93 @@ def get_run_report(run_id: int, lang: str = "en"):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@protected.get("/api/scope-review")
+def get_scope_review():
+    """B4's findings, grouped by page, for a discovered target to review
+    before B5 ever turns any of it into an attack target. Only meaningful
+    while waiting_for_scope_review is true (see run_pipeline_until_b6) —
+    Mattermost/NaViQ never reach that state, so the UI never asks for this."""
+    path = Path(result_path(ACTIVE_TARGET.name, "attack_surface.json"))
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No B4 results yet for this target")
+
+    with open(path) as f:
+        attack_surface = json.load(f)
+
+    forms_by_page: dict[str, list] = {}
+    for form in attack_surface.get("forms", []):
+        forms_by_page.setdefault(form.get("page_url", "unknown"), []).append(form)
+
+    inputs_by_page: dict[str, list] = {}
+    for input_field in attack_surface.get("inputs", []):
+        inputs_by_page.setdefault(input_field.get("page_url", "unknown"), []).append(input_field)
+
+    pages = [
+        {
+            "page_url": page_url,
+            "forms": [
+                {
+                    "action": form.get("action"),
+                    "method": form.get("method"),
+                    "field_names": [field.get("name") for field in form.get("fields", [])],
+                }
+                for form in forms_by_page.get(page_url, [])
+            ],
+            "input_field_names": [field.get("name") for field in inputs_by_page.get(page_url, [])],
+        }
+        for page_url in attack_surface.get("pages_visited", [])
+    ]
+
+    return {
+        "pages": pages,
+        # Informational only, not individually approvable: build_dynamic_targets()
+        # (blocks/generate_payloads.py) only ever reads these as a fallback
+        # when a target has zero forms/inputs, so approving pages below is
+        # what actually controls what B5 sees in the normal case.
+        "endpoints": attack_surface.get("endpoints", []),
+        "action_links": attack_surface.get("action_links", []),
+    }
+
+
+@protected.post("/api/scope-review/approve")
+def approve_scope_review(body: ScopeReviewApproveRequest):
+    """
+    Keeps only the approved pages' forms/inputs in attack_surface.json, then
+    resumes into B5. Has to rewrite that file rather than just flip a flag:
+    extra_denylist is only ever checked during the crawl B4 already
+    finished (blocks/dynamic_analysis.py, via blocks/crawler.py), so nothing
+    downstream would otherwise notice a page never got approved.
+    """
+    if not pipeline_state["waiting_for_scope_review"]:
+        raise HTTPException(status_code=409, detail="The pipeline is not waiting for scope review")
+
+    path = Path(result_path(ACTIVE_TARGET.name, "attack_surface.json"))
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="attack_surface.json not found")
+
+    with open(path) as f:
+        attack_surface = json.load(f)
+
+    approved = set(body.approved_pages)
+    attack_surface["forms"] = [f for f in attack_surface.get("forms", []) if f.get("page_url") in approved]
+    attack_surface["inputs"] = [i for i in attack_surface.get("inputs", []) if i.get("page_url") in approved]
+    attack_surface["pages_visited"] = [p for p in attack_surface.get("pages_visited", []) if p in approved]
+    attack_surface["scope_reviewed"] = {
+        "approved_pages": sorted(approved),
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(attack_surface, f, indent=4)
+
+    log(f"OK Scope review - {len(approved)} page(s) approved, continuing to B5")
+
+    thread = threading.Thread(target=run_pipeline_from_scope_review, daemon=True)
+    thread.start()
+
+    return {"message": "Scope approved. Continuing with B5."}
 
 
 @protected.post("/api/validate")

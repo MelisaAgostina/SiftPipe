@@ -3,12 +3,16 @@
 // behind the optional/nullable fields below (they reflect real backend behavior,
 // not defensive over-tightening).
 
-export type BlockId = "B3" | "B4" | "B5" | "B6" | "B7" | "B8" | "B9";
+export type BlockId = "B3" | "B4" | "B5" | "B6" | "B7" | "B8" | "B9" | "scope_review";
 
 export type PipelineStatus = {
   running: boolean;
   current_block: BlockId | null;
   waiting_for_human: boolean;
+  // Separate pause from waiting_for_human above: only ever true for a
+  // discovered target (see api.py's run_pipeline_until_b6) - reviewing
+  // what B4 found, before B5 turns any of it into an attack target.
+  waiting_for_scope_review: boolean;
   completed: boolean;
   error: string | null;
 };
@@ -214,6 +218,60 @@ export type RunComparison = {
 
 export type ValidateRequest = { approved_indices: number[]; comment?: string };
 export type ValidateResponse = { message: string };
+
+// GET /api/scope-review — B4's findings for a discovered target, grouped by
+// page (see api.py's get_scope_review). Only ever populated while
+// waiting_for_scope_review is true.
+export type ScopeReviewForm = {
+  action: string | null;
+  method: string | null;
+  field_names: (string | null)[];
+};
+export type ScopeReviewPage = {
+  page_url: string;
+  forms: ScopeReviewForm[];
+  input_field_names: (string | null)[];
+};
+export type ScopeReviewResult = {
+  pages: ScopeReviewPage[];
+  endpoints: string[];
+  action_links: string[];
+};
+export type ScopeReviewApproveRequest = { approved_pages: string[] };
+export type ScopeReviewApproveResponse = { message: string };
+
+// "Discover a new target" flow (discover_target.py, triggered from the
+// frontend) — see api.py's /api/discover-target* routes.
+export type NameAvailableResponse = { available: boolean };
+export type EnvCheckResponse = { name: string; present: boolean };
+export type DiscoverTargetRequest = {
+  name: string;
+  base_url: string;
+  login_path: string;
+  username_env: string;
+  password_env: string;
+};
+export type DiscoverTargetResponse = { message: string };
+// Mirrors discover_target.py's discover() return shape (only the fields the
+// UI actually shows) - always present once a discovery attempt finishes,
+// success or not.
+export type DiscoveryResult = {
+  name: string;
+  base_url_default: string;
+  login_path: string;
+  username_env: string;
+  password_env: string;
+  login_id_selectors: string[];
+  password_selectors: string[];
+  submit_selectors: string[];
+  login_succeeded: boolean;
+  error: string | null;
+};
+export type DiscoveryStatus = {
+  running: boolean;
+  error: string | null; // an unexpected crash only, not a normal failed login
+  result: DiscoveryResult | null;
+};
 export type RunPipelineRequest = { mode: "fresh" | "restore" };
 export type RunResponse = { message: string };
 export type ResetResponse = { message: string };

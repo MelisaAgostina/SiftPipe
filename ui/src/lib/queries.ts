@@ -1,21 +1,27 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  approveScopeReview,
   archiveRun,
+  checkEnvVar,
+  checkTargetNameAvailable,
   deleteRun,
   getActiveTarget,
   getBlockResult,
+  getDiscoveryStatus,
   getEnvironmentHealth,
   getEnvironmentStatus,
   getLogs,
   getRun,
   getRunComparison,
   getRuns,
+  getScopeReview,
   getStatus,
   resetEnvironment,
   resetPipeline,
   runPipeline,
   setActiveTarget,
+  startDiscovery,
   unarchiveRun,
   validatePayloads,
 } from "./api";
@@ -27,6 +33,8 @@ import type {
   B7Result,
   B8Result,
   B9Result,
+  DiscoverTargetRequest,
+  ScopeReviewApproveRequest,
   SetTargetRequest,
   ValidatedPayloadsResult,
   ValidateRequest,
@@ -39,6 +47,8 @@ export const queryKeys = {
   envHealth: ["environment-health"] as const,
   envStatus: ["environment-status"] as const,
   activeTarget: ["active-target"] as const,
+  scopeReview: ["scope-review"] as const,
+  discoveryStatus: ["discovery-status"] as const,
 };
 
 export function usePipelineStatus() {
@@ -175,6 +185,72 @@ export function useValidatePayloads() {
       qc.invalidateQueries({ queryKey: queryKeys.result("B5_payloads") });
       qc.invalidateQueries({ queryKey: queryKeys.result("validated_payloads") });
     },
+  });
+}
+
+// Only ever has anything to fetch while waiting_for_scope_review is true
+// (a discovered target's first crawl, paused before B5) - enabled: false
+// otherwise so this doesn't 404-poll for Mattermost/NaViQ runs, which never
+// reach this state at all.
+export function useScopeReview() {
+  const { data: status } = usePipelineStatus();
+  return useQuery({
+    queryKey: queryKeys.scopeReview,
+    queryFn: getScopeReview,
+    enabled: status?.waiting_for_scope_review ?? false,
+  });
+}
+
+export function useApproveScopeReview() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ScopeReviewApproveRequest) => approveScopeReview(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.status });
+      qc.invalidateQueries({ queryKey: queryKeys.logs });
+      qc.invalidateQueries({ queryKey: queryKeys.scopeReview });
+    },
+  });
+}
+
+// ── "Discover a new target" flow ────────────────────────────────────────
+// name/env-var checks are live-as-you-type, so callers pass an already
+// debounced value in - `enabled` guards against checking an empty string.
+export function useCheckTargetName(name: string) {
+  return useQuery({
+    queryKey: ["discover-target", "name-available", name],
+    queryFn: () => checkTargetNameAvailable(name),
+    enabled: name.trim().length > 0,
+    staleTime: 0,
+  });
+}
+
+export function useCheckEnvVar(name: string) {
+  return useQuery({
+    queryKey: ["discover-target", "env-check", name],
+    queryFn: () => checkEnvVar(name),
+    enabled: name.trim().length > 0,
+    staleTime: 0,
+  });
+}
+
+export function useStartDiscovery() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DiscoverTargetRequest) => startDiscovery(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.discoveryStatus }),
+  });
+}
+
+// enabled: only polls once a discovery has actually been started this
+// session - no reason to hit the endpoint before the dialog's ever been
+// opened.
+export function useDiscoveryStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.discoveryStatus,
+    queryFn: getDiscoveryStatus,
+    enabled,
+    refetchInterval: (query) => (query.state.data?.running ? 1500 : false),
   });
 }
 

@@ -42,6 +42,7 @@ class TestApiRoutes(unittest.TestCase):
 
         api.pipeline_state.update({
             "running": False, "current_block": None, "waiting_for_human": False,
+            "waiting_for_scope_review": False,
             "completed": False, "error": None, "logs": [], "run_id": None,
         })
         api.env_state.update({"running": False, "completed": False, "error": None, "logs": []})

@@ -19,6 +19,7 @@ import { CorrelationView } from "./CorrelationView";
 import { LogsView } from "./LogsView";
 import { PastRunsView } from "./PastRunsView";
 import { PayloadReviewView } from "./PayloadReviewView";
+import { ScopeReviewView } from "./ScopeReviewView";
 import { Unauthorized } from "./Unauthorized";
 import { buildDriveSteps } from "./buildDriveSteps";
 import { buildTourSteps } from "./tour";
@@ -55,10 +56,10 @@ export function SecPipelineApp() {
   // but only once per wait-cycle so it doesn't fight a user who navigated away.
   const wasWaiting = useRef(false);
   useEffect(() => {
-    const waiting = status?.waiting_for_human ?? false;
+    const waiting = (status?.waiting_for_human || status?.waiting_for_scope_review) ?? false;
     if (waiting && !wasWaiting.current) setTab("revision");
     wasWaiting.current = waiting;
-  }, [status?.waiting_for_human]);
+  }, [status?.waiting_for_human, status?.waiting_for_scope_review]);
 
   const liveRunVisible = useLiveRunVisible();
 
@@ -96,7 +97,12 @@ export function SecPipelineApp() {
         <main className="flex-1 space-y-6 overflow-y-auto p-6">
           <Tabs value={tab} onChange={setTab} onStartTour={startTour} showTourHint={showTourHint} />
           {tab === "pipeline" && <PipelineView liveVisible={liveRunVisible} />}
-          {tab === "revision" && <PayloadReviewView onValidated={() => setTab("logs")} />}
+          {tab === "revision" &&
+            (status?.waiting_for_scope_review ? (
+              <ScopeReviewView />
+            ) : (
+              <PayloadReviewView onValidated={() => setTab("logs")} />
+            ))}
           {tab === "correlacion" && <CorrelationView liveVisible={liveRunVisible} />}
           {tab === "history" && <PastRunsView />}
           {tab === "logs" && <LogsView />}
