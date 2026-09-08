@@ -8,6 +8,7 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 
+import { Toaster } from "@/components/ui/sonner";
 import appCss from "../styles.css?url";
 
 function NotFoundComponent() {
@@ -73,15 +74,27 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "SiftPipe" },
       { property: "og:image", content: "/assets/Sift pipe-Photoroom.png" },
       { name: "twitter:image", content: "/assets/Sift pipe-Photoroom.png" },
-      { name: "description", content: "Pixel Perfect UI is a modular React application styled with Tailwind CSS, designed for building user interfaces." },
+      {
+        name: "description",
+        content:
+          "Pixel Perfect UI is a modular React application styled with Tailwind CSS, designed for building user interfaces.",
+      },
       { name: "author", content: "Lovable" },
       { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Pixel Perfect UI is a modular React application styled with Tailwind CSS, designed for building user interfaces." },
+      {
+        property: "og:description",
+        content:
+          "Pixel Perfect UI is a modular React application styled with Tailwind CSS, designed for building user interfaces.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
       { name: "twitter:title", content: "Lovable App" },
-      { name: "twitter:description", content: "Pixel Perfect UI is a modular React application styled with Tailwind CSS, designed for building user interfaces." },
+      {
+        name: "twitter:description",
+        content:
+          "Pixel Perfect UI is a modular React application styled with Tailwind CSS, designed for building user interfaces.",
+      },
     ],
     links: [
       {
@@ -124,6 +137,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <Outlet />
+      <Toaster />
     </QueryClientProvider>
   );
 }

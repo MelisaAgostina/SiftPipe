@@ -15,6 +15,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from blocks.targets import DEFAULT_TARGET
+
 DB_PATH = os.getenv("SIFTPIPE_HISTORY_DB", "siftpipe_history.db")
 
 
@@ -27,12 +29,32 @@ def _connect():
             started_at TEXT NOT NULL,
             finished_at TEXT,
             mode TEXT,
+            target TEXT,
             status TEXT NOT NULL DEFAULT 'running',
             total_findings INTEGER,
             confirmed_findings INTEGER
         )
         """
     )
+    # Lightweight migration for any runs.db that predates the `target`
+    # column (this project's own siftpipe_history.db included) —
+    # CREATE TABLE IF NOT EXISTS doesn't alter an already-existing table's
+    # columns. Pre-existing rows are left with target=NULL rather than
+    # guessed at (MULTI_TARGET_PLAN.md: this project's own history was
+    # corrected by hand once, from known session context, not by a blind
+    # heuristic backfill baked into this migration).
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN target TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
+    # Same pattern for `archived` — every pre-existing run defaults to 0
+    # (not archived), same as a freshly inserted row would.
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS run_blocks (
@@ -46,14 +68,14 @@ def _connect():
     return conn
 
 
-def start_run(mode="unknown"):
+def start_run(mode="unknown", target=DEFAULT_TARGET):
     """Call at the start of a pipeline run. Returns the new run's id."""
     conn = _connect()
     try:
         now = datetime.now(timezone.utc).isoformat()
         cur = conn.execute(
-            "INSERT INTO runs (started_at, mode, status) VALUES (?, ?, 'running')",
-            (now, mode),
+            "INSERT INTO runs (started_at, mode, target, status) VALUES (?, ?, ?, 'running')",
+            (now, mode, target),
         )
         conn.commit()
         return cur.lastrowid
@@ -61,11 +83,11 @@ def start_run(mode="unknown"):
         conn.close()
 
 
-def _b9_summary(results_dir):
+def _b9_summary(results_dir, prefix=""):
     """Best-effort (total, confirmed) counts from this run's B9 output, so
     the Past Runs list can show something more useful than a bare timestamp
     without the frontend having to fetch every run's full detail up front."""
-    b9_path = Path(results_dir) / "B9_correlation.json"
+    b9_path = Path(results_dir) / f"{prefix}B9_correlation.json"
     if not b9_path.exists():
         return None, None
     try:
@@ -81,13 +103,28 @@ def _b9_summary(results_dir):
 def finish_run(run_id, status, results_dir="results"):
     """
     Call once a run reaches a terminal state (completed or error). Snapshots
-    every JSON file currently in results_dir against this run_id, so a past
-    run can be viewed later even after the next run overwrites those files.
-    """
-    total_findings, confirmed_findings = _b9_summary(results_dir)
+    this run's own block output files against run_id, so a past run can be
+    viewed later even after the next run overwrites those files.
 
+    Block files on disk are target-scoped (results/{target}_{block}.json —
+    see result_path() in blocks/targets.py), so this looks up the run's own
+    target from the runs table and only globs/snapshots that target's files,
+    storing them under their canonical block_name (prefix stripped) so
+    get_run()/list_runs() consumers don't need to know about the on-disk
+    naming convention. Real bug this fixes: two targets run back to back
+    used to both get glob("*.json")'d into the same run_id's snapshot,
+    silently mixing one target's block data into the other's Past Run.
+    A run predating the `target` column (target is NULL) falls back to the
+    old glob-everything behavior, matching its original semantics exactly.
+    """
     conn = _connect()
     try:
+        target_row = conn.execute("SELECT target FROM runs WHERE id = ?", (run_id,)).fetchone()
+        target = target_row[0] if target_row else None
+        prefix = f"{target}_" if target else ""
+
+        total_findings, confirmed_findings = _b9_summary(results_dir, prefix)
+
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """
@@ -98,14 +135,16 @@ def finish_run(run_id, status, results_dir="results"):
             (now, status, total_findings, confirmed_findings, run_id),
         )
 
-        for path in sorted(Path(results_dir).glob("*.json")):
+        pattern = f"{prefix}*.json" if prefix else "*.json"
+        for path in sorted(Path(results_dir).glob(pattern)):
+            block_name = path.stem[len(prefix):] if prefix else path.stem
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
             conn.execute(
                 "INSERT INTO run_blocks (run_id, block_name, data) VALUES (?, ?, ?)",
-                (run_id, path.stem, json.dumps(data)),
+                (run_id, block_name, json.dumps(data)),
             )
 
         conn.commit()
@@ -119,7 +158,7 @@ def list_runs():
     try:
         rows = conn.execute(
             """
-            SELECT id, started_at, finished_at, mode, status, total_findings, confirmed_findings
+            SELECT id, started_at, finished_at, mode, target, status, total_findings, confirmed_findings, archived
             FROM runs ORDER BY id DESC
             """
         ).fetchall()
@@ -131,9 +170,11 @@ def list_runs():
             "started_at": r[1],
             "finished_at": r[2],
             "mode": r[3],
-            "status": r[4],
-            "total_findings": r[5],
-            "confirmed_findings": r[6],
+            "target": r[4],
+            "status": r[5],
+            "total_findings": r[6],
+            "confirmed_findings": r[7],
+            "archived": bool(r[8]),
         }
         for r in rows
     ]
@@ -147,7 +188,7 @@ def get_run(run_id):
     try:
         run_row = conn.execute(
             """
-            SELECT id, started_at, finished_at, mode, status, total_findings, confirmed_findings
+            SELECT id, started_at, finished_at, mode, target, status, total_findings, confirmed_findings, archived
             FROM runs WHERE id = ?
             """,
             (run_id,),
@@ -166,8 +207,149 @@ def get_run(run_id):
         "started_at": run_row[1],
         "finished_at": run_row[2],
         "mode": run_row[3],
-        "status": run_row[4],
-        "total_findings": run_row[5],
-        "confirmed_findings": run_row[6],
+        "target": run_row[4],
+        "status": run_row[5],
+        "total_findings": run_row[6],
+        "confirmed_findings": run_row[7],
+        "archived": bool(run_row[8]),
         "blocks": {name: json.loads(data) for name, data in block_rows},
+    }
+
+
+def set_archived(run_id, archived):
+    """Marks a run archived/unarchived. Returns False if run_id doesn't exist."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "UPDATE runs SET archived = ? WHERE id = ?", (1 if archived else 0, run_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_run(run_id):
+    """Permanently removes a run and its snapshotted block data. Returns
+    False if run_id doesn't exist."""
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        conn.execute("DELETE FROM run_blocks WHERE run_id = ?", (run_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def _find_previous_run_id(run_id, target):
+    """Most recent *completed* run of the same target that started before
+    run_id - an in-between run against a different target, or one that
+    errored out (and so may carry incomplete/misleading B9 data), is never
+    picked as the comparison baseline."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """
+            SELECT id FROM runs
+            WHERE target = ? AND id < ? AND status = 'completed'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (target, run_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def _finding_key(finding):
+    """Stable identity for a B9-correlated finding across separate runs:
+    its CWE id (falling back to the free-text vulnerability label if none
+    was resolved) plus its target/file - the same identity signal B9's own
+    tiered correlation already treats as strongest (see
+    blocks/taxonomy.py's infer_taxonomy() and blocks/correlate_results.py's
+    find_match()). payload_id isn't used here - it's assigned per-run
+    execution order, not a stable identity across separate runs."""
+    label = finding.get("cwe_id") or str(finding.get("vulnerability", "")).strip().lower()
+    return (label, finding.get("target"))
+
+
+def _dynamically_verified(finding):
+    """
+    True only for a finding whose evidence includes an actual live attack
+    attempt (source is "Dynamic" or "Hybrid (Static + Dynamic)") - as
+    opposed to a static-only finding (source "Static") that came from one
+    AI pass over one file, with no B7/B8 attack ever run against it.
+
+    Matters for compare_with_previous() below: a dynamic finding
+    disappearing between runs means a live exploit attempt that used to
+    succeed no longer does - real, verified evidence of a fix. A
+    static-only finding disappearing just means B3's next AI re-scan
+    (still capped at MAX_FILES=10 files, blocks/static_scanner.py) didn't
+    happen to flag it again - it says nothing about whether the
+    underlying code changed at all. Calling both "resolved" overclaims for
+    the static-only case, which is why they're split into separate buckets
+    instead of one.
+    """
+    return "Dynamic" in str(finding.get("source", ""))
+
+
+def _severity_counts(findings):
+    counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    for finding in findings:
+        severity = finding.get("severity")
+        if severity in counts:
+            counts[severity] += 1
+    return counts
+
+
+def _severity_diff(previous_findings, current_findings):
+    previous_counts = _severity_counts(previous_findings)
+    current_counts = _severity_counts(current_findings)
+    return {severity: current_counts[severity] - previous_counts[severity] for severity in current_counts}
+
+
+def compare_with_previous(run_id):
+    """
+    Diffs this run's B9 findings against the previous completed run of the
+    same target: which findings are new, which recurred, which were
+    resolved (present before, gone now), and how the severity distribution
+    shifted (see _severity_diff). Returns None if run_id doesn't exist.
+    """
+    run = get_run(run_id)
+    if run is None:
+        return None
+
+    current_findings = run.get("blocks", {}).get("B9_correlation", {}).get("results", [])
+    previous_id = _find_previous_run_id(run_id, run.get("target"))
+
+    if previous_id is None:
+        return {
+            "run_id": run_id,
+            "previous_run_id": None,
+            "new_findings": current_findings,
+            "recurring_findings": [],
+            "resolved_findings": [],
+            "unverified_findings": [],
+            "severity_delta": _severity_diff([], current_findings),
+        }
+
+    previous_run = get_run(previous_id)
+    previous_findings = previous_run.get("blocks", {}).get("B9_correlation", {}).get("results", [])
+
+    previous_keys = {_finding_key(f) for f in previous_findings}
+    current_keys = {_finding_key(f) for f in current_findings}
+
+    disappeared = [f for f in previous_findings if _finding_key(f) not in current_keys]
+
+    return {
+        "run_id": run_id,
+        "previous_run_id": previous_id,
+        "new_findings": [f for f in current_findings if _finding_key(f) not in previous_keys],
+        "recurring_findings": [f for f in current_findings if _finding_key(f) in previous_keys],
+        # Split by whether disappearing actually means something: see
+        # _dynamically_verified()'s docstring.
+        "resolved_findings": [f for f in disappeared if _dynamically_verified(f)],
+        "unverified_findings": [f for f in disappeared if not _dynamically_verified(f)],
+        "severity_delta": _severity_diff(previous_findings, current_findings),
     }

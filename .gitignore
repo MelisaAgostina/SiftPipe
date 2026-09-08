@@ -12,8 +12,18 @@ env/
 .env
 .vscode/
 
+# Personal Claude Code instructions (not shared with the team)
+CLAUDE.local.md
+
+docs_backup/
+
 # Logs y resultados (opcional, si los generas automáticamente)
 results/
+logs/
+
+# B7 screenshots/videos, namespaced by target+run_id (blocks/targets.py's
+# evidence_dir()) — local run evidence, not project config
+evidence/
 
 # Run history DB (blocks/run_history.py) — local run data, not project config
 siftpipe_history.db
@@ -27,3 +37,10 @@ ui/.tanstack/
 # Playwright
 playwright-report/
 test-results/
+.playwright-mcp/
+
+# NaVi-Q source (private repo) — plain local clone, not a submodule, so
+# SiftPipe's own repo never depends on NaVi-Q repo access (see
+# MULTI_TARGET_PLAN.md's "Open questions" for why this isn't a submodule
+# like mattermost-src/mattermost)
+naviq-src/

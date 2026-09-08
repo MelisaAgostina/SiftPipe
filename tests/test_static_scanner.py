@@ -9,6 +9,7 @@ from blocks.static_scanner import (
     OWASP_SCOPE,
     get_analysis_prompt,
     load_files_list,
+    rank_by_security_relevance,
     scan_and_save_files,
 )
 
@@ -28,18 +29,23 @@ class TestScanAndSaveFiles(unittest.TestCase):
         path.write_text("// content", encoding="utf-8")
 
     def test_only_relevant_dirs_and_extensions_are_included(self):
-        self._touch("api/handler.go")
+        # NOTE: top-level "api/" is a real Mattermost dir but is now in
+        # DEFAULT_EXCLUDE_DIRS (it's OpenAPI doc-generation tooling, not the
+        # real REST handlers, which live under "api4/" - see the comment on
+        # DEFAULT_RELEVANT_DIRS in blocks/static_scanner.py). Use "api4/" so
+        # this test still exercises a real relevant dir.
+        self._touch("api4/handler.go")
         self._touch("app/store/model.ts")
         # Not under a RELEVANT_DIRS path -> excluded even though extension matches
         self._touch("misc/notes.js")
         # Wrong extension even though under a relevant dir -> excluded
-        self._touch("api/README.md")
+        self._touch("api4/README.md")
 
         output_file = self.source_dir / "files_list.txt"
         found = scan_and_save_files(str(self.source_dir), output_file=str(output_file))
 
         found_normalized = {Path(f).as_posix() for f in found}
-        self.assertIn((self.source_dir / "api/handler.go").as_posix(), found_normalized)
+        self.assertIn((self.source_dir / "api4/handler.go").as_posix(), found_normalized)
         self.assertIn((self.source_dir / "app/store/model.ts").as_posix(), found_normalized)
         self.assertEqual(len(found), 2)
 
@@ -54,7 +60,10 @@ class TestScanAndSaveFiles(unittest.TestCase):
         self.assertEqual(found, [])
 
     def test_output_file_is_written_with_one_path_per_line(self):
-        self._touch("server/main.go")
+        # NOTE: "server" alone is deliberately not in DEFAULT_RELEVANT_DIRS
+        # (it over-matched the whole server/ subtree - see the comment on
+        # DEFAULT_RELEVANT_DIRS in blocks/static_scanner.py). "app" is.
+        self._touch("app/main.go")
         output_file = self.source_dir / "out" / "files_list.txt"
 
         scan_and_save_files(str(self.source_dir), output_file=str(output_file))
@@ -63,6 +72,81 @@ class TestScanAndSaveFiles(unittest.TestCase):
         lines = output_file.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].endswith("main.go"))
+
+    def test_relevant_dirs_none_disables_the_directory_filter(self):
+        """
+        MULTI_TARGET_PLAN.md: NaViQ's real application code (users/, blog/,
+        evaluation/, ...) doesn't follow Mattermost's api/handlers/store
+        naming convention at all - relevant_dirs=None means "extension +
+        exclude_dirs only", no fake allowlist invented for a Django project.
+        """
+        self._touch("users/views.py")
+        self._touch("blog/models.py")
+
+        output_file = self.source_dir / "files_list.txt"
+        found = scan_and_save_files(
+            str(self.source_dir),
+            output_file=str(output_file),
+            extensions=(".py",),
+            relevant_dirs=None,
+        )
+
+        found_normalized = {Path(f).as_posix() for f in found}
+        self.assertIn((self.source_dir / "users/views.py").as_posix(), found_normalized)
+        self.assertIn((self.source_dir / "blog/models.py").as_posix(), found_normalized)
+        self.assertEqual(len(found), 2)
+
+    def test_custom_exclude_dirs_keeps_a_real_venv_out_of_the_scan(self):
+        """
+        Real gap found live: NaViQ's own Python venv lives inside its source
+        tree (naviq-src/naviq/.venv310). Without excluding it, a .py scan
+        would walk into Django's own third-party dependency code.
+        """
+        self._touch(".venv310/Lib/site-packages/django/db/models/base.py")
+        self._touch("users/models.py")
+
+        output_file = self.source_dir / "files_list.txt"
+        found = scan_and_save_files(
+            str(self.source_dir),
+            output_file=str(output_file),
+            extensions=(".py",),
+            exclude_dirs={".venv310", "__pycache__", "migrations", ".git"},
+            relevant_dirs=None,
+        )
+
+        found_normalized = {Path(f).as_posix() for f in found}
+        self.assertEqual(found_normalized, {(self.source_dir / "users/models.py").as_posix()})
+
+    def test_exclude_file_suffixes_catches_test_files_colocated_with_real_code(self):
+        """
+        Real gap found live 2026-09-05: Go's *_test.go and Django's tests.py
+        both sit right next to production code in the same directory, so
+        exclude_dirs (directory-name-only) can never catch them - half of
+        Mattermost's tiny MAX_FILES=10 scan budget was landing on exactly
+        this kind of file.
+        """
+        self._touch("api4/handler.go")
+        self._touch("api4/handler_test.go")
+        self._touch("users/views.py")
+        self._touch("users/tests.py")
+
+        output_file = self.source_dir / "files_list.txt"
+        found = scan_and_save_files(
+            str(self.source_dir),
+            output_file=str(output_file),
+            extensions=(".go", ".py"),
+            relevant_dirs=None,
+            exclude_file_suffixes={"_test.go", "tests.py"},
+        )
+
+        found_normalized = {Path(f).as_posix() for f in found}
+        self.assertEqual(
+            found_normalized,
+            {
+                (self.source_dir / "api4/handler.go").as_posix(),
+                (self.source_dir / "users/views.py").as_posix(),
+            },
+        )
 
 
 class TestLoadFilesList(unittest.TestCase):
@@ -86,10 +170,81 @@ class TestGetAnalysisPrompt(unittest.TestCase):
         self.assertIn("Broken Access Control", prompt)
         self.assertIn("JSON array", prompt)
 
+    def test_prompt_tells_the_llm_not_to_flag_env_var_secret_reads_as_hardcoded(self):
+        """
+        Real false positive found live against NaViQ's actual code
+        (2026-08-10): the LLM flagged
+        'ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")' - the correct,
+        secure pattern - as a high-confidence hardcoded API key, purely from
+        pattern-matching the variable name. OWASP_SCOPE's A02 description
+        now explicitly distinguishes a literal secret value from an
+        env-var/settings lookup.
+        """
+        prompt = get_analysis_prompt("ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')")
+        self.assertIn("os.getenv", prompt)
+        self.assertIn("Do NOT flag", prompt)
+        self.assertIn("literal", prompt)
+
     def test_prompt_requests_a_cwe_id_alongside_the_owasp_category(self):
         prompt = get_analysis_prompt("os.system(user_input)")
         self.assertIn("cwe_id", prompt)
         self.assertIn("CWE-89", prompt)
+
+
+class TestRankBySecurityRelevance(unittest.TestCase):
+    """
+    Real gap found live 2026-09-05: with MAX_FILES=10 capping B3's scan of
+    a 5,314-file codebase, which 10 files get picked matters more than the
+    arbitrary order os.walk() returns them in. Files whose path suggests
+    auth/permission/upload/etc. logic should be scanned first.
+    """
+
+    def test_security_relevant_paths_are_moved_first(self):
+        files = ["misc/notes.go", "api4/access_control.go", "utils/format.go"]
+
+        ranked = rank_by_security_relevance(files)
+
+        self.assertEqual(ranked[0], "api4/access_control.go")
+
+    def test_relative_order_is_preserved_within_each_group(self):
+        files = ["z_auth.go", "a_auth.go", "z_misc.go", "a_misc.go"]
+
+        ranked = rank_by_security_relevance(files)
+
+        self.assertEqual(ranked, ["z_auth.go", "a_auth.go", "z_misc.go", "a_misc.go"])
+
+    def test_no_security_relevant_files_leaves_order_unchanged(self):
+        files = ["b.go", "a.go", "c.go"]
+
+        self.assertEqual(rank_by_security_relevance(files), files)
+
+    def test_repeated_basename_does_not_crowd_out_a_different_relevant_file(self):
+        """
+        Real gap found live 2026-09-06 against NaViQ: 7 apps each have their
+        own "admin.py" (matches keyword "admin"), which filled MAX_FILES=10
+        before navitools/decorators.py (matches the newly-added "decorator"
+        keyword - see SECURITY_RELEVANT_KEYWORDS' own comment) was ever
+        reached. Two separate bugs combined to cause that: "decorators.py"
+        matched no keyword at all (fixed by adding "decorator"), and even
+        once it does match, repeats of a different basename ("admin.py")
+        would still crowd it out without this dedup (what this test covers).
+        """
+        files = [
+            "blog/admin.py", "contact/admin.py", "evaluation/admin.py",
+            "home/admin.py", "navitools/admin.py", "portfolio/admin.py",
+            "users/admin.py", "navitools/decorators.py", "misc/notes.py",
+        ]
+
+        ranked = rank_by_security_relevance(files)
+
+        # First admin.py keeps its top-tier spot; decorators.py (a different,
+        # still-unseen basename) joins it in that same top tier instead of
+        # being pushed behind six more admin.py repeats.
+        self.assertEqual(ranked[0], "blog/admin.py")
+        self.assertIn("navitools/decorators.py", ranked[:2])
+        # The repeated admin.py files still rank ahead of the truly
+        # unrelated file - the keyword's signal isn't thrown away entirely.
+        self.assertLess(ranked.index("contact/admin.py"), ranked.index("misc/notes.py"))
 
 
 class TestOwaspScopeCodes(unittest.TestCase):

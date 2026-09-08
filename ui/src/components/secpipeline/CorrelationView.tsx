@@ -1,9 +1,16 @@
+import { useMemo, useState } from "react";
+import { CircleHelp } from "lucide-react";
 import { useB8, useB9 } from "@/lib/queries";
-import type { B9Entry } from "@/lib/types";
+import type { B9Classification, B9Entry } from "@/lib/types";
+import { useLang } from "@/hooks/use-lang";
+import type { Strings } from "@/lib/strings";
 import { mapB8Finding, mapB9Entry } from "./mappers";
 import { Callout } from "./Callout";
+import { FirstRunGuide } from "./FirstRunGuide";
 import { QueryState } from "./QueryState";
 import { Section } from "./Section";
+import { Toggle } from "@/components/ui/toggle";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 function Stat({
   value,
@@ -29,6 +36,7 @@ function Stat({
 }
 
 function HighlightedHybridFinding({ entries }: { entries: B9Entry[] }) {
+  const { t } = useLang();
   const best = entries
     .filter((e) => e.source === "Hybrid (Static + Dynamic)")
     .sort((a, b) => b.score - a.score)[0];
@@ -42,23 +50,141 @@ function HighlightedHybridFinding({ entries }: { entries: B9Entry[] }) {
         {best.score.toFixed(3)}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
-        (both sources match — match_tier: {best.match_tier})
+        {t.correlationView.hybridMatchNote(best.match_tier)}
       </p>
     </div>
   );
 }
 
+const CLASSIFICATION_OPTIONS: B9Classification[] = ["CONFIRMED", "POSSIBLE", "DESCARTED"];
+const SEVERITY_OPTIONS: B9Entry["severity"][] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+// scoring.py's CONFIDENCE_FOR_MATCH_TIER — the fixed set of values
+// confidence_for_match() ever produces. B9Entry.confidence sometimes carries
+// a trailing space in the real data (see types.ts), so filtering always
+// compares against the trimmed value.
+const CONFIDENCE_OPTIONS = ["REALLY HIGH", "HIGH", "MEDIUM", "LOW"];
+
+export function RankingTooltip() {
+  const { t } = useLang();
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger aria-label={t.correlationView.rankingTooltipAria}>
+          <CircleHelp className="h-3.5 w-3.5 text-muted-foreground" />
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{t.correlationView.rankingTooltip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function FilterChips<T extends string>({
+  label,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  options: T[];
+  selected: Set<T>;
+  onToggle: (value: T) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs font-semibold tracking-wider text-muted-foreground">{label}</span>
+      {options.map((opt) => (
+        <Toggle
+          key={opt}
+          size="sm"
+          pressed={selected.has(opt)}
+          onPressedChange={() => onToggle(opt)}
+          className="text-xs"
+        >
+          {opt}
+        </Toggle>
+      ))}
+    </div>
+  );
+}
+
+function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
+export function AllFindings({
+  entries,
+  t,
+  title,
+  hideHeader = false,
+}: {
+  entries: B9Entry[];
+  t: Strings;
+  title: string;
+  /** Skips this section's own title row - for a caller (e.g. Past Runs'
+   * collapsible steps) that already renders an equivalent header itself. */
+  hideHeader?: boolean;
+}) {
+  const [classifications, setClassifications] = useState<Set<B9Classification>>(new Set());
+  const [severities, setSeverities] = useState<Set<B9Entry["severity"]>>(new Set());
+  const [confidences, setConfidences] = useState<Set<string>>(new Set());
+
+  const filtered = useMemo(
+    () =>
+      entries.filter(
+        (e) =>
+          (classifications.size === 0 || classifications.has(e.classification)) &&
+          (severities.size === 0 || severities.has(e.severity)) &&
+          (confidences.size === 0 || confidences.has(e.confidence.trim().toUpperCase())),
+      ),
+    [entries, classifications, severities, confidences],
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2 rounded-lg border border-border bg-card/50 px-4 py-3">
+        <FilterChips
+          label={t.correlationView.filterClassificationLabel}
+          options={CLASSIFICATION_OPTIONS}
+          selected={classifications}
+          onToggle={(v) => setClassifications((prev) => toggleInSet(prev, v))}
+        />
+        <FilterChips
+          label={t.correlationView.filterSeverityLabel}
+          options={SEVERITY_OPTIONS}
+          selected={severities}
+          onToggle={(v) => setSeverities((prev) => toggleInSet(prev, v))}
+        />
+        <FilterChips
+          label={t.correlationView.filterConfidenceLabel}
+          options={CONFIDENCE_OPTIONS}
+          selected={confidences}
+          onToggle={(v) => setConfidences((prev) => toggleInSet(prev, v))}
+        />
+      </div>
+
+      <Section
+        section={{
+          id: "B9-entries",
+          title,
+          findings: filtered.map(mapB9Entry),
+        }}
+        titleExtra={<RankingTooltip />}
+        hideHeader={hideHeader}
+      />
+    </div>
+  );
+}
+
 export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
+  const { t } = useLang();
   const b8Query = useB8();
   const b9Query = useB9();
 
   if (!liveVisible) {
-    return (
-      <Callout>
-        No active run in this session yet — run the pipeline from the button in the sidebar to see
-        B8-B9 live, or check the Past Runs tab for previous results.
-      </Callout>
-    );
+    return <FirstRunGuide fallback={<Callout>{t.correlationView.emptyGuideCallout}</Callout>} />;
   }
 
   return (
@@ -66,14 +192,14 @@ export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
       <QueryState
         query={b8Query}
         empty={(d) => d.findings.length === 0}
-        emptyMessage="B8 — no dynamic findings analyzed yet."
+        emptyMessage={t.correlationView.b8EmptyMessage}
       >
         {(data) => (
           <Section
             section={{
               id: "B8",
-              title: "B8 — Interpretation of dynamic findings",
-              findings: data.findings.map(mapB8Finding),
+              title: t.correlationView.b8SectionTitle,
+              findings: data.findings.map((f) => mapB8Finding(f, t)),
             }}
           />
         )}
@@ -82,7 +208,7 @@ export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
       <QueryState
         query={b9Query}
         empty={(d) => d.results.length === 0}
-        emptyMessage="B9 — no correlated findings yet."
+        emptyMessage={t.correlationView.b9EmptyMessage}
       >
         {(data) => {
           const confirmed = data.results.filter((e) => e.classification === "CONFIRMED").length;
@@ -93,23 +219,33 @@ export function CorrelationView({ liveVisible }: { liveVisible: boolean }) {
           return (
             <section className="space-y-3">
               <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
-                B9 — STATIC + DYNAMIC CORRELATION
+                {t.correlationView.b9SectionTitle}
               </h3>
 
               <HighlightedHybridFinding entries={data.results} />
 
               <div className="grid gap-4 md:grid-cols-3">
-                <Stat value={`${confirmed}/${data.total_correlated}`} label="confirmed" tone="ok" />
-                <Stat value={falsePositives} label="false positives" tone="neutral" />
-                <Stat value={data.total_correlated} label="total analyzed" tone="info" />
+                <Stat
+                  value={`${confirmed}/${data.total_correlated}`}
+                  label={t.correlationView.statConfirmed}
+                  tone="ok"
+                />
+                <Stat
+                  value={falsePositives}
+                  label={t.correlationView.statFalsePositives}
+                  tone="neutral"
+                />
+                <Stat
+                  value={data.total_correlated}
+                  label={t.correlationView.statTotalAnalyzed}
+                  tone="info"
+                />
               </div>
 
-              <Section
-                section={{
-                  id: "B9-entries",
-                  title: "All correlated findings",
-                  findings: data.results.map(mapB9Entry),
-                }}
+              <AllFindings
+                entries={data.results}
+                t={t}
+                title={t.correlationView.b9AllFindingsTitle}
               />
             </section>
           );

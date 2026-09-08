@@ -13,19 +13,35 @@ from blocks.analyze_results import _is_llm_result_usable, _load_previous_analysi
 class TestIsLlmResultUsable(unittest.TestCase):
 
     def test_none_entry_is_not_usable(self):
-        self.assertFalse(_is_llm_result_usable(None))
+        self.assertFalse(_is_llm_result_usable(None, "t", "p"))
 
     def test_api_error_placeholder_is_not_usable(self):
-        self.assertFalse(_is_llm_result_usable({"vulnerability": "API Error", "result": "confirmed"}))
+        entry = {"vulnerability": "API Error", "result": "confirmed", "target": "t", "payload": "p"}
+        self.assertFalse(_is_llm_result_usable(entry, "t", "p"))
 
     def test_parse_error_placeholder_is_not_usable(self):
-        self.assertFalse(_is_llm_result_usable({"vulnerability": "Error de Parseo JSON", "result": "discarded"}))
+        entry = {"vulnerability": "Error de Parseo JSON", "result": "discarded", "target": "t", "payload": "p"}
+        self.assertFalse(_is_llm_result_usable(entry, "t", "p"))
 
     def test_unrecognized_result_label_is_not_usable(self):
-        self.assertFalse(_is_llm_result_usable({"vulnerability": "XSS", "result": "pending"}))
+        entry = {"vulnerability": "XSS", "result": "pending", "target": "t", "payload": "p"}
+        self.assertFalse(_is_llm_result_usable(entry, "t", "p"))
 
     def test_real_classification_is_usable(self):
-        self.assertTrue(_is_llm_result_usable({"vulnerability": "XSS", "result": "confirmed"}))
+        entry = {"vulnerability": "XSS", "result": "confirmed", "target": "t", "payload": "p"}
+        self.assertTrue(_is_llm_result_usable(entry, "t", "p"))
+
+    def test_stale_entry_for_a_different_target_is_not_usable(self):
+        # Same payload_id, but the id was reassigned to a different field in
+        # this run — e.g. a restore-mode run whose crawl order shifted since
+        # the on-disk cache was last written. Reusing it would silently
+        # attach an unrelated page's verdict/screenshot to this run's finding.
+        entry = {"vulnerability": "XSS", "result": "confirmed", "target": "http://x/old-page", "payload": "p"}
+        self.assertFalse(_is_llm_result_usable(entry, "http://x/new-page", "p"))
+
+    def test_stale_entry_for_a_different_payload_is_not_usable(self):
+        entry = {"vulnerability": "XSS", "result": "confirmed", "target": "t", "payload": "old payload"}
+        self.assertFalse(_is_llm_result_usable(entry, "t", "new payload"))
 
 
 class TestLoadPreviousAnalysis(unittest.TestCase):
@@ -55,8 +71,9 @@ class TestLoadPreviousAnalysis(unittest.TestCase):
 
 class TestAnalyzeResults(unittest.TestCase):
     """
-    analyze_results() hardcodes results/B8_dynamic.json, so tests run inside
-    an isolated temp cwd.
+    analyze_results() reads/writes target-scoped paths under results/ (see
+    result_path() in blocks/targets.py; defaults to Mattermost here since no
+    target_profile is passed), so tests run inside an isolated temp cwd.
     """
 
     def setUp(self):
@@ -105,7 +122,7 @@ class TestAnalyzeResults(unittest.TestCase):
 
         finding = out["B8"]["findings"][0]
         self.assertEqual(finding["result"], "confirmed")
-        self.assertTrue(Path("results/B8_dynamic.json").exists())
+        self.assertTrue(Path("results/mattermost_B8_dynamic.json").exists())
         # cwe_id/owasp_category aren't part of the LLM's response shape here —
         # they must be carried through from the B7 finding via setdefault().
         self.assertEqual(finding["cwe_id"], "CWE-89")
@@ -113,8 +130,11 @@ class TestAnalyzeResults(unittest.TestCase):
 
     def test_rerun_reuses_prior_successful_classification_without_calling_llm(self):
         os.makedirs("results", exist_ok=True)
-        with open("results/B8_dynamic.json", "w", encoding="utf-8") as f:
-            json.dump({"findings": [{"payload_id": "1_1", "result": "confirmed", "vulnerability": "Injection"}]}, f)
+        with open("results/mattermost_B8_dynamic.json", "w", encoding="utf-8") as f:
+            json.dump({"findings": [{
+                "payload_id": "1_1", "result": "confirmed", "vulnerability": "Injection",
+                "target": "http://x/town-square", "payload": "' OR 1=1",
+            }]}, f)
 
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
         calls = []
@@ -130,8 +150,11 @@ class TestAnalyzeResults(unittest.TestCase):
 
     def test_rerun_retries_a_prior_api_error_placeholder(self):
         os.makedirs("results", exist_ok=True)
-        with open("results/B8_dynamic.json", "w", encoding="utf-8") as f:
-            json.dump({"findings": [{"payload_id": "1_1", "result": "confirmed", "vulnerability": "API Error"}]}, f)
+        with open("results/mattermost_B8_dynamic.json", "w", encoding="utf-8") as f:
+            json.dump({"findings": [{
+                "payload_id": "1_1", "result": "confirmed", "vulnerability": "API Error",
+                "target": "http://x/town-square", "payload": "' OR 1=1",
+            }]}, f)
 
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
         calls = []
@@ -146,9 +169,39 @@ class TestAnalyzeResults(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(out["B8"]["findings"][0]["result"], "possible")
 
+    def test_rerun_does_not_reuse_a_stale_entry_whose_target_has_changed(self):
+        # Restore mode skips clear_results_folder(), so an older run's
+        # B8_dynamic.json can still be on disk. If this run's own target
+        # list assigned payload_id "1_1" to a different field/page than the
+        # cached entry did, the cache must be ignored and re-classified
+        # against this run's real B7 finding instead of silently inheriting
+        # the old page's verdict and screenshot.
+        os.makedirs("results", exist_ok=True)
+        with open("results/mattermost_B8_dynamic.json", "w", encoding="utf-8") as f:
+            json.dump({"findings": [{
+                "payload_id": "1_1", "result": "confirmed", "vulnerability": "Injection",
+                "target": "http://x/some-other-page", "payload": "different payload",
+            }]}, f)
+
+        pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
+        calls = []
+
+        def fake_ask_llm(prompt):
+            calls.append(prompt)
+            return {"payload_id": "1_1", "target": "http://x/town-square", "payload": "' OR 1=1",
+                    "result": "discarded", "vulnerability": "Injection", "confidence": "low",
+                    "evidence": "freshly evaluated, not reused"}
+
+        out = analyze_results(pipeline_results, fake_ask_llm)
+
+        self.assertEqual(len(calls), 1)
+        finding = out["B8"]["findings"][0]
+        self.assertEqual(finding["target"], "http://x/town-square")
+        self.assertEqual(finding["evidence"], "freshly evaluated, not reused")
+
     def test_ask_llm_error_placeholder_still_gets_a_valid_result_field(self):
-        # main.py's ask_llm() catches every exception (including Groq 429 rate
-        # limits) and returns {"vulnerability": "API Error", "evidence": ...}
+        # main.py's ask_llm() catches every exception (including Anthropic 429
+        # rate limits) and returns {"vulnerability": "API Error", "evidence": ...}
         # with no "result" key at all — analyze_results() must still write a
         # valid result value, since the frontend's B8Finding.result is typed
         # as non-optional and un-guarded (f.result.toUpperCase()).
@@ -175,7 +228,7 @@ class TestAnalyzeResults(unittest.TestCase):
 
     def test_falls_back_to_disk_when_b7_missing_from_pipeline_results(self):
         os.makedirs("results", exist_ok=True)
-        with open("results/B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
             json.dump({"findings": [self._b7_finding("1_1", anomaly=False)]}, f)
 
         out = analyze_results({}, lambda prompt: (_ for _ in ()).throw(AssertionError("no LLM call expected")))

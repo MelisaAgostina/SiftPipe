@@ -1,33 +1,38 @@
+import type { PrerequisiteId } from "@/lib/strings";
+
 export type Phase = {
   id: string;
-  label: string;
   active?: boolean;
 };
 
-export const prerequisites = [
-  "Docker running",
-  "Repo cloned",
-  "Seed data ready",
-  "LLM API configured",
-  "Playwright ready",
+// Labels live in en.ts/es.ts (prerequisiteLabels/phaseLabels/tabLabels),
+// keyed by these same ids — kept separate from the label text so switching
+// language doesn't touch the ids other code compares against (activePhaseId
+// matching, data-tour anchors, tab routing).
+export const prerequisiteIds: PrerequisiteId[] = [
+  "docker",
+  "repo",
+  "seed_data",
+  "llm_api",
+  "playwright",
 ];
 
 export const phases: Phase[] = [
-  { id: "b3", label: "Static analysis (AI)" },
-  { id: "b4", label: "Dynamic discovery" },
-  { id: "b5", label: "Payload generation" },
-  { id: "b6", label: "Human review", active: true },
-  { id: "b7", label: "Attack execution" },
-  { id: "b8", label: "Interpretation (AI)" },
-  { id: "b9", label: "Correlation" },
+  { id: "b3" },
+  { id: "b4" },
+  { id: "b5" },
+  { id: "b6", active: true },
+  { id: "b7" },
+  { id: "b8" },
+  { id: "b9" },
 ];
 
 export const tabs = [
-  { id: "pipeline", label: "Hybrid pipeline" },
-  { id: "revision", label: "Review (B6)" },
-  { id: "correlacion", label: "Correlation" },
-  { id: "history", label: "Past Runs" },
-  { id: "logs", label: "Live logs" },
+  { id: "pipeline" },
+  { id: "revision" },
+  { id: "correlacion" },
+  { id: "history" },
+  { id: "logs" },
 ] as const;
 
 export type TabId = (typeof tabs)[number]["id"];

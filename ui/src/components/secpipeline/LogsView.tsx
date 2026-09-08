@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useLogs } from "@/lib/queries";
+import { useLang } from "@/hooks/use-lang";
 import { classifyLogLine } from "./mappers";
 import { QueryState } from "./QueryState";
 
@@ -12,6 +13,7 @@ const TONE_CLASS: Record<ReturnType<typeof classifyLogLine>, string> = {
 };
 
 export function LogsView() {
+  const { t } = useLang();
   const logsQuery = useLogs();
   const containerRef = useRef<HTMLDivElement>(null);
   const lineCount = logsQuery.data?.logs.length ?? 0;
@@ -28,7 +30,7 @@ export function LogsView() {
       <QueryState
         query={logsQuery}
         empty={(d) => d.logs.length === 0}
-        emptyMessage="No logs yet — run the pipeline to see live output."
+        emptyMessage={t.logsView.emptyMessage}
       >
         {(data) =>
           data.logs.map((line, i) => (

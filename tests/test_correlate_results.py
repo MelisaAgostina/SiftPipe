@@ -3,9 +3,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import blocks.correlate_results as cr
 from blocks.correlate_results import correlate_results, _normalize_vuln_label, MAX_JUDGE_CALLS
 
 
@@ -28,7 +30,24 @@ class TestCorrelateResultsMatching(unittest.TestCase):
     "Broken Access Control"). Before the label normalization fix, these were
     compared with strict string equality and could never match, so B9 could
     never produce a "Hybrid (Static + Dynamic)" CONFIRMED result.
+
+    Isolated by chdir into a temp directory: every case here supplies both
+    B3 and B8 findings directly via pipeline_results, so the disk-fallback
+    reads are never hit, but correlate_results() unconditionally writes its
+    own B9_correlation.json output (target-scoped, defaults to Mattermost —
+    see result_path() in blocks/targets.py) at the end regardless — without
+    this isolation these tests were silently writing into the real
+    project's results/ directory on every run.
     """
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        os.chdir(self._tmp.name)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
 
     def test_confirmed_dynamic_matches_related_static_finding_as_hybrid(self):
         pipeline_results = {
@@ -273,6 +292,65 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
         # label table, since the category field is already authoritative.
         self.assertIsNone(result["cwe_id"])
         self.assertEqual(result["owasp_category"], "A05")
+
+
+class TestFindMatchTaxonomyCaching(unittest.TestCase):
+    """
+    improvements.md flags find_match() recomputing infer_taxonomy() on every
+    inner-loop pass instead of once up front - O(dynamic findings x static
+    findings) overall. Asserts the real behavior this causes: each static
+    finding's taxonomy gets computed more than once when multiple dynamic
+    findings each re-check it, rather than the intended once-per-static-
+    finding cost the checklist's own proposed fix
+    ([(b3, infer_taxonomy(b3)) for b3 in b3_findings], computed once outside
+    the loop) would produce.
+    """
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        os.chdir(self._tmp.name)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def test_each_static_findings_taxonomy_is_computed_only_once(self):
+        pipeline_results = {
+            "B3": {"findings": [
+                {"vulnerability": "Injection", "cwe_id": "CWE-89", "file": "a.go"},
+                {"vulnerability": "XSS", "cwe_id": "CWE-79", "file": "b.go"},
+            ]},
+            "B8": {"findings": [
+                {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "t1",
+                 "result": "confirmed", "payload_id": "1_1"},
+                {"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "t2",
+                 "result": "confirmed", "payload_id": "1_2"},
+                {"vulnerability": "Unknown", "target": "t3",
+                 "result": "confirmed", "payload_id": "1_3"},
+            ]},
+        }
+
+        real_infer_taxonomy = cr.infer_taxonomy
+        calls_by_identity = {}
+
+        def counting_infer_taxonomy(finding):
+            calls_by_identity[id(finding)] = calls_by_identity.get(id(finding), 0) + 1
+            return real_infer_taxonomy(finding)
+
+        with patch.object(cr, "infer_taxonomy", counting_infer_taxonomy):
+            cr.correlate_results(pipeline_results)
+
+        b3_finding_ids = {id(f) for f in pipeline_results["B3"]["findings"]}
+        call_counts = [count for fid, count in calls_by_identity.items() if fid in b3_finding_ids]
+
+        # Every static finding's taxonomy must have been computed - and
+        # exactly once each, not once per dynamic finding that checks it.
+        self.assertEqual(len(call_counts), len(pipeline_results["B3"]["findings"]))
+        self.assertTrue(
+            all(count == 1 for count in call_counts),
+            f"expected each static finding's taxonomy computed exactly once, got counts {call_counts}",
+        )
 
 
 if __name__ == "__main__":

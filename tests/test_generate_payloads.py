@@ -1,8 +1,10 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -40,6 +42,108 @@ class TestBuildDynamicTargets(unittest.TestCase):
         self.assertEqual(targets[1]["field_name"], "search")
         self.assertTrue(all(t["type"] == "form_field" for t in targets))
 
+    def test_hidden_fields_are_excluded(self):
+        """
+        Real bug found live during Phase 4 Task 4.2's verification against
+        NaViQ (MULTI_TARGET_PLAN.md): a hidden csrfmiddlewaretoken/redirect
+        field can never be usefully injected into (it never becomes
+        "visible" for B7 to fill), and NaViQ's csrf-token-on-every-page
+        pattern let these crowd out real fields almost entirely.
+        """
+        attack_surface = {
+            "forms": [{
+                "page": "home",
+                "action": "http://x/contact/send/",
+                "page_url": "http://x/home",
+                "fields": [
+                    {"id": None, "name": "csrfmiddlewaretoken", "type": "hidden"},
+                    {"id": None, "name": "message", "type": "textarea"},
+                ],
+            }],
+            "inputs": [],
+            "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["field_name"], "message")
+
+    def test_file_and_radio_and_checkbox_fields_are_excluded(self):
+        """
+        Real gap found live 2026-09-06 against NaViQ's navitools tools:
+        "file" fields error out on fill() every time ("Input of type
+        "file" cannot be filled"), and worse - a form with an unfilled
+        *required* file field still submits when a different field is
+        attacked, and Django's validation-error re-render echoes the
+        submitted payload back, a false-positive source in its own right.
+        "radio"/"checkbox" hit the same "not an <input>/<textarea>"
+        Playwright error a <select> does.
+        """
+        attack_surface = {
+            "forms": [{
+                "page": "tool", "action": "http://x/navitools/doctor/", "page_url": "http://x/tool",
+                "fields": [
+                    {"id": "id_image", "name": "image", "type": "file"},
+                    {"id": "opt_a", "name": "audience", "type": "radio"},
+                    {"id": "opt_b", "name": "notify", "type": "checkbox"},
+                    {"id": "id_context", "name": "context", "type": "textarea"},
+                ],
+            }],
+            "inputs": [], "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["field_name"], "context")
+
+    def test_radio_group_does_not_produce_one_target_per_option(self):
+        """
+        Real gap found live 2026-09-06: NaViQ's audience-rewriter page has
+        one radio *group* (shared field name "audience", 5 differently-id'd
+        options) - extract_forms() captures all 5 as separate field
+        entries, which previously became 5 near-duplicate, all-unfillable
+        targets, filling B5's MAX_TARGETS=20 budget on their own and
+        leaving 4 of 9 navitools tools with zero targets generated.
+        """
+        attack_surface = {
+            "forms": [{
+                "page": "tool", "action": "http://x/navitools/audience-rewriter/", "page_url": "http://x/tool",
+                "fields": [
+                    {"id": "nt-aud-executives", "name": "audience", "type": "radio"},
+                    {"id": "nt-aud-general", "name": "audience", "type": "radio"},
+                    {"id": "nt-aud-technical", "name": "audience", "type": "radio"},
+                    {"id": "id_context", "name": "context", "type": "textarea"},
+                ],
+            }],
+            "inputs": [], "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["field_name"], "context")
+
+    def test_form_with_only_hidden_fields_contributes_no_targets(self):
+        attack_surface = {
+            "forms": [{
+                "page": "every_page",
+                "action": "http://x/i18n/setlang/",
+                "page_url": "http://x/home",
+                "fields": [
+                    {"id": None, "name": "csrfmiddlewaretoken", "type": "hidden"},
+                    {"id": None, "name": "next", "type": "hidden"},
+                ],
+            }],
+            "inputs": [],
+            "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(targets, [])
+
     def test_inputs_become_targets_when_no_forms(self):
         attack_surface = {
             "forms": [],
@@ -51,6 +155,29 @@ class TestBuildDynamicTargets(unittest.TestCase):
 
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0]["type"], "input")
+        self.assertEqual(targets[0]["field_id"], "q")
+
+    def test_unfillable_input_types_are_excluded_too(self):
+        """
+        Real gap found live 2026-09-06: attack_surface["inputs"] (the
+        generic input:visible/textarea:visible DOM scan, separate from
+        extract_forms()) never had the file/radio/checkbox exclusion
+        applied at all - a file field already excluded via "forms" still
+        leaked back in through this separate loop for the exact same
+        physical element on NaViQ's navitools tool pages.
+        """
+        attack_surface = {
+            "forms": [],
+            "inputs": [
+                {"id": "id_image", "name": "image", "type": "file", "page_url": "http://x/tool"},
+                {"id": "q", "name": "query", "type": "text", "page_url": "http://x/search"},
+            ],
+            "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0]["field_id"], "q")
 
     def test_endpoints_are_fallback_only_when_nothing_else_found(self):
@@ -73,6 +200,53 @@ class TestBuildDynamicTargets(unittest.TestCase):
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0]["type"], "input")
 
+    def test_no_target_profile_leaves_order_unchanged(self):
+        """No target_profile (or one with no crawl_priority_paths, e.g.
+        Mattermost's default) - existing behavior, unaffected."""
+        attack_surface = {
+            "forms": [
+                {"page": "a", "action": "http://x/contact/send/", "page_url": "http://x/a",
+                 "fields": [{"id": None, "name": "email", "type": "text"}]},
+                {"page": "b", "action": "http://x/navitools/doctor/", "page_url": "http://x/b",
+                 "fields": [{"id": None, "name": "file", "type": "text"}]},
+            ],
+            "inputs": [], "endpoints": [],
+        }
+
+        targets = gp.build_dynamic_targets(attack_surface)
+
+        self.assertEqual(targets[0]["action"], "http://x/contact/send/")
+        self.assertEqual(targets[1]["action"], "http://x/navitools/doctor/")
+
+    def test_priority_paths_move_matching_targets_first(self):
+        """
+        Real gap found live 2026-09-06 against NaViQ: B4's crawl got a
+        priority mechanism (TargetProfile.crawl_priority_paths) the same
+        day, but this function still built targets in plain forms-list
+        order - the 20-target cap (generate_payloads()) was exactly filled
+        by earlier, more mundane forms before navitools' were ever reached,
+        even though B4 now discovers them just fine.
+        """
+        attack_surface = {
+            "forms": [
+                {"page": "a", "action": "http://x/contact/send/", "page_url": "http://x/a",
+                 "fields": [{"id": None, "name": "email", "type": "text"}]},
+                {"page": "b", "action": "http://x/account/settings/", "page_url": "http://x/b",
+                 "fields": [{"id": None, "name": "username", "type": "text"}]},
+                {"page": "c", "action": "http://x/navitools/doctor/", "page_url": "http://x/c",
+                 "fields": [{"id": None, "name": "file", "type": "text"}]},
+            ],
+            "inputs": [], "endpoints": [],
+        }
+        target_profile = SimpleNamespace(crawl_priority_paths=("/navitools/",))
+
+        targets = gp.build_dynamic_targets(attack_surface, target_profile)
+
+        self.assertEqual(targets[0]["action"], "http://x/navitools/doctor/")
+        # relative order preserved within the non-priority group
+        self.assertEqual(targets[1]["action"], "http://x/contact/send/")
+        self.assertEqual(targets[2]["action"], "http://x/account/settings/")
+
 
 class TestFindRelatedStaticFindings(unittest.TestCase):
 
@@ -92,6 +266,30 @@ class TestFindRelatedStaticFindings(unittest.TestCase):
     def test_no_static_findings_returns_empty(self):
         self.assertEqual(gp.find_related_static_findings({}, []), [])
 
+    def test_findings_with_resolvable_taxonomy_are_ranked_first(self):
+        """
+        readme.md's own SESSION 4 note flags this gap directly: relevance
+        selection stayed pure keyword matching even after B9 got a real
+        CWE/OWASP taxonomy engine (blocks/taxonomy.py) - infer_taxonomy() was
+        only ever called *after* selection, on whatever keyword matching
+        already picked, never used to influence which match comes first.
+        Both findings below keyword-match on "login"; only the second has a
+        taxonomy infer_taxonomy() can actually resolve (an explicit cwe_id) -
+        it should be ranked ahead of the free-text-only match, not stay
+        second just because it appears second in static_findings.
+        """
+        dynamic_target = {"field_id": "login", "field_name": None, "field_type": None,
+                           "page_url": "http://x/login", "action": None}
+        static_findings = [
+            {"file": "login/handler.go", "vulnerability": "Something Unrecognized"},
+            {"file": "login/auth.go", "vulnerability": "Broken Authentication", "cwe_id": "CWE-287"},
+        ]
+
+        matches = gp.find_related_static_findings(dynamic_target, static_findings)
+
+        self.assertEqual(len(matches), 2)
+        self.assertEqual(matches[0].get("cwe_id"), "CWE-287")
+
 
 class TestTryExtractPartialJson(unittest.TestCase):
 
@@ -105,26 +303,34 @@ class TestTryExtractPartialJson(unittest.TestCase):
 
 
 class TestGeneratePayloads(unittest.TestCase):
+    """
+    Isolated by chdir into a temp directory, same as every other block's
+    tests (blocks/generate_payloads.py's B3/attack_surface/B5 paths are all
+    target-scoped via result_path(), e.g. "results/mattermost_B3_static.json"
+    — a plain "results/" string, not RESULTS_DIR-relative — so patching
+    gp.RESULTS_DIR alone no longer isolates these reads/writes).
+    """
 
     def setUp(self):
+        self._cwd = os.getcwd()
         self._tmp = tempfile.TemporaryDirectory()
-        self._results_dir_patch = patch.object(gp, "RESULTS_DIR", self._tmp.name)
-        self._results_dir_patch.start()
+        os.chdir(self._tmp.name)
+        os.makedirs("results", exist_ok=True)
 
         attack_surface = {
             "forms": [],
             "inputs": [{"id": "q", "name": "query", "type": "text", "page_url": "http://x/search"}],
             "endpoints": [],
         }
-        with open(Path(self._tmp.name) / "attack_surface.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_attack_surface.json", "w", encoding="utf-8") as f:
             json.dump(attack_surface, f)
 
     def tearDown(self):
-        self._results_dir_patch.stop()
+        os.chdir(self._cwd)
         self._tmp.cleanup()
 
     def test_raises_without_attack_surface_file(self):
-        (Path(self._tmp.name) / "attack_surface.json").unlink()
+        Path("results/mattermost_attack_surface.json").unlink()
         with self.assertRaises(FileNotFoundError):
             gp.generate_payloads(client=object())
 
@@ -143,12 +349,12 @@ class TestGeneratePayloads(unittest.TestCase):
         # written in this fixture) -> taxonomy fields default to None.
         self.assertIsNone(item["cwe_id"])
 
-        saved = json.loads((Path(self._tmp.name) / "B5_payloads.json").read_text(encoding="utf-8"))
+        saved = json.loads(Path("results/mattermost_B5_payloads.json").read_text(encoding="utf-8"))
         self.assertEqual(saved, output)
 
     @patch.object(gp, "ask_llm")
     def test_target_is_tagged_with_taxonomy_from_related_static_finding(self, mock_ask_llm):
-        with open(Path(self._tmp.name) / "B3_static.json", "w", encoding="utf-8") as f:
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"findings": [
                 {"file": "query.go", "vulnerability": "Injection", "confidence": "high",
                  "evidence": "raw SQL built from request.query"},

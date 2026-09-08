@@ -15,9 +15,25 @@ export type PipelineStatus = {
 
 export type LogsResponse = { logs: string[] };
 
-export type EnvironmentHealth = { mattermost_up: boolean };
+export type EnvironmentHealth = { target_up: boolean; target: string };
 export type EnvironmentStatus = { running: boolean; completed: boolean; error: string | null };
 export type EnvironmentResetResponse = { message: string };
+
+export type TargetOption = { name: string; display_name: string };
+export type ActiveTarget = {
+  name: string;
+  display_name: string;
+  stack_label: string;
+  supports_fresh_reset: boolean;
+  available: TargetOption[];
+};
+export type SetTargetRequest = { name: string };
+export type SetTargetResponse = {
+  name: string;
+  display_name: string;
+  stack_label: string;
+  supports_fresh_reset: boolean;
+};
 
 export type B3Finding = {
   vulnerability: string;
@@ -144,7 +160,11 @@ export type B9Entry = {
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   evidence: string;
   match_rationale: string; // plain-language why/where this match_tier was picked
-  matched_static_finding: { file: string | null; line: number | null; vulnerability: string | null } | null;
+  matched_static_finding: {
+    file: string | null;
+    line: number | null;
+    vulnerability: string | null;
+  } | null;
 };
 export type B9Judgment = { verdict: "yes" | "no" | null; rationale: string };
 export type B9Result = {
@@ -160,9 +180,11 @@ export type RunSummary = {
   started_at: string;
   finished_at: string | null;
   mode: string | null;
+  target: string | null; // "mattermost" | "naviq" | null for runs predating this column
   status: RunStatus;
   total_findings: number | null;
   confirmed_findings: number | null;
+  archived: boolean;
 };
 export type RunDetail = RunSummary & {
   // Same {block_name: json} shape as GET /api/results (e.g. "B3_static",
@@ -173,8 +195,26 @@ export type RunDetail = RunSummary & {
 };
 export type RunsListResponse = { runs: RunSummary[] };
 
+// blocks/run_history.py's compare_with_previous() — findings are B9Entry-
+// shaped since the comparison is computed over B9_correlation.results.
+export type SeverityDelta = Record<"CRITICAL" | "HIGH" | "MEDIUM" | "LOW", number>;
+export type RunComparison = {
+  run_id: number;
+  previous_run_id: number | null;
+  new_findings: B9Entry[];
+  recurring_findings: B9Entry[];
+  resolved_findings: B9Entry[];
+  // blocks/run_history.py's _dynamically_verified() split: only present
+  // here when a live attack (source "Dynamic"/"Hybrid") actually disproved
+  // it. A static-only finding disappearing lands here instead - it isn't
+  // verified as fixed, just not re-flagged by B3's latest (partial) scan.
+  unverified_findings: B9Entry[];
+  severity_delta: SeverityDelta;
+};
+
 export type ValidateRequest = { approved_indices: number[]; comment?: string };
 export type ValidateResponse = { message: string };
+export type RunPipelineRequest = { mode: "fresh" | "restore" };
 export type RunResponse = { message: string };
 export type ResetResponse = { message: string };
 export type ResultsBulk = Record<string, unknown | null>;
@@ -183,9 +223,35 @@ export type ResultsBulk = Record<string, unknown | null>;
 export type BadgeTone = "posible" | "form" | "input" | "confirmada" | "descartada";
 export type UIFinding = {
   tone: BadgeTone;
-  label: string;
+  // Single word/tag for the banner - the same value the old small Tag badge
+  // showed (classification, confidence tier, "FORM"/"INPUT", payload count).
+  // Never combine two fields here - each stat below gets its own slot in the
+  // stat row instead, so nothing is duplicated between the banner and the
+  // fields under it.
+  bannerLabel: string;
+  // Readable category (the half of an AI-generated "Category - Specific
+  // Name" vulnerability string before the split) plus any real classifier
+  // codes available (OWASP category, CWE id) - only for steps whose
+  // findings actually carry that text.
+  category?: string;
   title: string;
-  subtitle: string;
+  // Where this was found - a file:line for a static match, or a URL for a
+  // form/input/dynamic target. Rendered as a single line with a location
+  // icon, never fabricated when the step has no location concept.
+  location?: string;
+  // Monospace, code-like block - static evidence lines or a payload list.
+  snippet?: string;
+  // Plain-prose explanatory line (e.g. B5's payload-generation rationale) -
+  // distinct from `snippet` because it isn't code, so it isn't styled as
+  // code.
+  description?: string;
+  // Stat-row fields - only the ones a given step's data model actually has
+  // are ever set, so the row renders 0-4 columns depending on the step
+  // (never blank/placeholder columns for missing data).
+  severity?: string;
+  type?: string;
+  score?: number;
+  confidence?: string;
   screenshotUrl?: string | null;
   videoUrl?: string | null;
   rationale?: string; // click-to-expand "why/where" explanation, B9 entries only

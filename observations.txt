@@ -1,5 +1,0 @@
-Frontend:
-1. Id like to add a tutorial using driver.js, but we'll do this when we can call this finished before deployment on AWS.
-2. regarding the 'environment ready' in the header, this either has to go or change the dot color from: grey (inactive) -> red / yellow (preparing) -> green (ready)
-3. the ui has to be cleaned after each run since the results are already available in past runs, or each time i do npm run dev, i dont like to find stuff form the last test
-4. run pipeline button sits below, when the pipeline runs it  goes even lower and not visible until scrolling all the way down, it should be fixed below the steps in sidebar

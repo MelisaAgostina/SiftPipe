@@ -60,6 +60,7 @@ services:
 
       # additional settings
       - MM_SERVICESETTINGS_SITEURL
+      - MM_SERVICESETTINGS_ENABLEONBOARDINGFLOW
     ports:
     - "8065:8065"
 
