@@ -223,9 +223,35 @@ export type ResultsBulk = Record<string, unknown | null>;
 export type BadgeTone = "posible" | "form" | "input" | "confirmada" | "descartada";
 export type UIFinding = {
   tone: BadgeTone;
-  label: string;
+  // Single word/tag for the banner - the same value the old small Tag badge
+  // showed (classification, confidence tier, "FORM"/"INPUT", payload count).
+  // Never combine two fields here - each stat below gets its own slot in the
+  // stat row instead, so nothing is duplicated between the banner and the
+  // fields under it.
+  bannerLabel: string;
+  // Readable category (the half of an AI-generated "Category - Specific
+  // Name" vulnerability string before the split) plus any real classifier
+  // codes available (OWASP category, CWE id) - only for steps whose
+  // findings actually carry that text.
+  category?: string;
   title: string;
-  subtitle: string;
+  // Where this was found - a file:line for a static match, or a URL for a
+  // form/input/dynamic target. Rendered as a single line with a location
+  // icon, never fabricated when the step has no location concept.
+  location?: string;
+  // Monospace, code-like block - static evidence lines or a payload list.
+  snippet?: string;
+  // Plain-prose explanatory line (e.g. B5's payload-generation rationale) -
+  // distinct from `snippet` because it isn't code, so it isn't styled as
+  // code.
+  description?: string;
+  // Stat-row fields - only the ones a given step's data model actually has
+  // are ever set, so the row renders 0-4 columns depending on the step
+  // (never blank/placeholder columns for missing data).
+  severity?: string;
+  type?: string;
+  score?: number;
+  confidence?: string;
   screenshotUrl?: string | null;
   videoUrl?: string | null;
   rationale?: string; // click-to-expand "why/where" explanation, B9 entries only

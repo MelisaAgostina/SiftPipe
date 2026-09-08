@@ -4,7 +4,12 @@ import "driver.js/dist/driver.css";
 import { useErrorToast } from "@/hooks/use-error-toast";
 import { useLang } from "@/hooks/use-lang";
 import { useSessionExpired } from "@/hooks/use-session-expired";
-import { useEnvironmentStatus, useLiveRunVisible, usePipelineStatus } from "@/lib/queries";
+import {
+  useEnvironmentStatus,
+  useLiveRunVisible,
+  usePastRuns,
+  usePipelineStatus,
+} from "@/lib/queries";
 import { clearSessionExpired } from "@/lib/session-expired-store";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -57,9 +62,21 @@ export function SecPipelineApp() {
 
   const liveRunVisible = useLiveRunVisible();
 
+  // A juror landing on this cold has no reason to notice the guided-tour
+  // button tucked at the end of the tab row - reuses the same "no past runs
+  // at all yet" signal FirstRunGuide already treats as the real first-time
+  // marker (server-verified, not a localStorage flag that a cleared profile
+  // or a different browser would lose). Dismisses the moment the tour is
+  // actually opened, so it doesn't keep pulsing at someone who already
+  // clicked it but hasn't run the pipeline yet.
+  const { data: pastRuns } = usePastRuns();
+  const [tourHintDismissed, setTourHintDismissed] = useState(false);
+  const showTourHint = pastRuns !== undefined && pastRuns.runs.length === 0 && !tourHintDismissed;
+
   if (sessionExpired) return <Unauthorized />;
 
   const startTour = () => {
+    setTourHintDismissed(true);
     driver({
       showProgress: true,
       allowClose: true,
@@ -77,7 +94,7 @@ export function SecPipelineApp() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main className="flex-1 space-y-6 overflow-y-auto p-6">
-          <Tabs value={tab} onChange={setTab} onStartTour={startTour} />
+          <Tabs value={tab} onChange={setTab} onStartTour={startTour} showTourHint={showTourHint} />
           {tab === "pipeline" && <PipelineView liveVisible={liveRunVisible} />}
           {tab === "revision" && <PayloadReviewView onValidated={() => setTab("logs")} />}
           {tab === "correlacion" && <CorrelationView liveVisible={liveRunVisible} />}

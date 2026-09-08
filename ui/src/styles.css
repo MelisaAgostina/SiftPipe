@@ -151,3 +151,23 @@
     font-family: var(--font-sans);
   }
 }
+
+/* Guided-tour attention hint (Tabs.tsx) - a brief green ring expanding out
+   from the existing button border, repeating every 5s, instead of adding
+   any new element (dot/badge) to the button. Idle for the rest of each
+   cycle so it reads as an occasional nudge, not a constant animation. */
+@keyframes tour-hint-ring {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.82 0.16 155 / 0.6);
+  }
+  12% {
+    box-shadow: 0 0 0 5px oklch(0.82 0.16 155 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.82 0.16 155 / 0);
+  }
+}
+
+.tour-hint-ring {
+  animation: tour-hint-ring 5s ease-out infinite;
+}

@@ -6,19 +6,84 @@ import type { UIFinding } from "@/lib/types";
 function finding(overrides: Partial<UIFinding> = {}): UIFinding {
   return {
     tone: "confirmada",
-    label: "CONFIRMED",
+    bannerLabel: "CONFIRMED",
     title: "XSS — post_textbox",
-    subtitle: "B7 · HIGH · score 0.900",
     ...overrides,
   };
 }
 
 describe("FindingRow", () => {
-  it("renders the title and subtitle", () => {
+  it("renders the banner label and title", () => {
     render(<FindingRow finding={finding()} />);
 
+    expect(screen.getByText("CONFIRMED")).toBeInTheDocument();
     expect(screen.getByText("XSS — post_textbox")).toBeInTheDocument();
-    expect(screen.getByText("B7 · HIGH · score 0.900")).toBeInTheDocument();
+  });
+
+  it("renders the category line only when the finding has one", () => {
+    const { rerender } = render(<FindingRow finding={finding({ category: undefined })} />);
+    expect(screen.queryByText("BROKEN ACCESS CONTROL")).not.toBeInTheDocument();
+
+    rerender(<FindingRow finding={finding({ category: "BROKEN ACCESS CONTROL" })} />);
+    expect(screen.getByText("BROKEN ACCESS CONTROL")).toBeInTheDocument();
+  });
+
+  it("renders the description as plain prose text", () => {
+    render(
+      <FindingRow finding={finding({ description: "Why these payloads target this field" })} />,
+    );
+
+    expect(screen.getByText("Why these payloads target this field")).toBeInTheDocument();
+  });
+
+  it("renders the location line for a file:line or a URL", () => {
+    render(<FindingRow finding={finding({ location: "server/api.go:42" })} />);
+
+    expect(screen.getByText("server/api.go:42")).toBeInTheDocument();
+  });
+
+  it("renders the snippet as a code block", () => {
+    render(<FindingRow finding={finding({ snippet: "if (x) { doThing(); }" })} />);
+
+    expect(screen.getByText("if (x) { doThing(); }")).toBeInTheDocument();
+  });
+
+  it("renders only the stat columns the finding actually has data for", () => {
+    const { container } = render(
+      <FindingRow finding={finding({ severity: "HIGH", confidence: "MEDIUM" })} />,
+    );
+
+    expect(screen.getByText("Severity")).toBeInTheDocument();
+    expect(screen.getByText("HIGH")).toBeInTheDocument();
+    expect(screen.getByText("Confidence")).toBeInTheDocument();
+    expect(screen.queryByText("Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Score")).not.toBeInTheDocument();
+    // Only the two present stats get a column - a 4-column grid class here
+    // would leave two columns empty instead of the row narrowing to fit.
+    expect(container.querySelector(".grid-cols-2")).toBeInTheDocument();
+  });
+
+  it("shows no stat row at all when the finding has none of severity/type/score/confidence", () => {
+    render(<FindingRow finding={finding()} />);
+
+    expect(screen.queryByText("Severity")).not.toBeInTheDocument();
+    expect(screen.queryByText("Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Score")).not.toBeInTheDocument();
+    expect(screen.queryByText("Confidence")).not.toBeInTheDocument();
+  });
+
+  it("renders the real score value and never a fabricated percentage", () => {
+    render(<FindingRow finding={finding({ score: 0.478 })} />);
+
+    expect(screen.getByText("0.478")).toBeInTheDocument();
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+  });
+
+  it("shows the real confidence text, not an invented number", () => {
+    render(<FindingRow finding={finding({ confidence: "REALLY HIGH" })} />);
+
+    expect(screen.getByText("REALLY HIGH")).toBeInTheDocument();
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 
   it("is not expandable or clickable when there's no rationale", () => {

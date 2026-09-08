@@ -94,10 +94,17 @@ export type Strings = {
     videoUnsupported: string;
     downloadRecording: string;
     downloadRecordingSuffix: string;
+    severityStatLabel: string;
+    typeStatLabel: string;
+    scoreStatLabel: string;
+    confidenceStatLabel: string;
+    matchRationaleToggle: string;
   };
   pastRunsView: {
     downloadReport: string;
     viewRawJson: string;
+    reportButtonLabel: string;
+    jsonButtonLabel: string;
     runLabel: (id: number, mode: string) => string;
     statusLabels: Record<RunStatusId, string>;
     selectRunPrompt: string;
@@ -106,6 +113,8 @@ export type Strings = {
     noFindingsToShow: string;
     trendHeading: string;
     trendHeadingClarifier: string;
+    collapseAll: string;
+    showAll: string;
     reviewerNoteHeading: string;
     b3SectionTitle: (scanned: number) => string;
     b4SectionTitle: string;
@@ -202,7 +211,6 @@ export type Strings = {
     inputLabel: string;
     errorLlmLabel: string;
     formTitleConnector: (formName: string, method: string) => string;
-    b8ConfidenceSuffix: (evidence: string, confidence: string) => string;
   };
   tour: {
     nextBtnText: string;

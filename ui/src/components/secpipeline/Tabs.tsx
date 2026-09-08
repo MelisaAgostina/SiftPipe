@@ -11,10 +11,15 @@ export function Tabs({
   value,
   onChange,
   onStartTour,
+  showTourHint = false,
 }: {
   value: TabId;
   onChange: (v: TabId) => void;
   onStartTour: () => void;
+  /** Draws the eye to the guided-tour button for a user who has no reason
+   * yet to know it exists - see SecPipelineApp's showTourHint comment for
+   * when this turns on/off. */
+  showTourHint?: boolean;
 }) {
   const { t } = useLang();
   return (
@@ -39,7 +44,11 @@ export function Tabs({
       })}
       <button
         onClick={onStartTour}
-        className="flex min-h-13 items-center justify-center gap-1.5 rounded-md border border-border px-2 text-center text-sm font-medium leading-tight text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        data-testid={showTourHint ? "tour-hint-active" : undefined}
+        className={
+          "flex min-h-13 items-center justify-center gap-1.5 rounded-md border border-border px-2 text-center text-sm font-medium leading-tight text-muted-foreground transition-colors hover:bg-accent hover:text-foreground " +
+          (showTourHint ? "tour-hint-ring" : "")
+        }
       >
         <Compass className="h-4 w-4 shrink-0" />
         {t.secPipelineApp.guidedTour}

@@ -64,7 +64,7 @@ const SEVERITY_OPTIONS: B9Entry["severity"][] = ["CRITICAL", "HIGH", "MEDIUM", "
 // compares against the trimmed value.
 const CONFIDENCE_OPTIONS = ["REALLY HIGH", "HIGH", "MEDIUM", "LOW"];
 
-function RankingTooltip() {
+export function RankingTooltip() {
   const { t } = useLang();
   return (
     <TooltipProvider>
@@ -118,10 +118,14 @@ export function AllFindings({
   entries,
   t,
   title,
+  hideHeader = false,
 }: {
   entries: B9Entry[];
   t: Strings;
   title: string;
+  /** Skips this section's own title row - for a caller (e.g. Past Runs'
+   * collapsible steps) that already renders an equivalent header itself. */
+  hideHeader?: boolean;
 }) {
   const [classifications, setClassifications] = useState<Set<B9Classification>>(new Set());
   const [severities, setSeverities] = useState<Set<B9Entry["severity"]>>(new Set());
@@ -168,6 +172,7 @@ export function AllFindings({
           findings: filtered.map(mapB9Entry),
         }}
         titleExtra={<RankingTooltip />}
+        hideHeader={hideHeader}
       />
     </div>
   );

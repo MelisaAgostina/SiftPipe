@@ -38,4 +38,18 @@ describe("Tabs", () => {
 
     expect(onStartTour).toHaveBeenCalledTimes(1);
   });
+
+  it("shows no attention hint on the guided-tour button by default", () => {
+    render(<Tabs value="pipeline" onChange={vi.fn()} onStartTour={vi.fn()} />);
+
+    expect(screen.queryByTestId("tour-hint-active")).not.toBeInTheDocument();
+  });
+
+  it("shows the attention hint on the guided-tour button when showTourHint is true", () => {
+    render(<Tabs value="pipeline" onChange={vi.fn()} onStartTour={vi.fn()} showTourHint />);
+
+    const hinted = screen.getByTestId("tour-hint-active");
+    expect(hinted).toBeInTheDocument();
+    expect(hinted).toHaveClass("tour-hint-ring");
+  });
 });

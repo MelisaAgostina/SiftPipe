@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   Archive,
   ArchiveRestore,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Download,
   FileJson,
   Minus,
+  Target,
   Trash2,
   TrendingDown,
   TrendingUp,
@@ -41,7 +45,7 @@ import {
   mapB8Finding,
   mapB9Entry,
 } from "./mappers";
-import { AllFindings } from "./CorrelationView";
+import { AllFindings, RankingTooltip } from "./CorrelationView";
 import { Callout } from "./Callout";
 import { QueryState } from "./QueryState";
 import { Section } from "./Section";
@@ -89,6 +93,21 @@ function targetLabel(target: string | null, t: Strings): string {
 function runActionError(err: unknown, t: Strings): string {
   const detail = (err as ApiError)?.detail ?? (err as Error)?.message ?? t.common.unknown;
   return t.pastRunsView.runActionFailed(detail);
+}
+
+// whitespace-nowrap/shrink-0 matter here specifically because these pills
+// used to just be inline text that wrapped mid-value onto a second line
+// inside the card (a real layout bug, not a stylistic choice) once the
+// target label and timestamp were both long enough - flex-wrap on the
+// parent row still lets the two *pills* wrap onto separate lines on a
+// narrow card, it's just each pill's own content that stays intact.
+function Pill({ icon: Icon, children }: { icon?: typeof Target; children: ReactNode }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border px-2.5 py-1 text-xs font-medium text-foreground">
+      {Icon && <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />}
+      {children}
+    </span>
+  );
 }
 
 function RunRow({
@@ -145,123 +164,126 @@ function RunRow({
         }
       }}
       className={
-        "w-full cursor-pointer rounded-lg border px-4 py-3 text-left transition-colors " +
-        (run.archived ? "border-dashed border-muted-foreground/40 opacity-70 " : "") +
+        "w-full cursor-pointer rounded-lg border border-l-4 px-4 py-3 text-left transition-colors " +
+        (run.archived ? "border-dashed border-muted-foreground/40 opacity-70 " : "border-border ") +
         (selected
-          ? "border-primary bg-accent"
-          : run.archived
-            ? "bg-card hover:bg-accent/50"
-            : "border-border bg-card hover:bg-accent/50")
+          ? "border-l-primary bg-accent"
+          : "border-l-transparent bg-card hover:bg-accent/50")
       }
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-foreground">
-          {t.pastRunsView.runLabel(run.id, run.mode ?? t.common.unknown)}
-        </span>
         <div className="flex items-center gap-1.5">
+          <span className="text-sm font-semibold text-foreground">
+            {t.pastRunsView.runLabel(run.id, run.mode ?? t.common.unknown)}
+          </span>
           {run.archived && (
             <span title={t.pastRunsView.archivedBadge} aria-label={t.pastRunsView.archivedBadge}>
               <Archive className="h-3.5 w-3.5 text-muted-foreground" />
             </span>
           )}
-          <span className={"text-xs font-semibold " + STATUS_TONE[run.status]}>
-            {t.pastRunsView.statusLabels[run.status]}
-          </span>
         </div>
-      </div>
-      <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground">
-          {targetLabel(run.target, t)}
+        <span className={"text-xs font-semibold " + STATUS_TONE[run.status]}>
+          {t.pastRunsView.statusLabels[run.status]}
         </span>
-        <span>{new Date(run.started_at).toLocaleString()}</span>
-        {run.total_findings != null && (
-          <span>
-            · {run.confirmed_findings}/{run.total_findings} {t.correlationView.statConfirmed}
-          </span>
-        )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Pill icon={Target}>{targetLabel(run.target, t)}</Pill>
+        <Pill>{new Date(run.started_at).toLocaleString()}</Pill>
       </div>
 
       {/* Icon-button toolbar, laid out inside the card (not a "..." menu
           overlaying other content) so it never overflows the narrow list
           column — see the button-sizing/overflow feedback on the earlier
           dropdown-menu design. */}
-      <div className="mt-2 flex items-center gap-1 border-t border-border/60 pt-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border/60 pt-2">
+        <div className="flex flex-wrap items-center gap-x-0.5 gap-y-1">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                title={t.pastRunsView.downloadReport}
+                aria-label={t.pastRunsView.downloadReport}
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <Download className="h-3.5 w-3.5" />
+                {t.pastRunsView.reportButtonLabel}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuItem onSelect={() => downloadReport(run.id, "en")}>
+                English
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => downloadReport(run.id, "es")}>
+                Español
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <button
+            type="button"
+            title={t.pastRunsView.viewRawJson}
+            aria-label={t.pastRunsView.viewRawJson}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.open(`${API_BASE}/api/runs/${run.id}`, "_blank");
+            }}
+            className="flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <FileJson className="h-3.5 w-3.5" />
+            {t.pastRunsView.jsonButtonLabel}
+          </button>
+
+          {run.archived ? (
             <button
               type="button"
-              title={t.pastRunsView.downloadReport}
-              aria-label={t.pastRunsView.downloadReport}
-              onClick={(e) => e.stopPropagation()}
+              title={t.pastRunsView.unarchiveAction}
+              aria-label={t.pastRunsView.unarchiveAction}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleUnarchive();
+              }}
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <ArchiveRestore className="h-3.5 w-3.5" />
+              {t.pastRunsView.unarchiveAction}
+            </button>
+          ) : (
+            <button
+              type="button"
+              title={t.pastRunsView.archiveAction}
+              aria-label={t.pastRunsView.archiveAction}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleArchive();
+              }}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
             >
-              <Download className="h-3.5 w-3.5" />
+              <Archive className="h-3.5 w-3.5" />
             </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
-            <DropdownMenuItem onSelect={() => downloadReport(run.id, "en")}>
-              English
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => downloadReport(run.id, "es")}>
-              Español
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          )}
 
-        <button
-          type="button"
-          title={t.pastRunsView.viewRawJson}
-          aria-label={t.pastRunsView.viewRawJson}
-          onClick={(e) => {
-            e.stopPropagation();
-            window.open(`${API_BASE}/api/runs/${run.id}`, "_blank");
-          }}
-          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <FileJson className="h-3.5 w-3.5" />
-        </button>
+          {run.archived && (
+            <button
+              type="button"
+              title={t.pastRunsView.deleteAction}
+              aria-label={t.pastRunsView.deleteAction}
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirmDeleteOpen(true);
+              }}
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-destructive"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
 
-        {run.archived ? (
-          <button
-            type="button"
-            title={t.pastRunsView.unarchiveAction}
-            aria-label={t.pastRunsView.unarchiveAction}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleUnarchive();
-            }}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <ArchiveRestore className="h-3.5 w-3.5" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            title={t.pastRunsView.archiveAction}
-            aria-label={t.pastRunsView.archiveAction}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleArchive();
-            }}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Archive className="h-3.5 w-3.5" />
-          </button>
-        )}
-
-        {run.archived && (
-          <button
-            type="button"
-            title={t.pastRunsView.deleteAction}
-            aria-label={t.pastRunsView.deleteAction}
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirmDeleteOpen(true);
-            }}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-destructive"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+        {run.total_findings != null && (
+          <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+            {run.confirmed_findings}/{run.total_findings} {t.correlationView.statConfirmed}
+          </span>
         )}
       </div>
 
@@ -403,6 +425,59 @@ function ComparePanel({ runId }: { runId: number }) {
   );
 }
 
+// Every step id RunDetailView can render, in display order - used both to
+// initialize "all open" state and as the full set collapseAll()/showAll()
+// target, regardless of which of them a given run actually has data for.
+const STEP_IDS = ["trend", "b3", "b4", "b5", "reviewer", "b8", "b9"] as const;
+type StepId = (typeof STEP_IDS)[number];
+
+function allSteps(open: boolean): Record<StepId, boolean> {
+  return { trend: open, b3: open, b4: open, b5: open, reviewer: open, b8: open, b9: open };
+}
+
+/**
+ * One collapsible step in a past run's detail view (trend, B3, B4, B5,
+ * reviewer note, B8, B9) - a run can carry a lot of LLM-generated output
+ * across every stage, so letting a user fold away the steps they don't care
+ * about (and leave open only the one they do) makes a dense run easier to
+ * scan than one long uninterruptible column. Open state is controlled by
+ * RunDetailView (rather than owned here) so the collapse-all/show-all
+ * buttons above the step list can drive every step at once.
+ */
+function CollapsibleStep({
+  open,
+  onToggle,
+  title,
+  titleExtra,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  title: ReactNode;
+  titleExtra?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="flex items-center gap-1.5 text-left text-xs font-semibold tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronRight
+            className={"h-3.5 w-3.5 shrink-0 transition-transform " + (open ? "rotate-90" : "")}
+          />
+          {title}
+        </button>
+        {titleExtra}
+      </div>
+      {open && children}
+    </section>
+  );
+}
+
 /**
  * Reuses the same Section/FindingRow/mapper* pipeline that PipelineView and
  * CorrelationView use for live data, just fed from one historical run's
@@ -412,6 +487,9 @@ function ComparePanel({ runId }: { runId: number }) {
 function RunDetailView({ runId }: { runId: number }) {
   const { t } = useLang();
   const query = useRunDetail(runId);
+  const [openSteps, setOpenSteps] = useState<Record<StepId, boolean>>(() => allSteps(true));
+
+  const toggleStep = (id: StepId) => setOpenSteps((prev) => ({ ...prev, [id]: !prev[id] }));
 
   return (
     <QueryState
@@ -443,72 +521,137 @@ function RunDetailView({ runId }: { runId: number }) {
 
         return (
           <div className="space-y-6">
-            <section className="space-y-2">
-              <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
-                {t.pastRunsView.trendHeading}{" "}
-                <span className="font-normal tracking-normal text-muted-foreground/70">
-                  {t.pastRunsView.trendHeadingClarifier}
-                </span>
-              </h3>
+            <div className="flex items-center justify-end gap-4 font-sans text-xs text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => setOpenSteps(allSteps(false))}
+                className="flex items-center gap-1 transition-colors hover:text-foreground"
+              >
+                <ChevronsDownUp className="h-3.5 w-3.5" />
+                {t.pastRunsView.collapseAll}
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpenSteps(allSteps(true))}
+                className="flex items-center gap-1 transition-colors hover:text-foreground"
+              >
+                <ChevronsUpDown className="h-3.5 w-3.5" />
+                {t.pastRunsView.showAll}
+              </button>
+            </div>
+
+            <CollapsibleStep
+              open={openSteps.trend}
+              onToggle={() => toggleStep("trend")}
+              title={
+                <>
+                  {t.pastRunsView.trendHeading}{" "}
+                  <span className="font-normal tracking-normal text-muted-foreground/70">
+                    {t.pastRunsView.trendHeadingClarifier}
+                  </span>
+                </>
+              }
+            >
               <ComparePanel runId={run.id} />
-            </section>
+            </CollapsibleStep>
 
             {Boolean(b3?.findings.length) && (
-              <Section
-                section={{
-                  id: `run-${run.id}-B3`,
-                  title: t.pastRunsView.b3SectionTitle(b3!.total_scanned),
-                  findings: b3!.findings.map(mapB3Finding),
-                }}
-              />
+              <CollapsibleStep
+                open={openSteps.b3}
+                onToggle={() => toggleStep("b3")}
+                title={t.pastRunsView.b3SectionTitle(b3!.total_scanned)}
+              >
+                <Section
+                  section={{
+                    id: `run-${run.id}-B3`,
+                    title: t.pastRunsView.b3SectionTitle(b3!.total_scanned),
+                    findings: b3!.findings.map(mapB3Finding),
+                  }}
+                  hideHeader
+                />
+              </CollapsibleStep>
             )}
 
             {Boolean(b4Summary && (b4Raw?.forms.length || b4Raw?.inputs.length)) && (
-              <Section
-                section={{
-                  id: `run-${run.id}-B4`,
-                  title: t.pastRunsView.b4SectionTitle,
-                  findings: [
-                    ...(b4Raw?.forms.map((f) => mapB4Form(f, t)) ?? []),
-                    ...(b4Raw?.inputs.map((i) => mapB4Input(i, t)) ?? []),
-                  ],
-                }}
-              />
+              <CollapsibleStep
+                open={openSteps.b4}
+                onToggle={() => toggleStep("b4")}
+                title={t.pastRunsView.b4SectionTitle}
+              >
+                <Section
+                  section={{
+                    id: `run-${run.id}-B4`,
+                    title: t.pastRunsView.b4SectionTitle,
+                    findings: [
+                      ...(b4Raw?.forms.map((f) => mapB4Form(f, t)) ?? []),
+                      ...(b4Raw?.inputs.map((i) => mapB4Input(i, t)) ?? []),
+                    ],
+                  }}
+                  hideHeader
+                />
+              </CollapsibleStep>
             )}
 
             {Boolean(b5?.payloads.length) && (
-              <Section
-                section={{
-                  id: `run-${run.id}-B5`,
-                  title: t.pastRunsView.b5SectionTitle(b5!.generated_targets),
-                  findings: b5!.payloads.map((g, idx) => mapB5Group(g, idx, t)),
-                }}
-              />
+              <CollapsibleStep
+                open={openSteps.b5}
+                onToggle={() => toggleStep("b5")}
+                title={t.pastRunsView.b5SectionTitle(b5!.generated_targets)}
+              >
+                <Section
+                  section={{
+                    id: `run-${run.id}-B5`,
+                    title: t.pastRunsView.b5SectionTitle(b5!.generated_targets),
+                    findings: b5!.payloads.map((g, idx) => mapB5Group(g, idx, t)),
+                  }}
+                  hideHeader
+                />
+              </CollapsibleStep>
             )}
 
             {Boolean(b6?.comment) && (
-              <section className="space-y-2">
-                <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">
-                  {t.pastRunsView.reviewerNoteHeading}
-                </h3>
+              <CollapsibleStep
+                open={openSteps.reviewer}
+                onToggle={() => toggleStep("reviewer")}
+                title={t.pastRunsView.reviewerNoteHeading}
+              >
                 <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground">
                   {b6!.comment}
                 </div>
-              </section>
+              </CollapsibleStep>
             )}
 
             {Boolean(b8?.findings.length) && (
-              <Section
-                section={{
-                  id: `run-${run.id}-B8`,
-                  title: t.pastRunsView.b8SectionTitle,
-                  findings: b8!.findings.map((f) => mapB8Finding(f, t)),
-                }}
-              />
+              <CollapsibleStep
+                open={openSteps.b8}
+                onToggle={() => toggleStep("b8")}
+                title={t.pastRunsView.b8SectionTitle}
+              >
+                <Section
+                  section={{
+                    id: `run-${run.id}-B8`,
+                    title: t.pastRunsView.b8SectionTitle,
+                    findings: b8!.findings.map((f) => mapB8Finding(f, t)),
+                  }}
+                  hideHeader
+                />
+              </CollapsibleStep>
             )}
 
             {Boolean(b9?.results.length) && (
-              <AllFindings entries={b9!.results} t={t} title={t.pastRunsView.b9SectionTitle} />
+              <CollapsibleStep
+                open={openSteps.b9}
+                onToggle={() => toggleStep("b9")}
+                title={t.pastRunsView.b9SectionTitle}
+                titleExtra={<RankingTooltip />}
+              >
+                <AllFindings
+                  entries={b9!.results}
+                  t={t}
+                  title={t.pastRunsView.b9SectionTitle}
+                  hideHeader
+                />
+              </CollapsibleStep>
             )}
           </div>
         );
@@ -534,7 +677,7 @@ export function PastRunsView() {
         const visibleRuns = showArchived ? data.runs : data.runs.filter((r) => !r.archived);
 
         return (
-          <div className="grid gap-6 md:grid-cols-[280px_1fr]">
+          <div className="grid gap-6 md:grid-cols-[360px_1fr]">
             <div className="space-y-2">
               {visibleRuns.map((run) => (
                 <RunRow

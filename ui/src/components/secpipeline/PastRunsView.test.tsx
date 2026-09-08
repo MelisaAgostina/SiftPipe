@@ -248,4 +248,94 @@ describe("PastRunsView", () => {
       expect(screen.getByText(/never tested with a real attack/i)).toBeInTheDocument();
     });
   });
+
+  describe("collapsible steps in a run's detail view", () => {
+    // A run can carry a lot of LLM-generated output across every stage
+    // (trend, B3, B4, B5, reviewer note, B8, B9) - each step must be
+    // independently foldable so a user can hide the ones they don't care
+    // about without losing the others, and the step's own header must stay
+    // visible (as the way to bring it back) even while collapsed.
+    function selectRunWithB3Finding() {
+      vi.mocked(usePastRuns).mockReturnValue(loadedQuery({ runs: [run({ id: 3 })] }) as never);
+      vi.mocked(useRunDetail).mockReturnValue(
+        loadedQuery({
+          ...run({ id: 3 }),
+          blocks: {
+            B3_static: {
+              status: "complete",
+              total_scanned: 4,
+              findings: [
+                {
+                  vulnerability: "Reflected XSS",
+                  category: "A03",
+                  severity: "HIGH",
+                  confidence: "high",
+                  file: "app.js",
+                },
+              ],
+            },
+          },
+        }) as never,
+      );
+      vi.mocked(useRunComparison).mockReturnValue(
+        loadedQuery({
+          run_id: 3,
+          previous_run_id: null,
+          new_findings: [],
+          recurring_findings: [],
+          resolved_findings: [],
+          unverified_findings: [],
+          severity_delta: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+        }) as never,
+      );
+
+      render(<PastRunsView />);
+      fireEvent.click(screen.getByText(/run #3/i));
+    }
+
+    it("collapses a step's content on header click while keeping the header visible, and restores it on a second click", () => {
+      selectRunWithB3Finding();
+
+      expect(screen.getByText(/reflected xss/i)).toBeInTheDocument();
+
+      const stepHeader = screen.getByRole("button", { name: /static analysis/i });
+      fireEvent.click(stepHeader);
+
+      expect(screen.getByRole("button", { name: /static analysis/i })).toBeInTheDocument();
+      expect(screen.queryByText(/reflected xss/i)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /static analysis/i }));
+
+      expect(screen.getByText(/reflected xss/i)).toBeInTheDocument();
+    });
+
+    it("collapses steps independently of one another", () => {
+      selectRunWithB3Finding();
+
+      fireEvent.click(screen.getByRole("button", { name: /static analysis/i }));
+
+      // The trend step (always rendered, even with nothing to compare against
+      // yet) must stay open - collapsing B3 shouldn't touch other steps.
+      expect(screen.getByText(/first completed run/i)).toBeInTheDocument();
+    });
+
+    it("'Collapse all' hides every step's content, and 'Show all' brings all of them back", () => {
+      selectRunWithB3Finding();
+
+      expect(screen.getByText(/reflected xss/i)).toBeInTheDocument();
+      expect(screen.getByText(/first completed run/i)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /collapse all/i }));
+
+      expect(screen.queryByText(/reflected xss/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/first completed run/i)).not.toBeInTheDocument();
+      // Headers stay visible while collapsed - that's how the user gets back in.
+      expect(screen.getByRole("button", { name: /static analysis/i })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /show all/i }));
+
+      expect(screen.getByText(/reflected xss/i)).toBeInTheDocument();
+      expect(screen.getByText(/first completed run/i)).toBeInTheDocument();
+    });
+  });
 });

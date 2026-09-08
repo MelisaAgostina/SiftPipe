@@ -23,12 +23,18 @@ vi.mock("@/lib/queries", () => ({
   usePipelineStatus: vi.fn(),
   useEnvironmentStatus: vi.fn(),
   useLiveRunVisible: vi.fn(),
+  usePastRuns: vi.fn(),
 }));
 vi.mock("@/hooks/use-session-expired", () => ({ useSessionExpired: vi.fn() }));
 vi.mock("@/hooks/use-error-toast", () => ({ useErrorToast: vi.fn() }));
 vi.mock("@/lib/session-expired-store", () => ({ clearSessionExpired: vi.fn() }));
 
-import { usePipelineStatus, useEnvironmentStatus, useLiveRunVisible } from "@/lib/queries";
+import {
+  usePipelineStatus,
+  useEnvironmentStatus,
+  useLiveRunVisible,
+  usePastRuns,
+} from "@/lib/queries";
 import { useSessionExpired } from "@/hooks/use-session-expired";
 import { useErrorToast } from "@/hooks/use-error-toast";
 import { clearSessionExpired } from "@/lib/session-expired-store";
@@ -44,6 +50,7 @@ function setup(
     sessionExpired?: boolean;
     statusError?: string | null;
     envError?: string | null;
+    pastRunsCount?: number;
   } = {},
 ) {
   vi.mocked(usePipelineStatus).mockReturnValue(
@@ -57,6 +64,12 @@ function setup(
   );
   vi.mocked(useLiveRunVisible).mockReturnValue(true as never);
   vi.mocked(useSessionExpired).mockReturnValue(overrides.sessionExpired ?? false);
+  // Defaults to "at least one past run" so existing tests (none of which
+  // care about the tour hint) don't accidentally exercise the first-time
+  // state - tests that do care pass pastRunsCount explicitly.
+  vi.mocked(usePastRuns).mockReturnValue(
+    loadedQuery({ runs: Array(overrides.pastRunsCount ?? 1).fill({}) }) as never,
+  );
 
   return render(<SecPipelineApp />);
 }
@@ -130,5 +143,26 @@ describe("SecPipelineApp", () => {
 
     expect(useErrorToast).toHaveBeenCalledWith("B3 crashed", expect.any(String));
     expect(useErrorToast).toHaveBeenCalledWith("docker down", expect.any(String));
+  });
+
+  it("shows the guided-tour attention hint only when there are no past runs at all yet", () => {
+    setup({ pastRunsCount: 0 });
+
+    expect(screen.getByTestId("tour-hint-active")).toBeInTheDocument();
+  });
+
+  it("shows no tour hint once at least one past run exists", () => {
+    setup({ pastRunsCount: 1 });
+
+    expect(screen.queryByTestId("tour-hint-active")).not.toBeInTheDocument();
+  });
+
+  it("dismisses the tour hint the moment the guided tour is opened, even with no runs yet", () => {
+    setup({ pastRunsCount: 0 });
+    expect(screen.getByTestId("tour-hint-active")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/guided tour/i));
+
+    expect(screen.queryByTestId("tour-hint-active")).not.toBeInTheDocument();
   });
 });
