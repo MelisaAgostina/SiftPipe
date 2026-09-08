@@ -53,11 +53,17 @@ class TestIsDenylisted(unittest.TestCase):
         denylist = GENERIC_DENYLIST + NAVIQ.extra_denylist
         self.assertTrue(is_denylisted("http://127.0.0.1:8001/downloads/some-product/buy/", denylist))
 
-    def test_naviq_ordinary_downloads_listing_is_not_denylisted(self):
-        # Only the buy sub-path is banned — the rest of /downloads/ is an
-        # ordinary product listing, legitimate crawl surface.
+    def test_naviq_downloads_listing_is_denylisted_wholesale(self):
+        # Policy changed 2026-09-04 (see blocks/targets.py's extra_denylist
+        # comment): the owner declared the whole downloads/ app - real
+        # MercadoPago/PayPal payment infra, not just its /buy/ checkout
+        # action - off-limits this round. This locks that decision in with
+        # a real assertion instead of just a comment, so a future edit that
+        # narrows extra_denylist back to "/buy/"-only (matching this test's
+        # old, superseded version) gets caught here instead of silently
+        # reopening a real payment app to the crawler.
         denylist = GENERIC_DENYLIST + NAVIQ.extra_denylist
-        self.assertFalse(is_denylisted("http://127.0.0.1:8001/downloads/", denylist))
+        self.assertTrue(is_denylisted("http://127.0.0.1:8001/downloads/", denylist))
 
 
 class TestNormalizeUrl(unittest.TestCase):
