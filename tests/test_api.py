@@ -276,6 +276,97 @@ class TestApiRoutes(unittest.TestCase):
         self.assertEqual([f["cwe_id"] for f in result["new_findings"]], ["CWE-79"])
         self.assertEqual([f["cwe_id"] for f in result["resolved_findings"]], ["CWE-89"])
 
+    # ── Mid-pipeline resume (POST /api/run/resume) ──────────────────────────
+
+    def test_find_resume_point_returns_none_with_no_runs(self):
+        self.assertIsNone(api._find_resume_point(api.ACTIVE_TARGET.name))
+
+    def test_find_resume_point_returns_none_for_a_completed_run(self):
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        api.run_history.finish_run(run_id, "completed")
+        self.assertIsNone(api._find_resume_point(api.ACTIVE_TARGET.name))
+
+    def test_find_resume_point_returns_none_when_dismissed(self):
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        api.run_history.finish_run(run_id, "error")
+        api.run_history.dismiss_resume(api.ACTIVE_TARGET.name)
+
+        self.assertIsNone(api._find_resume_point(api.ACTIVE_TARGET.name))
+
+    def test_find_resume_point_starts_after_the_last_completed_block(self):
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B4_dynamic.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        api.run_history.finish_run(run_id, "error")
+
+        result = api._find_resume_point(api.ACTIVE_TARGET.name)
+
+        self.assertEqual(result, (run_id, 2, "B5"))
+
+    def test_resume_endpoint_rejects_when_nothing_resumable(self):
+        with self.assertRaises(HTTPException) as ctx:
+            api.resume_pipeline()
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_resume_endpoint_dispatches_from_the_right_step(self):
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        api.run_history.finish_run(run_id, "error")
+
+        response = api.resume_pipeline()
+
+        self.assertEqual(response, {"resuming_from": "B4"})
+        self.assertEqual(len(FakeThread.started), 1)
+        self.assertEqual(FakeThread.started[0], api._run_resumed_pipeline)
+        self.assertEqual(FakeThread.started_args[0], (run_id, 1))
+
+    def test_resume_endpoint_rejects_while_running(self):
+        api.pipeline_state["running"] = True
+        with self.assertRaises(HTTPException) as ctx:
+            api.resume_pipeline()
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_status_reports_resumable_from(self):
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        api.run_history.finish_run(run_id, "error")
+
+        self.assertEqual(api.get_status()["resumable_from"], "B4")
+
+    def test_status_resumable_from_is_none_with_nothing_to_resume(self):
+        self.assertIsNone(api.get_status()["resumable_from"])
+
+    def test_environment_reset_dismisses_resume_on_success(self):
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        api.run_history.finish_run(run_id, "error")
+
+        with patch.object(api, "dispatch_fresh_reset", lambda *a, **k: None):
+            api.run_environment_reset()
+
+        self.assertFalse(api.run_history.get_latest_run(api.ACTIVE_TARGET.name)["resumable"])
+
+    def test_environment_reset_does_not_dismiss_resume_on_failure(self):
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        api.run_history.finish_run(run_id, "error")
+
+        def _boom(*a, **k):
+            raise RuntimeError("reset failed")
+
+        with patch.object(api, "dispatch_fresh_reset", _boom):
+            api.run_environment_reset()
+
+        self.assertTrue(api.run_history.get_latest_run(api.ACTIVE_TARGET.name)["resumable"])
+
 
 if __name__ == "__main__":
     unittest.main()

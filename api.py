@@ -273,6 +273,7 @@ def run_environment_reset():
 
     try:
         dispatch_fresh_reset(ACTIVE_TARGET, log_fn=env_log, interactive=False)
+        run_history.dismiss_resume(ACTIVE_TARGET.name)
         env_state["completed"] = True
     except Exception as e:
         env_state["error"] = str(e)
@@ -376,6 +377,35 @@ def _run_from_b7():
     pipeline_state["waiting_for_human"] = False
     pipeline_state["error"] = None
     _run_pipeline_from(3)
+
+
+def _find_resume_point(target_name):
+    """
+    Returns (run_id, start_index, state_id) for the first PIPELINE_STEPS
+    entry not yet snapshotted for the most recent errored, still-resumable
+    run of `target_name` — or None if there's nothing to resume (no runs,
+    the latest one isn't errored, or Fresh Reset already dismissed it via
+    dismiss_resume()).
+    """
+    latest = run_history.get_latest_run(target_name)
+    if latest is None or latest["status"] != "error" or not latest["resumable"]:
+        return None
+
+    run_detail = run_history.get_run(latest["id"])
+    done = set(run_detail["blocks"].keys())
+    for index, (state_id, stored_name, _step, _start_message) in enumerate(PIPELINE_STEPS):
+        if stored_name not in done:
+            return latest["id"], index, state_id
+    return None  # every block already snapshotted - nothing left to resume
+
+
+def _run_resumed_pipeline(run_id, start_index):
+    """Thread target for POST /api/run/resume."""
+    pipeline_state["running"] = True
+    pipeline_state["error"] = None
+    pipeline_state["waiting_for_human"] = False
+    pipeline_state["run_id"] = run_id
+    _run_pipeline_from(start_index)
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
@@ -561,15 +591,37 @@ def run_pipeline(body: RunPipelineRequest = RunPipelineRequest()):
     return {"message": "Pipeline started"}
 
 
+@protected.post("/api/run/resume")
+def resume_pipeline():
+    """Resumes the active target's most recent errored run from the first
+    block that never completed. Rejects if the pipeline is currently
+    running/waiting, or if there's nothing resumable (see _find_resume_point)."""
+    if pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is already running")
+    if pipeline_state["waiting_for_human"]:
+        raise HTTPException(status_code=409, detail="Waiting for human review in B6")
+
+    resume_point = _find_resume_point(ACTIVE_TARGET.name)
+    if resume_point is None:
+        raise HTTPException(status_code=409, detail="Nothing to resume for this target")
+
+    run_id, start_index, state_id = resume_point
+    thread = threading.Thread(target=_run_resumed_pipeline, args=(run_id, start_index), daemon=True)
+    thread.start()
+    return {"resuming_from": state_id}
+
+
 @protected.get("/api/status")
 def get_status():
     """Estado actual del pipeline — React hace polling cada 2s a este endpoint."""
+    resume_point = _find_resume_point(ACTIVE_TARGET.name)
     return {
         "running": pipeline_state["running"],
         "current_block": pipeline_state["current_block"],
         "waiting_for_human": pipeline_state["waiting_for_human"],
         "completed": pipeline_state["completed"],
         "error": pipeline_state["error"],
+        "resumable_from": resume_point[2] if resume_point is not None else None,
     }
 
 
