@@ -14,6 +14,7 @@ import {
   getStatus,
   resetEnvironment,
   resetPipeline,
+  resumePipeline,
   runPipeline,
   setActiveTarget,
   unarchiveRun,
@@ -120,6 +121,14 @@ export function useRunPipeline() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: runPipeline,
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.status }),
+  });
+}
+
+export function useResumePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: resumePipeline,
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.status }),
   });
 }

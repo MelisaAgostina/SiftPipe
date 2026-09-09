@@ -11,6 +11,7 @@ export type PipelineStatus = {
   waiting_for_human: boolean;
   completed: boolean;
   error: string | null;
+  resumable_from: BlockId | null;
 };
 
 export type LogsResponse = { logs: string[] };

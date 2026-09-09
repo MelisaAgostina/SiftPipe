@@ -1,5 +1,6 @@
 import type {
   ActiveTarget,
+  BlockId,
   EnvironmentHealth,
   EnvironmentResetResponse,
   EnvironmentStatus,
@@ -115,6 +116,8 @@ export const runPipeline = (body: RunPipelineRequest) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+export const resumePipeline = () =>
+  request<{ resuming_from: BlockId }>("/api/run/resume", { method: "POST" });
 export const getLogs = () => request<LogsResponse>("/api/logs");
 export const getResultsAll = () => request<ResultsBulk>("/api/results");
 export const getRuns = () => request<RunsListResponse>("/api/runs");

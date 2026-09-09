@@ -33,6 +33,7 @@ const DEFAULT_STATUS: PipelineStatus = {
   waiting_for_human: false,
   completed: false,
   error: null,
+  resumable_from: null,
 };
 
 const DEFAULT_TARGET = {
