@@ -272,6 +272,7 @@ export type Strings = {
     doneBtnText: string;
     progressText: string;
     targetPicker: { title: string; description: string };
+    addTarget: { title: string; description: string };
     envReset: { title: string; description: string };
     runButton: { title: string; description: string };
     analysisPhases: { title: string; description: string };

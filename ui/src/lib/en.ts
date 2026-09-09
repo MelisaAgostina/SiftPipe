@@ -323,15 +323,20 @@ export const en: Strings = {
     targetPicker: {
       title: "1. Pick a target",
       description:
-        "Switch between the two available targets, Mattermost and NaViQ. Each keeps its own environment and run history — you can't switch mid-run or mid-reset.",
+        "Switch between the available targets, Mattermost and NaViQ. Each keeps its own environment and run history — you can't switch mid-run or mid-reset.",
+    },
+    addTarget: {
+      title: "2. Or add your own",
+      description:
+        "Point this at a target's login page and SiftPipe guesses its form fields on its own, then adds it as a target you can pick above. Best-effort — a login hidden behind a splash or interstitial screen first may not be detected.",
     },
     envReset: {
-      title: "2. Prepare the environment",
+      title: "3. Prepare the environment",
       description:
         "Fresh reset wipes and reseeds the target's data from scratch. Restore existing skips that and reuses whatever's already there, if the target supports it.",
     },
     runButton: {
-      title: "3. Run the analysis",
+      title: "4. Run the analysis",
       description:
         "Starts the full pipeline once the environment is ready. It pauses partway through for a human review step — you'll be switched to that tab automatically.",
     },

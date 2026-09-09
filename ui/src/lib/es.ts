@@ -328,15 +328,20 @@ export const es: Strings = {
     targetPicker: {
       title: "1. Elige un objetivo",
       description:
-        "Cambia entre los dos objetivos disponibles, Mattermost y NaViQ. Cada uno mantiene su propio entorno e historial de ejecuciones — no se puede cambiar en medio de una ejecución o un reinicio.",
+        "Cambia entre los objetivos disponibles, Mattermost y NaViQ. Cada uno mantiene su propio entorno e historial de ejecuciones — no se puede cambiar en medio de una ejecución o un reinicio.",
+    },
+    addTarget: {
+      title: "2. O agrega el tuyo",
+      description:
+        "Apuntá esto a la página de login de un objetivo y SiftPipe intenta adivinar sus campos automáticamente, agregándolo como un objetivo que podés elegir arriba. No es infalible — un login oculto detrás de una pantalla de bienvenida puede no detectarse.",
     },
     envReset: {
-      title: "2. Prepara el entorno",
+      title: "3. Prepara el entorno",
       description:
         "Reinicio limpio borra y recrea los datos del objetivo desde cero. Restaurar existente omite eso y reutiliza lo que ya haya, si el objetivo lo admite.",
     },
     runButton: {
-      title: "3. Ejecuta el análisis",
+      title: "4. Ejecuta el análisis",
       description:
         "Inicia el pipeline completo una vez que el entorno está listo. Se pausa a mitad de camino para un paso de revisión humana — se cambiará a esa pestaña automáticamente.",
     },

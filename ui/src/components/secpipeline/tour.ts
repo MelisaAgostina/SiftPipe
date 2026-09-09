@@ -25,6 +25,7 @@ export type TourStep = {
 export function buildTourSteps(t: Strings): TourStep[] {
   return [
     { selector: '[data-tour="target-picker"]', ...t.tour.targetPicker },
+    { selector: '[data-tour="add-target"]', ...t.tour.addTarget },
     { selector: '[data-tour="env-reset"]', ...t.tour.envReset },
     { selector: '[data-tour="run-button"]', ...t.tour.runButton },
     { selector: '[data-tour="analysis-phases"]', ...t.tour.analysisPhases },

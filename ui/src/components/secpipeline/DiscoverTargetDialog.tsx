@@ -136,7 +136,12 @@ export function DiscoverTargetDialog() {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-1.5 font-sans text-muted-foreground">
+        <Button
+          data-tour="add-target"
+          variant="ghost"
+          size="sm"
+          className="gap-1.5 font-sans text-muted-foreground"
+        >
           <CirclePlus className="h-4 w-4" />
           {t.discoverTargetDialog.triggerButton}
         </Button>
