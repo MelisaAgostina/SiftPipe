@@ -21,12 +21,12 @@ real one.
 picking up exactly where it left off.
 
 **Out of scope (deliberately):**
-- Automatically detecting that the target's environment was reset
-  (Fresh Reset) after the crash and before the resume attempt. This
-  would need a persisted "environment last reset at" timestamp that
-  doesn't exist today. Instead, the resume affordance's own copy warns
-  against using it after a reset — acceptable for a single-operator
-  tool, not a multi-tenant one.
+- Detecting environment changes that happen *outside* this app —
+  e.g. someone restarting NaViQ's dev server by hand, or editing the
+  target's data directly. Fresh Reset (the normal, in-app way to start
+  a target over) does clear resumability (see Design), but there's no
+  general timestamp-based staleness check beyond that — acceptable for
+  a single-operator tool, not a multi-tenant one.
 - Any change to `main.py`'s CLI path. The CLI runs synchronously
   start-to-finish in one process invocation; it has no pause/resume
   concept today (B6 is a blocking console prompt, not a state the
@@ -88,6 +88,15 @@ Because it only ever inserts names not already present for this
 `finish_run` for safety) never produces duplicate rows — a completed
 step's files are captured exactly once, whichever call first sees them.
 
+**A third addition:** the `runs` table gets one more lightweight column
+migration (same pattern already used for `target`/`archived`):
+`resumable INTEGER NOT NULL DEFAULT 1`. `run_history.dismiss_resume(target_name)`
+sets it to `0` on the most recent run for that target, if that run is
+errored — called from Fresh Reset (see Section 4/5) so choosing to
+start over is what turns the resume affordance off, rather than an
+inferred timestamp comparison. Restore mode never touches it, since
+Restore is about continuity, not starting over.
+
 `finish_run(run_id, status)` keeps calling
 `_snapshot_new_result_files` (as a final catch-all — cheap and
 idempotent, per above) but everything else about it — updating
@@ -146,14 +155,15 @@ today.
 
 New helper, `_find_resume_point(target_name)`:
 1. Look up the most recent run for `target_name` via `run_history`.
-2. Require its status to be `"error"` — otherwise nothing to resume.
+2. Require its status to be `"error"` and `resumable` to still be `1`
+   — otherwise nothing to resume.
 3. Read which `stored_name`s already have rows in `run_blocks` for that
    `run_id`; find the first `PIPELINE_STEPS` entry whose `stored_name`
    isn't among them.
 4. Return `(run_id, start_index, state_id)` — the bare id (e.g. `"B7"`)
    for the API/frontend to use — or `None` if the run isn't resumable
-   (nothing errored, or a newer run already exists for this target —
-   guards against resuming something stale).
+   (nothing errored, dismissed via Fresh Reset, or a newer run already
+   exists for this target).
 
 Resuming reuses the *same* `run_id` — it does not call
 `run_history.start_run()` again. `pipeline_state["run_id"]` is set back
@@ -169,17 +179,23 @@ thread exactly like a fresh run does.
 - `/api/status`'s existing response gains a `resumable_from` field
   (same block-name string, or `null`) so the frontend can show/hide
   the affordance without a separate poll.
+- `run_environment_reset()`'s Fresh path (not Restore) calls
+  `run_history.dismiss_resume(ACTIVE_TARGET.name)` after a successful
+  reset, so choosing to start over is what turns resumability off.
 
 ### 5. Frontend
 
-A "Resume from {label}" button appears next to "Run analysis" only
-when `resumable_from` is set — it doesn't replace the normal Run
-button. The label reuses the existing `t.phaseLabels` mapping the
-Analysis Phases panel already uses for `current_block`
+No new button. The existing "Run analysis" button itself changes label
+and action when `resumable_from` is set: it reads "Resume from
+{label}" and calls `POST /api/run/resume` instead of `POST /api/run`.
+The label reuses the existing `t.phaseLabels` mapping the Analysis
+Phases panel already uses for `current_block`
 (`t.phaseLabels[resumable_from.toLowerCase()]`), so "B3" renders as
 "Resume from Static analysis (AI)" with zero new translation strings.
-Button copy/tooltip includes a short caveat: don't use this after
-resetting the environment since the failure (see Scope above).
+A short caveat line still warns against using it after resetting the
+environment since the failure — but the real escape hatch is Fresh
+Reset itself, which clears `resumable_from` and reverts the button to
+plain "Run analysis".
 
 ### 6. Testing
 
@@ -193,12 +209,16 @@ All of this is testable without a real crash:
   again), and that it reaches `"completed"` with every block name
   present exactly once in `run_blocks`.
 - Negative cases: no errored run for the target, an errored run that
-  isn't the most recent one for that target, and a target with no runs
-  at all — each must report "not resumable" rather than starting
-  anything.
-- Frontend: a conditional-render test for the Resume button based on
-  `resumable_from`, following the same pattern as the existing
-  `noFreshResetTooltip`/`noFreshResetNotice` conditional UI.
+  isn't the most recent one for that target, a target with no runs at
+  all, and an errored run whose `resumable` was dismissed — each must
+  report "not resumable" rather than starting anything.
+- Fresh Reset on a target with a dismissible errored run: assert
+  `resumable` flips to `0` and `_find_resume_point` returns `None`
+  afterward; assert Restore mode leaves it untouched.
+- Frontend: a test that the "Run analysis" button's label/action
+  switches based on `resumable_from`, following the same pattern as
+  the existing `noFreshResetTooltip`/`noFreshResetNotice` conditional
+  UI.
 
 ## Risks
 
