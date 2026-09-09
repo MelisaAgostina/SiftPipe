@@ -6,8 +6,24 @@ Today, clicking "Run" always starts a brand-new run at B3, regardless of
 whether the previous run for this target already got partway through
 before crashing. Since B3 (static analysis) and B5 (payload generation)
 both make real, paid Anthropic API calls, a crash late in the pipeline
-(say, during B7's live attack execution) means re-paying for B3 and B5
-all over again just to get back to where the failure happened.
+means re-paying for B3 and B5 all over again just to get back to where
+the failure happened.
+
+**Correction (added after the final whole-branch review, which traced
+this precisely):** B7 (`execute_attacks`) and the shared `ask_llm()`
+helper both deliberately catch every exception and record it as a
+result — `{"status": "error", ...}` for B7, `{"vulnerability": "API
+Error", ...}` for any block going through `ask_llm()` — rather than
+letting it propagate. That's intentional existing behavior this feature
+doesn't change (a condition like "no validated_payloads.json yet" is
+expected, not exceptional, and reworking that convention is a separate
+design question, out of scope here). The practical consequence: a crash
+that actually reaches `_fail_pipeline` and produces a resumable error
+state is realistically a B3, B4, B5, B8, or B9 failure — not B7. Resume
+still has real value for that set (B3 and B5 are the expensive LLM
+calls; B4/B8/B9 crashes still force a full B3 restart today), but the
+original "crash during B7's live attack execution" framing above
+overstated where resume's trigger actually fires.
 
 This has never actually happened to the project's own author during
 normal use, so there's no naturally-occurring crash to test resume
@@ -24,9 +40,16 @@ picking up exactly where it left off.
 - Detecting environment changes that happen *outside* this app —
   e.g. someone restarting NaViQ's dev server by hand, or editing the
   target's data directly. Fresh Reset (the normal, in-app way to start
-  a target over) does clear resumability (see Design), but there's no
-  general timestamp-based staleness check beyond that — acceptable for
-  a single-operator tool, not a multi-tenant one.
+  a target over) does clear resumability (see Design), and the
+  final whole-branch review's Finding 2 fix added an in-app timestamp
+  check (a result file older than the run it's being snapshotted for is
+  ignored, so leftover files from an *earlier run* can't be mistaken for
+  this run's output) — but there's still no way to detect a live
+  environment reset by hand *between* the crash and the resume click,
+  since that changes the target's actual state, not any timestamp this
+  app can observe. Acceptable for a single-operator tool, not a
+  multi-tenant one; the Sidebar's resume caveat text exists specifically
+  to cover this residual gap.
 - Any change to `main.py`'s CLI path. The CLI runs synchronously
   start-to-finish in one process invocation; it has no pause/resume
   concept today (B6 is a blocking console prompt, not a state the
