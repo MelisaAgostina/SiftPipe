@@ -45,6 +45,7 @@ export const es: Strings = {
     prepareEnvironmentFirst: "Preparar entorno primero",
     resetRequiredFirst: "Reiniciar entorno primero",
     runAnalysis: "Ejecutar análisis",
+    resumeFrom: (phaseLabel) => `Reanudar desde ${phaseLabel}`,
     resetEnvironmentFresh: "Reiniciar entorno (limpio)",
     prepareEnvironmentFresh: "Preparar entorno (limpio)",
     naviqFreshResetHint:

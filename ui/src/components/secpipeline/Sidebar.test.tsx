@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 vi.mock("@/lib/queries", () => ({
   usePipelineStatus: vi.fn(),
   useRunPipeline: vi.fn(),
+  useResumePipeline: vi.fn(),
   useEnvironmentHealth: vi.fn(),
   useEnvironmentStatus: vi.fn(),
   useResetEnvironment: vi.fn(),
@@ -18,6 +19,7 @@ import {
   useLiveRunVisible,
   usePipelineStatus,
   useResetEnvironment,
+  useResumePipeline,
   useRunPipeline,
 } from "@/lib/queries";
 import { Sidebar } from "./Sidebar";
@@ -26,6 +28,7 @@ import type { BlockId, PipelineStatus } from "@/lib/types";
 
 const runMutate = vi.fn();
 const resetMutate = vi.fn();
+const resumeMutate = vi.fn();
 
 const DEFAULT_STATUS: PipelineStatus = {
   running: false,
@@ -76,6 +79,10 @@ function setup(
     mutate: resetMutate,
     isPending: overrides.resetPending ?? false,
   } as never);
+  vi.mocked(useResumePipeline).mockReturnValue({
+    mutate: resumeMutate,
+    isPending: false,
+  } as never);
 
   return render(<Sidebar />);
 }
@@ -84,6 +91,7 @@ describe("Sidebar", () => {
   beforeEach(() => {
     runMutate.mockClear();
     resetMutate.mockClear();
+    resumeMutate.mockClear();
   });
 
   it("shows Run analysis and an enabled button when the target is up and idle", () => {
@@ -254,5 +262,32 @@ describe("Sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
 
     expect(screen.getByLabelText(en.sidebar.running)).toBeInTheDocument();
+  });
+
+  it("shows Resume from {block} and calls the resume mutation when resumable_from is set", () => {
+    setup({ status: { resumable_from: "B4" } });
+
+    const button = screen.getByRole("button", { name: /resume from/i });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(resumeMutate).toHaveBeenCalledTimes(1);
+    expect(runMutate).not.toHaveBeenCalled();
+  });
+
+  it("does not require a fresh reset first when a resumable run exists", () => {
+    // envStatus.completed: false makes freshResetDone false, so with the
+    // default envMode ("fresh") freshResetPending would normally be true
+    // and disable the button (see the "shows Prepare environment first"-
+    // style tests above) - setting resumable_from must bypass that,
+    // since resuming is explicitly not "start over." Without the bypass
+    // in Sidebar.tsx, this test fails with the button disabled.
+    setup({
+      status: { resumable_from: "B4" },
+      envHealth: { target_up: true, target: "mattermost" },
+      envStatus: { running: false, completed: false, error: null },
+    });
+
+    const button = screen.getByRole("button", { name: /resume from/i });
+    expect(button).toBeEnabled();
   });
 });

@@ -17,6 +17,7 @@ import {
   useLiveRunVisible,
   usePipelineStatus,
   useResetEnvironment,
+  useResumePipeline,
   useRunPipeline,
 } from "@/lib/queries";
 import { useLang } from "@/hooks/use-lang";
@@ -29,6 +30,7 @@ export function Sidebar() {
   const { t } = useLang();
   const { data: status } = usePipelineStatus();
   const runMutation = useRunPipeline();
+  const resumeMutation = useResumePipeline();
 
   const { data: envHealth } = useEnvironmentHealth();
   const { data: envStatus } = useEnvironmentStatus();
@@ -126,14 +128,18 @@ export function Sidebar() {
     isRunning ||
     isWaiting ||
     runMutation.isPending ||
+    resumeMutation.isPending ||
     !targetUp ||
     envResetting ||
-    freshResetPending;
+    (!status?.resumable_from && freshResetPending);
 
   const buttonLabel = () => {
-    if (runMutation.isPending || isRunning) return t.sidebar.running;
+    if (runMutation.isPending || resumeMutation.isPending || isRunning) return t.sidebar.running;
     if (isWaiting) return t.sidebar.waitingForReview;
     if (isCompleted) return t.sidebar.pipelineCompleted;
+    if (status?.resumable_from) {
+      return t.sidebar.resumeFrom(t.phaseLabels[status.resumable_from.toLowerCase() as PhaseId]);
+    }
     if (envResetting) return t.sidebar.preparingEnvironment;
     if (!targetUp) return t.sidebar.prepareEnvironmentFirst;
     if (freshResetPending) return t.sidebar.resetRequiredFirst;
@@ -363,11 +369,15 @@ export function Sidebar() {
       <div className="shrink-0 border-t border-border p-5">
         <button
           data-tour="run-button"
-          onClick={() => runMutation.mutate({ mode: effectiveEnvMode })}
+          onClick={() =>
+            status?.resumable_from
+              ? resumeMutation.mutate()
+              : runMutation.mutate({ mode: effectiveEnvMode })
+          }
           disabled={buttonDisabled}
           className="font-button flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-4 py-3.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isRunning || runMutation.isPending ? (
+          {isRunning || runMutation.isPending || resumeMutation.isPending ? (
             <Loader2 className="h-8 w-8 animate-spin" />
           ) : (
             <PlayCircle className="h-8 w-8" />
