@@ -344,6 +344,43 @@ class TestRunHistory(unittest.TestCase):
         self.assertIn("B7_dynamic_attacks", detail["blocks"])
         self.assertEqual(detail["blocks"]["B7_dynamic_attacks"]["findings"][0]["payload_id"], "1_1")
 
+    def test_new_run_defaults_to_resumable(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        run_history.finish_run(run_id, "error")
+
+        latest = run_history.get_latest_run("mattermost")
+        self.assertEqual(latest["id"], run_id)
+        self.assertTrue(latest["resumable"])
+
+    def test_get_latest_run_returns_none_for_unknown_target(self):
+        self.assertIsNone(run_history.get_latest_run("nonexistent"))
+
+    def test_get_latest_run_picks_the_newest_run_for_that_target(self):
+        run_history.start_run(mode="fresh", target="mattermost")
+        second = run_history.start_run(mode="restore", target="mattermost")
+        run_history.start_run(mode="fresh", target="naviq")
+
+        self.assertEqual(run_history.get_latest_run("mattermost")["id"], second)
+
+    def test_dismiss_resume_clears_resumable_on_the_latest_errored_run(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        run_history.finish_run(run_id, "error")
+
+        run_history.dismiss_resume("mattermost")
+
+        self.assertFalse(run_history.get_latest_run("mattermost")["resumable"])
+
+    def test_dismiss_resume_is_a_no_op_when_the_latest_run_is_not_errored(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        run_history.finish_run(run_id, "completed")
+
+        run_history.dismiss_resume("mattermost")
+
+        self.assertTrue(run_history.get_latest_run("mattermost")["resumable"])
+
+    def test_dismiss_resume_is_a_no_op_for_a_target_with_no_runs(self):
+        run_history.dismiss_resume("nonexistent")  # must not raise
+
 
 if __name__ == "__main__":
     unittest.main()

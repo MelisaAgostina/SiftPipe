@@ -55,6 +55,14 @@ def _connect():
     except sqlite3.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise
+    # Same pattern for `resumable` — every pre-existing run defaults to 1
+    # (still resumable), since dismiss_resume() is the only thing that ever
+    # turns it off and no run predating this column could have been through it.
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN resumable INTEGER NOT NULL DEFAULT 1")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS run_blocks (
@@ -170,6 +178,56 @@ def finish_run(run_id, status, results_dir="results"):
         conn.close()
 
     _snapshot_new_result_files(run_id, target, results_dir)
+
+
+def get_latest_run(target):
+    """Most recent run for `target`, or None if it has none. Same field
+    shape as one list_runs() entry, plus `resumable`."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, started_at, finished_at, mode, target, status,
+                   total_findings, confirmed_findings, archived, resumable
+            FROM runs WHERE target = ? ORDER BY id DESC LIMIT 1
+            """,
+            (target,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "started_at": row[1],
+        "finished_at": row[2],
+        "mode": row[3],
+        "target": row[4],
+        "status": row[5],
+        "total_findings": row[6],
+        "confirmed_findings": row[7],
+        "archived": bool(row[8]),
+        "resumable": bool(row[9]),
+    }
+
+
+def dismiss_resume(target):
+    """Turns off resumability for the most recent run of `target`, if it's
+    errored. A no-op if the latest run isn't errored, or there is none —
+    called when Fresh Reset means "start over," not "resume.\""""
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            UPDATE runs SET resumable = 0
+            WHERE id = (SELECT id FROM runs WHERE target = ? ORDER BY id DESC LIMIT 1)
+              AND status = 'error'
+            """,
+            (target,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def list_runs():
