@@ -83,7 +83,7 @@ class TestApiRoutes(unittest.TestCase):
     def test_run_starts_pipeline_thread(self):
         api.run_pipeline()
         self.assertEqual(len(FakeThread.started), 1)
-        self.assertEqual(FakeThread.started[0], api.run_pipeline_until_b6)
+        self.assertEqual(FakeThread.started[0], api._run_fresh_pipeline)
 
     def test_run_passes_requested_mode_to_the_pipeline_thread(self):
         """Real bug found live: the Sidebar's fresh/restore toggle was never
@@ -165,13 +165,28 @@ class TestApiRoutes(unittest.TestCase):
 
         self.assertEqual(api.pipeline_results["B6"]["total_validated"], 2)
         self.assertEqual(len(FakeThread.started), 1)
-        self.assertEqual(FakeThread.started[0], api.run_pipeline_from_b7)
+        self.assertEqual(FakeThread.started[0], api._run_from_b7)
 
     def test_validate_404_without_b5_output(self):
         api.pipeline_state["waiting_for_human"] = True
         with self.assertRaises(HTTPException) as ctx:
             api.validate_payloads(api.ValidatePayloadsRequest(approved_indices=[0]))
         self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_run_pipeline_from_skips_earlier_steps(self):
+        """The core resume mechanism: _run_pipeline_from(start_index) must
+        never call any step before start_index. Patches B4 onward to no-ops
+        and B3 to a spy that must never fire when starting from B4."""
+        api.pipeline_state["run_id"] = 1
+        b3_called = []
+        with patch.object(api, "run_static_analysis", lambda *a, **k: b3_called.append(True)), \
+             patch.object(api, "run_dynamic_discovery", lambda *a, **k: None), \
+             patch.object(api, "generate_payloads", lambda *a, **k: None):
+            api._run_pipeline_from(1)  # index 1 == "B4" in PIPELINE_STEPS
+
+        self.assertEqual(b3_called, [])
+        self.assertTrue(api.pipeline_state["waiting_for_human"])
+        self.assertEqual(api.pipeline_state["current_block"], "B6")
 
     # ── /api/target (MULTI_TARGET_PLAN.md Phase 5 Task 5.3) ────────────────
 

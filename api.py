@@ -295,70 +295,50 @@ def _fail_pipeline(e):
     run_history.finish_run(pipeline_state["run_id"], "error")
 
 
-def run_pipeline_until_b6(mode="unknown"):
-    """Corre B3 → B5 y pausa esperando revisión humana."""
-    pipeline_state["running"] = True
-    pipeline_state["completed"] = False
-    pipeline_state["error"] = None
-    pipeline_state["logs"] = []
-    pipeline_state["waiting_for_human"] = False
-    pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
+# (bare id for pipeline_state/current_block, on-disk result name for
+# run_history snapshotting, the actual block call). Order matters — this
+# is the one place the B3-B9 sequence is defined; PIPELINE_STEPS[i] runs
+# before PIPELINE_STEPS[i+1] and nothing else decides that anymore.
+PIPELINE_STEPS = [
+    ("B3", "B3_static", lambda: run_static_analysis(pipeline_results, ACTIVE_TARGET)),
+    ("B4", "B4_dynamic", lambda: run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"])),
+    ("B5", "B5_payloads", lambda: generate_payloads(client=client, target_profile=ACTIVE_TARGET)),
+    ("B7", "B7_dynamic_attacks", lambda: execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"])),
+    ("B8", "B8_dynamic", lambda: analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET)),
+    ("B9", "B9_correlation", lambda: correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET)),
+]
 
+
+def _run_pipeline_from(start_index):
+    """
+    Runs PIPELINE_STEPS[start_index:], pausing for B6 human review right
+    after B5 (index 2) exactly like run_pipeline_until_b6 used to, and
+    finishing the run after B9 (index 5) exactly like run_pipeline_from_b7
+    used to. The B6 pause is purely positional — "what happens right after
+    B5, before B7" — so it fires identically whether start_index is 0 (a
+    fresh run) or 3 (resuming straight into B7, which only ever happens
+    after B6 was already approved once for this run_id).
+
+    Caller is responsible for pipeline_state["running"]/["run_id"] already
+    being set before this is called — see _run_fresh_pipeline, _run_from_b7,
+    and _run_resumed_pipeline (Task 4) for the three ways that happens.
+    """
     try:
         with pipeline_results_lock:
-            # Safety net, not the primary path (that's naviq_fresh_reset() via
-            # "Prepare environment") — covers restore mode, or any run started
-            # without clicking Prepare environment first. A no-op if already up.
-            if ACTIVE_TARGET.name == "naviq":
-                ensure_naviq_server_running(log_fn=log)
+            for state_id, stored_name, step in PIPELINE_STEPS[start_index:]:
+                pipeline_state["current_block"] = state_id
+                log(f">> {state_id} started")
+                step()
+                run_history._snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
+                log(f"OK {state_id} completed")
 
-            pipeline_state["current_block"] = "B3"
-            log(">> B3 - Static analysis started")
-            run_static_analysis(pipeline_results, ACTIVE_TARGET)
-            log("OK B3 completed")
-
-            pipeline_state["current_block"] = "B4"
-            log(">> B4 - Dynamic discovery started")
-            run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"])
-            log("OK B4 completed")
-
-            pipeline_state["current_block"] = "B5"
-            log(">> B5 - Payload generation")
-            generate_payloads(client=client, target_profile=ACTIVE_TARGET)
-            log("OK B5 completed")
-
-            # Pauses here — the UI shows the payloads for human review
-            pipeline_state["current_block"] = "B6"
-            pipeline_state["waiting_for_human"] = True
-            pipeline_state["running"] = False
-            log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
-
-    except Exception as e:
-        _fail_pipeline(e)
-
-
-def run_pipeline_from_b7():
-    """Corre B7 → B9 después de que el humano validó los payloads."""
-    pipeline_state["running"] = True
-    pipeline_state["waiting_for_human"] = False
-    pipeline_state["error"] = None
-
-    try:
-        with pipeline_results_lock:
-            pipeline_state["current_block"] = "B7"
-            log(">> B7 - Attack execution")
-            execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"])
-            log("OK B7 completed")
-
-            pipeline_state["current_block"] = "B8"
-            log(">> B8 - Intelligent results analysis")
-            analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET)
-            log("OK B8 completed")
-
-            pipeline_state["current_block"] = "B9"
-            log(">> B9 - Static + dynamic correlation")
-            correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET)
-            log("OK B9 completed")
+                if state_id == "B5":
+                    # Pauses here — the UI shows the payloads for human review
+                    pipeline_state["current_block"] = "B6"
+                    pipeline_state["waiting_for_human"] = True
+                    pipeline_state["running"] = False
+                    log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
+                    return
 
             pipeline_state["current_block"] = None
             pipeline_state["running"] = False
@@ -368,6 +348,33 @@ def run_pipeline_from_b7():
 
     except Exception as e:
         _fail_pipeline(e)
+
+
+def _run_fresh_pipeline(mode="unknown"):
+    """Thread target for POST /api/run — starts a brand-new run at B3."""
+    pipeline_state["running"] = True
+    pipeline_state["completed"] = False
+    pipeline_state["error"] = None
+    pipeline_state["logs"] = []
+    pipeline_state["waiting_for_human"] = False
+    pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
+
+    # Safety net, not the primary path (that's naviq_fresh_reset() via
+    # "Prepare environment") — covers restore mode, or any run started
+    # without clicking Prepare environment first. A no-op if already up.
+    if ACTIVE_TARGET.name == "naviq":
+        ensure_naviq_server_running(log_fn=log)
+
+    _run_pipeline_from(0)
+
+
+def _run_from_b7():
+    """Thread target for POST /api/validate — continues into B7 after B6
+    approval. Index 3 is "B7" in PIPELINE_STEPS."""
+    pipeline_state["running"] = True
+    pipeline_state["waiting_for_human"] = False
+    pipeline_state["error"] = None
+    _run_pipeline_from(3)
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
@@ -548,7 +555,7 @@ def run_pipeline(body: RunPipelineRequest = RunPipelineRequest()):
     if pipeline_state["waiting_for_human"]:
         raise HTTPException(status_code=409, detail="Waiting for human review in B6")
 
-    thread = threading.Thread(target=run_pipeline_until_b6, args=(body.mode,), daemon=True)
+    thread = threading.Thread(target=_run_fresh_pipeline, args=(body.mode,), daemon=True)
     thread.start()
     return {"message": "Pipeline started"}
 
@@ -729,7 +736,7 @@ def validate_payloads(body: ValidatePayloadsRequest):
     log(f"OK B6 - {len(approved)} payloads validated by the researcher")
 
     # Disparar B7 → B9 en background
-    thread = threading.Thread(target=run_pipeline_from_b7, daemon=True)
+    thread = threading.Thread(target=_run_from_b7, daemon=True)
     thread.start()
 
     return {"message": "Validation received. Continuing with B7 → B9."}
