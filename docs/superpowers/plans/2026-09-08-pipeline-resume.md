@@ -821,11 +821,18 @@ In `ui/src/components/secpipeline/Sidebar.test.tsx`, add `useResumePipeline: vi.
   });
 
   it("does not require a fresh reset first when a resumable run exists", () => {
-    setup({ status: { resumable_from: "B4" }, envHealth: { target_up: true, target: "mattermost" } });
+    // envStatus.completed: false makes freshResetDone false, so with the
+    // default envMode ("fresh") freshResetPending would normally be true
+    // and disable the button (see the "shows Prepare environment first"-
+    // style tests above) - setting resumable_from must bypass that,
+    // since resuming is explicitly not "start over." Without the bypass
+    // in Sidebar.tsx, this test fails with the button disabled.
+    setup({
+      status: { resumable_from: "B4" },
+      envHealth: { target_up: true, target: "mattermost" },
+      envStatus: { running: false, completed: false, error: null },
+    });
 
-    // effectiveEnvMode defaults to "fresh" and freshResetPending would
-    // normally disable the button until Fresh Reset runs - resuming must
-    // bypass that, since resuming is explicitly not "start over."
     const button = screen.getByRole("button", { name: /resume from/i });
     expect(button).toBeEnabled();
   });
