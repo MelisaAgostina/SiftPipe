@@ -364,8 +364,21 @@ def _run_fresh_pipeline(mode="unknown"):
     # Safety net, not the primary path (that's naviq_fresh_reset() via
     # "Prepare environment") — covers restore mode, or any run started
     # without clicking Prepare environment first. A no-op if already up.
-    if ACTIVE_TARGET.name == "naviq":
-        ensure_naviq_server_running(log_fn=log)
+    # Wrapped in its own try/except: ensure_naviq_server_running genuinely
+    # raises in real scenarios (RuntimeError if the dev-server process exits
+    # immediately, TimeoutError if it never becomes reachable, FileNotFoundError
+    # if the venv python is missing). Before this fix that exception escaped
+    # this background thread entirely — pipeline_state["running"] stayed True
+    # forever and every recovery endpoint (/api/run, /api/run/resume,
+    # /api/reset) 409'd with no in-app way out. Routing it through the same
+    # _fail_pipeline() helper _run_pipeline_from uses keeps the failure
+    # contract identical regardless of which stage raised.
+    try:
+        if ACTIVE_TARGET.name == "naviq":
+            ensure_naviq_server_running(log_fn=log)
+    except Exception as e:
+        _fail_pipeline(e)
+        return
 
     _run_pipeline_from(0)
 
@@ -402,6 +415,7 @@ def _find_resume_point(target_name):
 def _run_resumed_pipeline(run_id, start_index):
     """Thread target for POST /api/run/resume."""
     pipeline_state["running"] = True
+    pipeline_state["completed"] = False
     pipeline_state["error"] = None
     pipeline_state["waiting_for_human"] = False
     pipeline_state["run_id"] = run_id

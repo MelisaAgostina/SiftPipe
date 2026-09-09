@@ -36,6 +36,7 @@ export type Strings = {
     resetRequiredFirst: string;
     runAnalysis: string;
     resumeFrom: (phaseLabel: string) => string;
+    resumeCaveat: string;
     resetEnvironmentFresh: string;
     prepareEnvironmentFresh: string;
     naviqFreshResetHint: string;

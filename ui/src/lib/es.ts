@@ -46,6 +46,7 @@ export const es: Strings = {
     resetRequiredFirst: "Reiniciar entorno primero",
     runAnalysis: "Ejecutar análisis",
     resumeFrom: (phaseLabel) => `Reanudar desde ${phaseLabel}`,
+    resumeCaveat: "Solo reanudá si no reiniciaste el entorno desde la falla.",
     resetEnvironmentFresh: "Reiniciar entorno (limpio)",
     prepareEnvironmentFresh: "Preparar entorno (limpio)",
     naviqFreshResetHint:

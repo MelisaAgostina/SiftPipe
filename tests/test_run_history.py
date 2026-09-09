@@ -3,6 +3,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -380,6 +381,34 @@ class TestRunHistory(unittest.TestCase):
 
     def test_dismiss_resume_is_a_no_op_for_a_target_with_no_runs(self):
         run_history.dismiss_resume("nonexistent")  # must not raise
+
+    def test_snapshot_ignores_files_older_than_the_run(self):
+        # Simulate a leftover file from an earlier run, backdated so its
+        # mtime clearly predates start_run() below (avoids flakiness from
+        # both happening within the same clock tick).
+        with open("results/mattermost_B9_correlation.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        old_time = time.time() - 3600
+        os.utime("results/mattermost_B9_correlation.json", (old_time, old_time))
+
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "findings": []}, f)
+
+        run_history._snapshot_new_result_files(run_id, "mattermost")
+        detail = run_history.get_run(run_id)
+
+        self.assertEqual(list(detail["blocks"].keys()), ["B3_static"])
+
+    def test_snapshot_returns_immediately_for_an_unknown_run_id(self):
+        # run_row is None (no such run) — must not raise (e.g. on
+        # datetime.fromisoformat(None)) and must not snapshot anything.
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+
+        run_history._snapshot_new_result_files(9999, "mattermost")
+
+        self.assertIsNone(run_history.get_run(9999))
 
 
 if __name__ == "__main__":

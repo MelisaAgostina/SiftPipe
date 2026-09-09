@@ -290,4 +290,31 @@ describe("Sidebar", () => {
     const button = screen.getByRole("button", { name: /resume from/i });
     expect(button).toBeEnabled();
   });
+
+  it("shows Prepare environment first instead of Resume from when the target is down, even with a resumable run", () => {
+    // A resumable run whose target is currently down needs the actionable
+    // message telling the researcher what to do next, not a disabled
+    // "Resume from X" with no explanation of why it's disabled.
+    setup({
+      status: { resumable_from: "B4" },
+      envHealth: { target_up: false, target: "mattermost" },
+    });
+
+    expect(screen.getByRole("button", { name: /prepare environment first/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /resume from/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the resume caveat only when a resumable run exists", () => {
+    setup({ status: { resumable_from: "B4" } });
+    expect(
+      screen.getByText(/only resume if you haven't reset the environment/i),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the resume caveat when there is nothing to resume", () => {
+    setup();
+    expect(
+      screen.queryByText(/only resume if you haven't reset the environment/i),
+    ).not.toBeInTheDocument();
+  });
 });

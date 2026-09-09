@@ -137,11 +137,17 @@ export function Sidebar() {
     if (runMutation.isPending || resumeMutation.isPending || isRunning) return t.sidebar.running;
     if (isWaiting) return t.sidebar.waitingForReview;
     if (isCompleted) return t.sidebar.pipelineCompleted;
+    // envResetting/!targetUp outrank resumable_from: a resumable run whose
+    // target is currently down (or mid-reset) needs the actionable "prepare
+    // environment"/"preparing..." message, not a disabled "Resume from X"
+    // with no explanation. freshResetPending still comes after
+    // resumable_from - resuming is explicitly not "start over," so it must
+    // keep bypassing that message once the environment is actually ready.
+    if (envResetting) return t.sidebar.preparingEnvironment;
+    if (!targetUp) return t.sidebar.prepareEnvironmentFirst;
     if (status?.resumable_from) {
       return t.sidebar.resumeFrom(t.phaseLabels[status.resumable_from.toLowerCase() as PhaseId]);
     }
-    if (envResetting) return t.sidebar.preparingEnvironment;
-    if (!targetUp) return t.sidebar.prepareEnvironmentFirst;
     if (freshResetPending) return t.sidebar.resetRequiredFirst;
     return t.sidebar.runAnalysis;
   };
@@ -384,6 +390,12 @@ export function Sidebar() {
           )}
           {buttonLabel()}
         </button>
+        {status?.resumable_from && (
+          <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {t.sidebar.resumeCaveat}
+          </p>
+        )}
       </div>
     </aside>
   );

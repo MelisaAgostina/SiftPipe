@@ -19,6 +19,23 @@ from blocks.targets import DEFAULT_TARGET
 
 DB_PATH = os.getenv("SIFTPIPE_HISTORY_DB", "siftpipe_history.db")
 
+# _snapshot_new_result_files (below) compares a result file's mtime against
+# the run's own started_at to reject leftover files from an earlier run —
+# see that function's docstring. started_at is captured via Python's
+# datetime.now() at start_run() time; a file's mtime comes back from the OS
+# filesystem layer instead, a genuinely different clock source. Measured
+# empirically on this project's own dev machine (Windows/NTFS): a file
+# written mere milliseconds after start_run() can occasionally report an
+# mtime up to ~40ms *earlier* than started_at, purely from that source
+# mismatch — reproducible under load, not a logic bug (confirmed by
+# comparing against time.time() directly in isolation, where no such gap
+# appears). A real leftover file from an actually-separate earlier run is
+# never this close in time — every block does a real network call (LLM or
+# Playwright) that takes seconds at minimum — so this tolerance can be many
+# orders of magnitude larger than the observed skew without weakening the
+# check's actual purpose at all.
+_MTIME_SKEW_TOLERANCE = 2.0  # seconds
+
 
 def _connect():
     conn = sqlite3.connect(DB_PATH)
@@ -120,9 +137,23 @@ def _snapshot_new_result_files(run_id, target, results_dir="results"):
     only once at the very end. `target` falsy (None or "") falls back to
     globbing every *.json file, matching a pre-target-column run's original
     semantics exactly.
+
+    Only considers files whose mtime is at or after this run's own
+    started_at (within _MTIME_SKEW_TOLERANCE — see its own comment) —
+    results/ is wiped by Fresh Reset but NOT between ordinary runs, so a
+    target's results/ can hold complete files left over from an earlier
+    successful run. Without this check, a later run for the same target
+    that crashes partway through would have _find_resume_point see those
+    old files as "already done" for the new run and skip blocks it never
+    actually executed, resuming with stale, unrelated data.
     """
     conn = _connect()
     try:
+        run_row = conn.execute("SELECT started_at FROM runs WHERE id = ?", (run_id,)).fetchone()
+        if run_row is None:
+            return
+        started_at_epoch = datetime.fromisoformat(run_row[0]).timestamp()
+
         already = {
             row[0]
             for row in conn.execute(
@@ -132,6 +163,8 @@ def _snapshot_new_result_files(run_id, target, results_dir="results"):
         prefix = f"{target}_" if target else ""
         pattern = f"{prefix}*.json" if prefix else "*.json"
         for path in sorted(Path(results_dir).glob(pattern)):
+            if path.stat().st_mtime < started_at_epoch - _MTIME_SKEW_TOLERANCE:
+                continue
             block_name = path.stem[len(prefix):] if prefix else path.stem
             if block_name in already:
                 continue

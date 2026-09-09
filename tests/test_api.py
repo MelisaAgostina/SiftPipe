@@ -173,6 +173,23 @@ class TestApiRoutes(unittest.TestCase):
             api.validate_payloads(api.ValidatePayloadsRequest(approved_indices=[0]))
         self.assertEqual(ctx.exception.status_code, 404)
 
+    def test_fresh_pipeline_recovers_when_naviq_server_check_raises(self):
+        """Critical regression: before this fix, ensure_naviq_server_running()
+        raising (e.g. RuntimeError if the dev-server process exits
+        immediately, TimeoutError if it never becomes reachable) escaped
+        _run_fresh_pipeline's background thread entirely — pipeline_state
+        stayed "running": True forever with error never set, and every
+        recovery endpoint (/api/run, /api/run/resume, /api/reset) 409'd with
+        no in-app way out. It must instead route through _fail_pipeline like
+        every other step failure."""
+        api.set_active_target(api.SetTargetRequest(name="naviq"))
+
+        with patch.object(api, "ensure_naviq_server_running", side_effect=RuntimeError("dev server exited immediately")):
+            api._run_fresh_pipeline("fresh")
+
+        self.assertFalse(api.pipeline_state["running"])
+        self.assertIsNotNone(api.pipeline_state["error"])
+
     def test_run_pipeline_from_skips_earlier_steps(self):
         """The core resume mechanism: _run_pipeline_from(start_index) must
         never call any step before start_index. Patches B4 onward to no-ops
@@ -383,6 +400,81 @@ class TestApiRoutes(unittest.TestCase):
             api.run_environment_reset()
 
         self.assertTrue(api.run_history.get_latest_run(api.ACTIVE_TARGET.name)["resumable"])
+
+    def test_crash_during_b8_then_resume_reaches_actual_completion(self):
+        """The spec's own headline test (docs/superpowers/specs/2026-09-08-
+        pipeline-resume-design.md, Testing section): a run that crashes
+        partway through, gets resumed, and reaches "completed" with every
+        block present exactly once. Every other resume test covers a
+        sub-piece (_find_resume_point against hand-placed files,
+        _run_pipeline_from skipping earlier steps) — this is the one that
+        exercises the actual crash -> resume -> completion mechanism
+        end-to-end, and would have caught Finding 2 (stale leftover files
+        corrupting resume) immediately."""
+        os.makedirs("results", exist_ok=True)
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+
+        # Get past B3-B6 the simple way: real-looking result files snapshotted
+        # onto this run_id directly, without actually running B3-B5.
+        for stored_name in ("B3_static", "B4_dynamic", "B5_payloads"):
+            with open(f"results/{target_name}_{stored_name}.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+        api.run_history._snapshot_new_result_files(run_id, target_name)
+
+        def _fake_execute_attacks(*a, **k):
+            with open(f"results/{target_name}_B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        b8_calls = {"n": 0}
+
+        def _fake_analyze_results(*a, **k):
+            # First call (the original, crashing attempt) raises; the second
+            # call (after resume) succeeds and writes B8's output for real.
+            b8_calls["n"] += 1
+            if b8_calls["n"] == 1:
+                raise RuntimeError("simulated B8 crash")
+            with open(f"results/{target_name}_B8_dynamic.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        def _fake_correlate_results(*a, **k):
+            with open(f"results/{target_name}_B9_correlation.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete", "results": []}, f)
+
+        api.pipeline_state["run_id"] = run_id
+
+        with patch.object(api, "execute_attacks", side_effect=_fake_execute_attacks), \
+             patch.object(api, "analyze_results", side_effect=_fake_analyze_results), \
+             patch.object(api, "correlate_results", side_effect=_fake_correlate_results):
+
+            # Crash: B7 (index 3) succeeds, B8 raises on its first call,
+            # landing in _fail_pipeline.
+            api._run_pipeline_from(3)
+
+            self.assertIsNotNone(api.pipeline_state["error"])
+            crashed_run = api.run_history.get_run(run_id)
+            self.assertEqual(
+                set(crashed_run["blocks"].keys()),
+                {"B3_static", "B4_dynamic", "B5_payloads", "B7_dynamic_attacks"},
+            )
+            self.assertEqual(crashed_run["status"], "error")
+
+            # Resume: dispatch straight to _run_resumed_pipeline, exactly as
+            # POST /api/run/resume's background thread target would. B8 (index
+            # 4) now succeeds on its second call, and B9 completes normally.
+            api.pipeline_state["error"] = None
+            api._run_resumed_pipeline(run_id, 4)
+
+        self.assertTrue(api.pipeline_state["completed"])
+        completed_run = api.run_history.get_run(run_id)
+        self.assertEqual(
+            set(completed_run["blocks"].keys()),
+            {
+                "B3_static", "B4_dynamic", "B5_payloads",
+                "B7_dynamic_attacks", "B8_dynamic", "B9_correlation",
+            },
+        )
+        self.assertEqual(completed_run["status"], "completed")
 
 
 if __name__ == "__main__":
