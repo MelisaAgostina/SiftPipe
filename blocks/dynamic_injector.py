@@ -157,11 +157,12 @@ def _login(page, target=None):
     if not login_clicked:
         page.press(password_selector, "Enter")
 
-    # state="attached" (not the default "visible") — confirmed live during
-    # Phase 2 that NaViQ's own indicator (a[href='/logout/']) matches two
-    # real elements, neither visible without further interaction, so
-    # requiring visibility here would time out despite a real login.
-    page.wait_for_selector(", ".join(target.authenticated_selectors), timeout=15000, state="attached")
+    # Same layout-agnostic check as B4's _still_authenticated()/
+    # discover_target.py: a real session redirects away from login_path
+    # regardless of page layout, so no per-target DOM selector is needed.
+    # Replaces the old target.authenticated_selectors wait, which crashed
+    # for any discovered target — that field is always empty.
+    page.wait_for_url(lambda url: target.login_path not in url, timeout=15000)
     print("[B7] Login exitoso.")
 
 
