@@ -175,9 +175,9 @@ env_state = {
 # directly by every block function and shared into the two background
 # threading.Threads below with no locking of its own. In practice the two
 # threads never run concurrently — pipeline_state["running"]/
-# ["waiting_for_human"] already serialize them (run_pipeline_until_b6 always
+# ["waiting_for_human"] already serialize them (_run_pipeline_from always
 # finishes, setting waiting_for_human=True, before /api/validate is allowed
-# to start run_pipeline_from_b7) — but that safety currently depends on
+# to start _run_from_b7) — but that safety currently depends on
 # those flag checks staying correct forever. This lock makes the
 # no-concurrent-access invariant self-enforcing instead: both background
 # entry points hold it for their full run, and the one synchronous request-
@@ -282,8 +282,8 @@ def run_environment_reset():
 
 
 def _fail_pipeline(e):
-    """Shared except-block bookending for run_pipeline_until_b6 and
-    run_pipeline_from_b7 - previously each wrote out the same
+    """Shared except-block bookending for _run_fresh_pipeline and
+    _run_from_b7 - previously each wrote out the same
     pipeline_state update + log + run_history.finish_run(..., "error") in
     full a second time. Each function still needs its own try/except (a
     human-review pause between B6 and B7 splits the run across two separate
@@ -296,16 +296,17 @@ def _fail_pipeline(e):
 
 
 # (bare id for pipeline_state/current_block, on-disk result name for
-# run_history snapshotting, the actual block call). Order matters — this
-# is the one place the B3-B9 sequence is defined; PIPELINE_STEPS[i] runs
-# before PIPELINE_STEPS[i+1] and nothing else decides that anymore.
+# run_history snapshotting, the actual block call, a descriptive start
+# message for the live Logs tab). Order matters — this is the one place
+# the B3-B9 sequence is defined; PIPELINE_STEPS[i] runs before
+# PIPELINE_STEPS[i+1] and nothing else decides that anymore.
 PIPELINE_STEPS = [
-    ("B3", "B3_static", lambda: run_static_analysis(pipeline_results, ACTIVE_TARGET)),
-    ("B4", "B4_dynamic", lambda: run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"])),
-    ("B5", "B5_payloads", lambda: generate_payloads(client=client, target_profile=ACTIVE_TARGET)),
-    ("B7", "B7_dynamic_attacks", lambda: execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"])),
-    ("B8", "B8_dynamic", lambda: analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET)),
-    ("B9", "B9_correlation", lambda: correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET)),
+    ("B3", "B3_static", lambda: run_static_analysis(pipeline_results, ACTIVE_TARGET), "B3 - Static analysis started"),
+    ("B4", "B4_dynamic", lambda: run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"]), "B4 - Dynamic discovery started"),
+    ("B5", "B5_payloads", lambda: generate_payloads(client=client, target_profile=ACTIVE_TARGET), "B5 - Payload generation"),
+    ("B7", "B7_dynamic_attacks", lambda: execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"]), "B7 - Attack execution"),
+    ("B8", "B8_dynamic", lambda: analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET), "B8 - Intelligent results analysis"),
+    ("B9", "B9_correlation", lambda: correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET), "B9 - Static + dynamic correlation"),
 ]
 
 
@@ -325,9 +326,9 @@ def _run_pipeline_from(start_index):
     """
     try:
         with pipeline_results_lock:
-            for state_id, stored_name, step in PIPELINE_STEPS[start_index:]:
+            for state_id, stored_name, step, start_message in PIPELINE_STEPS[start_index:]:
                 pipeline_state["current_block"] = state_id
-                log(f">> {state_id} started")
+                log(f">> {start_message}")
                 step()
                 run_history._snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
                 log(f"OK {state_id} completed")

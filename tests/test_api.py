@@ -90,7 +90,7 @@ class TestApiRoutes(unittest.TestCase):
         reaching run_history - every run got recorded as mode="api" regardless
         of what the user picked, so past-run cards showed "api" instead of
         "fresh"/"restore". /api/run must forward body.mode into the thread's
-        args so run_pipeline_until_b6 records the actual selection."""
+        args so _run_fresh_pipeline records the actual selection."""
         api.run_pipeline(api.RunPipelineRequest(mode="restore"))
         self.assertEqual(FakeThread.started_args[0], ("restore",))
 
