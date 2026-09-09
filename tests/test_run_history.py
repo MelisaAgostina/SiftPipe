@@ -313,8 +313,19 @@ class TestRunHistory(unittest.TestCase):
         # Calling again with no new files must not duplicate B3/B4's rows.
         run_history._snapshot_new_result_files(run_id, "mattermost")
 
+        # Verify via the API (deduplicated blocks).
         detail = run_history.get_run(run_id)
         self.assertEqual(sorted(detail["blocks"].keys()), ["B3_static", "B4_dynamic"])
+
+        # Verify via the raw database that exactly 2 rows exist (not 4 or 6 from duplicates).
+        conn = sqlite3.connect(run_history.DB_PATH)
+        try:
+            row_count = conn.execute(
+                "SELECT COUNT(*) FROM run_blocks WHERE run_id = ?", (run_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(row_count, 2)
 
     def test_finish_run_still_snapshots_everything_in_one_call(self):
         # Behavior-preservation check: finish_run alone (no prior incremental
