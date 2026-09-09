@@ -301,6 +301,38 @@ class TestRunHistory(unittest.TestCase):
         self.assertEqual(detail["blocks"]["B3_static"]["marker"], "naviq-static")
         self.assertNotIn("B7_dynamic_attacks", detail["blocks"])
 
+    def test_snapshot_new_result_files_is_idempotent_across_repeated_calls(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "findings": []}, f)
+
+        run_history._snapshot_new_result_files(run_id, "mattermost")
+        with open("results/mattermost_B4_dynamic.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        run_history._snapshot_new_result_files(run_id, "mattermost")
+        # Calling again with no new files must not duplicate B3/B4's rows.
+        run_history._snapshot_new_result_files(run_id, "mattermost")
+
+        detail = run_history.get_run(run_id)
+        self.assertEqual(sorted(detail["blocks"].keys()), ["B3_static", "B4_dynamic"])
+
+    def test_finish_run_still_snapshots_everything_in_one_call(self):
+        # Behavior-preservation check: finish_run alone (no prior incremental
+        # calls) must still produce the exact same result as before this
+        # refactor.
+        run_id = run_history.start_run(mode="fresh")
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "findings": []}, f)
+        with open("results/mattermost_B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "findings": [{"payload_id": "1_1"}]}, f)
+
+        run_history.finish_run(run_id, "completed")
+        detail = run_history.get_run(run_id)
+
+        self.assertIn("B3_static", detail["blocks"])
+        self.assertIn("B7_dynamic_attacks", detail["blocks"])
+        self.assertEqual(detail["blocks"]["B7_dynamic_attacks"]["findings"][0]["payload_id"], "1_1")
+
 
 if __name__ == "__main__":
     unittest.main()

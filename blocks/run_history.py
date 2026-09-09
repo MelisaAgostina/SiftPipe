@@ -100,22 +100,53 @@ def _b9_summary(results_dir, prefix=""):
     return total, confirmed
 
 
+def _snapshot_new_result_files(run_id, target, results_dir="results"):
+    """
+    Inserts one run_blocks row per result file for `target` that isn't
+    already snapshotted for `run_id`. Safe to call more than once for the
+    same run_id (e.g. once per completed block, plus once more at
+    finish_run) — a file already present is skipped, never re-inserted.
+
+    This is finish_run()'s original glob-and-insert body, factored out so
+    it can run incrementally (right after each block completes) instead of
+    only once at the very end. `target` falsy (None or "") falls back to
+    globbing every *.json file, matching a pre-target-column run's original
+    semantics exactly.
+    """
+    conn = _connect()
+    try:
+        already = {
+            row[0]
+            for row in conn.execute(
+                "SELECT block_name FROM run_blocks WHERE run_id = ?", (run_id,)
+            ).fetchall()
+        }
+        prefix = f"{target}_" if target else ""
+        pattern = f"{prefix}*.json" if prefix else "*.json"
+        for path in sorted(Path(results_dir).glob(pattern)):
+            block_name = path.stem[len(prefix):] if prefix else path.stem
+            if block_name in already:
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            conn.execute(
+                "INSERT INTO run_blocks (run_id, block_name, data) VALUES (?, ?, ?)",
+                (run_id, block_name, json.dumps(data)),
+            )
+            already.add(block_name)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def finish_run(run_id, status, results_dir="results"):
     """
-    Call once a run reaches a terminal state (completed or error). Snapshots
-    this run's own block output files against run_id, so a past run can be
-    viewed later even after the next run overwrites those files.
-
-    Block files on disk are target-scoped (results/{target}_{block}.json —
-    see result_path() in blocks/targets.py), so this looks up the run's own
-    target from the runs table and only globs/snapshots that target's files,
-    storing them under their canonical block_name (prefix stripped) so
-    get_run()/list_runs() consumers don't need to know about the on-disk
-    naming convention. Real bug this fixes: two targets run back to back
-    used to both get glob("*.json")'d into the same run_id's snapshot,
-    silently mixing one target's block data into the other's Past Run.
-    A run predating the `target` column (target is NULL) falls back to the
-    old glob-everything behavior, matching its original semantics exactly.
+    Call once a run reaches a terminal state (completed or error). Updates
+    the run's own row, then snapshots any result files not already captured
+    by an earlier incremental _snapshot_new_result_files call — see that
+    function's docstring for why target-scoping and idempotency matter.
     """
     conn = _connect()
     try:
@@ -134,22 +165,11 @@ def finish_run(run_id, status, results_dir="results"):
             """,
             (now, status, total_findings, confirmed_findings, run_id),
         )
-
-        pattern = f"{prefix}*.json" if prefix else "*.json"
-        for path in sorted(Path(results_dir).glob(pattern)):
-            block_name = path.stem[len(prefix):] if prefix else path.stem
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
-            conn.execute(
-                "INSERT INTO run_blocks (run_id, block_name, data) VALUES (?, ?, ?)",
-                (run_id, block_name, json.dumps(data)),
-            )
-
         conn.commit()
     finally:
         conn.close()
+
+    _snapshot_new_result_files(run_id, target, results_dir)
 
 
 def list_runs():
