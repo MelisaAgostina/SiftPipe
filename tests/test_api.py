@@ -343,6 +343,23 @@ class TestApiRoutes(unittest.TestCase):
 
         self.assertEqual(api.get_status()["resumable_from"], "B4")
 
+    def test_status_resumable_from_is_none_while_pipeline_is_running(self):
+        """An errored+resumable run sitting in run_history must not surface
+        as resumable_from while a resume of that same run is actively
+        executing — _run_resumed_pipeline never re-marks the DB row as
+        "running" (it keeps the original run_id), so without this guard
+        get_status() could report "running": true and a non-null
+        resumable_from for the same target at once."""
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        api.run_history.finish_run(run_id, "error")
+
+        api.pipeline_state["running"] = True
+
+        self.assertIsNone(api.get_status()["resumable_from"])
+
     def test_status_resumable_from_is_none_with_nothing_to_resume(self):
         self.assertIsNone(api.get_status()["resumable_from"])
 

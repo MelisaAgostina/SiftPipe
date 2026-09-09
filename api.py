@@ -614,7 +614,19 @@ def resume_pipeline():
 @protected.get("/api/status")
 def get_status():
     """Estado actual del pipeline — React hace polling cada 2s a este endpoint."""
-    resume_point = _find_resume_point(ACTIVE_TARGET.name)
+    # _run_resumed_pipeline deliberately never calls run_history.start_run()
+    # for a resumed run (it keeps the original run_id), so the DB row stays
+    # status="error"/resumable=True for that run's entire duration - nothing
+    # ever writes it back to "running". Without this guard, _find_resume_point
+    # would happily report a resumable_from for a run that's actively
+    # executing right now, contradicting "running": true in the same
+    # response. Skipping the DB lookup entirely while running/waiting also
+    # avoids two pointless SQLite queries on every 2s poll during that time.
+    resume_point = (
+        None
+        if pipeline_state["running"] or pipeline_state["waiting_for_human"]
+        else _find_resume_point(ACTIVE_TARGET.name)
+    )
     return {
         "running": pipeline_state["running"],
         "current_block": pipeline_state["current_block"],
