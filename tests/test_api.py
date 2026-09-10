@@ -326,6 +326,17 @@ class TestApiRoutes(unittest.TestCase):
 
         self.assertEqual(result, (run_id, 2, "B5"))
 
+    def test_find_resume_point_also_finds_a_stopped_run(self):
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        api.run_history.finish_run(run_id, "stopped")
+
+        result = api._find_resume_point(api.ACTIVE_TARGET.name)
+
+        self.assertEqual(result, (run_id, 1, "B4"))
+
     def test_resume_endpoint_rejects_when_nothing_resumable(self):
         with self.assertRaises(HTTPException) as ctx:
             api.resume_pipeline()
@@ -475,6 +486,90 @@ class TestApiRoutes(unittest.TestCase):
             },
         )
         self.assertEqual(completed_run["status"], "completed")
+
+    # ── Voluntary stop (POST /api/run/stop) ─────────────────────────────────
+
+    def test_stop_endpoint_rejects_when_not_running(self):
+        with self.assertRaises(HTTPException) as ctx:
+            api.stop_pipeline()
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_stop_endpoint_sets_stop_requested_and_echoes_current_block(self):
+        api.pipeline_state["running"] = True
+        api.pipeline_state["current_block"] = "B4"
+
+        response = api.stop_pipeline()
+
+        self.assertTrue(api.pipeline_state["stop_requested"])
+        self.assertEqual(response, {"stopping_after": "B4"})
+
+    def test_status_reports_stop_requested(self):
+        api.pipeline_state["running"] = True
+        api.pipeline_state["stop_requested"] = True
+
+        self.assertTrue(api.get_status()["stop_requested"])
+
+    def test_pipeline_stops_after_current_block_when_stop_requested(self):
+        """Stop takes effect at the next block boundary, not mid-block: B3's
+        fake implementation both writes its own result file (simulating a
+        real completed block) and flips stop_requested (simulating the user
+        clicking Stop while B3 was still running) — B4 must never run."""
+        os.makedirs("results", exist_ok=True)
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        def _fake_b3(*a, **k):
+            api.pipeline_state["stop_requested"] = True
+            with open(f"results/{target_name}_B3_static.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
+             patch.object(api, "run_dynamic_discovery") as mock_b4:
+            api._run_pipeline_from(0)
+
+        mock_b4.assert_not_called()
+        self.assertFalse(api.pipeline_state["running"])
+        self.assertFalse(api.pipeline_state["stop_requested"])
+        stopped_run = api.run_history.get_run(run_id)
+        self.assertEqual(stopped_run["status"], "stopped")
+        self.assertEqual(set(stopped_run["blocks"].keys()), {"B3_static"})
+
+    def test_stop_then_resume_reaches_actual_completion(self):
+        """Mirrors test_crash_during_b8_then_resume_reaches_actual_completion,
+        but for a voluntary stop instead of a crash — the spec's headline
+        claim that a stopped run is exactly as resumable as a crashed one."""
+        os.makedirs("results", exist_ok=True)
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        def _fake_b3(*a, **k):
+            api.pipeline_state["stop_requested"] = True
+            with open(f"results/{target_name}_B3_static.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        def _fake_b4(*a, **k):
+            with open(f"results/{target_name}_B4_dynamic.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
+             patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4):
+            api._run_pipeline_from(0)
+
+        resume_point = api._find_resume_point(target_name)
+        self.assertEqual(resume_point, (run_id, 1, "B4"))
+
+        with patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4), \
+             patch.object(api, "generate_payloads") as mock_b5:
+            api._run_resumed_pipeline(run_id, resume_point[1])
+
+        self.assertTrue(api.pipeline_state["waiting_for_human"])  # paused at B6, as designed
+        mock_b5.assert_called_once()
+        resumed_run = api.run_history.get_run(run_id)
+        self.assertEqual(set(resumed_run["blocks"].keys()), {"B3_static", "B4_dynamic"})
 
 
 if __name__ == "__main__":

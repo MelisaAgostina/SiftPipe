@@ -159,6 +159,7 @@ pipeline_state = {
     "error": None,
     "logs": [],
     "run_id": None,          # blocks/run_history.py row for the current/last run
+    "stop_requested": False, # set by POST /api/run/stop, read by _run_pipeline_from's loop
 }
 
 # Estado del reset de entorno (Docker/Mattermost) — separado de pipeline_state
@@ -334,6 +335,14 @@ def _run_pipeline_from(start_index):
                 run_history._snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
                 log(f"OK {state_id} completed")
 
+                if pipeline_state["stop_requested"]:
+                    pipeline_state["current_block"] = None
+                    pipeline_state["running"] = False
+                    pipeline_state["stop_requested"] = False
+                    log(f"== Pipeline stopped after {state_id} (user request) ==")
+                    run_history.finish_run(pipeline_state["run_id"], "stopped")
+                    return
+
                 if state_id == "B5":
                     # Pauses here — the UI shows the payloads for human review
                     pipeline_state["current_block"] = "B6"
@@ -359,6 +368,7 @@ def _run_fresh_pipeline(mode="unknown"):
     pipeline_state["error"] = None
     pipeline_state["logs"] = []
     pipeline_state["waiting_for_human"] = False
+    pipeline_state["stop_requested"] = False
     pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
 
     # Safety net, not the primary path (that's naviq_fresh_reset() via
@@ -389,19 +399,22 @@ def _run_from_b7():
     pipeline_state["running"] = True
     pipeline_state["waiting_for_human"] = False
     pipeline_state["error"] = None
+    pipeline_state["stop_requested"] = False
     _run_pipeline_from(3)
 
 
 def _find_resume_point(target_name):
     """
     Returns (run_id, start_index, state_id) for the first PIPELINE_STEPS
-    entry not yet snapshotted for the most recent errored, still-resumable
-    run of `target_name` — or None if there's nothing to resume (no runs,
-    the latest one isn't errored, or Fresh Reset already dismissed it via
-    dismiss_resume()).
+    entry not yet snapshotted for the most recent errored-or-stopped, still-
+    resumable run of `target_name` — or None if there's nothing to resume
+    (no runs, the latest one is neither errored nor stopped, or Fresh Reset
+    already dismissed it via dismiss_resume()). A user-stopped run is
+    exactly as resumable as a crashed one — see
+    docs/superpowers/specs/2026-09-09-pipeline-stop-design.md.
     """
     latest = run_history.get_latest_run(target_name)
-    if latest is None or latest["status"] != "error" or not latest["resumable"]:
+    if latest is None or latest["status"] not in ("error", "stopped") or not latest["resumable"]:
         return None
 
     run_detail = run_history.get_run(latest["id"])
@@ -418,6 +431,7 @@ def _run_resumed_pipeline(run_id, start_index):
     pipeline_state["completed"] = False
     pipeline_state["error"] = None
     pipeline_state["waiting_for_human"] = False
+    pipeline_state["stop_requested"] = False
     pipeline_state["run_id"] = run_id
     _run_pipeline_from(start_index)
 
@@ -625,6 +639,19 @@ def resume_pipeline():
     return {"resuming_from": state_id}
 
 
+@protected.post("/api/run/stop")
+def stop_pipeline():
+    """Requests a stop after the block currently running finishes — see
+    docs/superpowers/specs/2026-09-09-pipeline-stop-design.md for why this
+    can't interrupt a block mid-way. Rejects if nothing is actually running
+    (a paused-at-B6 run has nothing in-flight to stop)."""
+    if not pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is not running")
+
+    pipeline_state["stop_requested"] = True
+    return {"stopping_after": pipeline_state["current_block"]}
+
+
 @protected.get("/api/status")
 def get_status():
     """Estado actual del pipeline — React hace polling cada 2s a este endpoint."""
@@ -648,6 +675,7 @@ def get_status():
         "completed": pipeline_state["completed"],
         "error": pipeline_state["error"],
         "resumable_from": resume_point[2] if resume_point is not None else None,
+        "stop_requested": pipeline_state["stop_requested"],
     }
 
 
