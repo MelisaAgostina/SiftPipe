@@ -635,6 +635,100 @@ pass further down exercises it directly instead of a stand-in.*
         `.ruff_cache/`, and stray screenshots; added `.playwright-mcp/` to
         `.gitignore`.
 
+- [X] **GitHub-native security scanning (CodeQL + Dependabot) enabled and
+      triaged (2026-09-10).** Turned on GitHub's built-in static analysis as
+      a second, independent check alongside SiftPipe's own dynamic
+      pipeline — worth being explicit for a committee that CodeQL/Dependabot
+      are pattern-matching static analyzers (known-bad code shapes,
+      known-CVE dependency versions), a genuinely different technique from
+      SiftPipe's own dynamic payload generation and live attack execution,
+      not a redundant version of it.
+      - *Setup:* CodeQL via Advanced setup (custom workflow, not the
+        default one-click config); Dependabot vulnerability + malware
+        alerts on. Dependabot's automatic version-update PRs deliberately
+        left **off** — this repo is close to a thesis defense and an
+        unattended dependency bump landing mid-review is the wrong kind of
+        surprise; secret scanning + push protection were already on by
+        default and confirmed enabled, no action needed.
+      - *Real bug in GitHub's own generated workflow, caught before it could
+        bite:* the CodeQL Advanced-setup wizard scaffolds
+        `.github/workflows/codeql.yml` with `branches: ["dev-beta"]`
+        hardcoded on both the `push` and `pull_request` triggers. Left as
+        generated, this scans would have kept working right up until
+        `dev-beta` merged into `dev`/`main` — then silently stopped, since
+        neither trigger matches any other branch name. Fixed to drop the
+        branch filter entirely, matching `ci.yml`'s existing
+        no-branch-filter convention (commit `c539f6d`).
+      - *Triage of the resulting alerts (17 total: 9 CodeQL, 8
+        Dependabot) — one real fix, several false positives, and a
+        reachability call on the rest:*
+        - **Real, fixed:** `GET /api/results/{block_name}`
+          (`get_block_result` in `api.py`) built a file path directly from
+          the unvalidated URL segment — `RESULTS_DIR /
+          f"{ACTIVE_TARGET.name}_{block_name}.json"` — with no containment
+          check, unlike the neighboring `/media` and `/evidence` routes,
+          which both already resolve through `_safe_file_path`. Verified
+          exploitable before fixing it, not just trusting the alert label:
+          `block_name = "/../../secret"` builds the string
+          `"<target>_/../../secret.json"`, which splits on `/` into
+          `["<target>_", "..", "..", "secret.json"]` — the two `..`
+          segments walk back out past `results/` into the process's cwd.
+          Confirmed by resolving the constructed path directly (landed at
+          the repo root) before writing a test. Fixed by routing the same
+          filename through `_safe_file_path`, exactly like `/media` and
+          `/evidence` already do — no new sanitizer, just closing the one
+          route that was missing the existing one. Regression test calls
+          `get_block_result()` directly rather than through `TestClient`,
+          since an HTTP request's `../` segments get normalized away by the
+          URL parser before ever reaching the route handler — the same
+          reason `test_media_routes.py`'s own traversal tests do the same
+          thing.
+        - **False positive — `auth.py:43`, "weak cryptographic hash."**
+          `verify_password()` hashes both sides with SHA-256 purely to
+          normalize them to fixed-length digests before
+          `hmac.compare_digest` — a timing-side-channel closer for the
+          password check, not password storage. CodeQL's query
+          pattern-matches "sha256 near a password-shaped variable" and
+          can't distinguish the two uses. No change made.
+        - **False positive — 4 of the 6 "uncontrolled data used in path
+          expression" alerts in `api.py`.** Two point inside
+          `_safe_file_path` itself (the sanitizer function), two point at
+          the `/media`/`/evidence` routes that call it. CodeQL doesn't
+          recognize a hand-rolled sanitizer as a sanitizer, so it keeps
+          treating the value as tainted after the containment check that
+          already guards it. The remaining two of the six were the real
+          `get_block_result` bug above.
+        - **Fixed, low-severity — `ci.yml` "workflow does not contain
+          permissions" (x2).** Neither the `backend` nor `frontend` job
+          does anything needing write access — checkout, install, lint,
+          test, build. Added a top-level `permissions: contents: read`,
+          scoping the default `GITHUB_TOKEN` down to what `actions/checkout`
+          actually needs, so a compromised or misbehaving step/action in
+          the workflow can't use an over-broad token to push, comment, or
+          modify the repo.
+        - **Reachability call, left unbumped — all 8 Dependabot alerts**
+          (`sharp`/libheif, `nanoid`, `js-yaml`, `undici` x4, all in
+          `ui/package-lock.json`). None are direct dependencies; traced
+          each with `npm ls <pkg> --all` rather than assuming from the
+          alert alone. All four resolve to dev/build/test tooling, never
+          the production request path: `sharp` and 3 of the 4 `undici`
+          alerts come in through `miniflare` (Cloudflare Workers' local dev
+          simulator, pulled in by `@cloudflare/vite-plugin` and `nitro`);
+          the 4th `undici` alert comes through `jsdom`, used only as
+          `vitest`'s fetch shim during test runs; `nanoid` comes through
+          `postcss` (CSS build step); `js-yaml` comes through `eslint`'s
+          config resolution and TanStack Start's build tooling. Every one
+          of these CVEs needs attacker-controlled input reaching the
+          vulnerable code at runtime to matter, and none of these four
+          packages ever see real request traffic — they only run during
+          `vite dev`/`vite build`/`vitest`, processing input the developer
+          controls. Bumping any of them would mean touching
+          `@cloudflare/vite-plugin`/`nitro` (a deeper, riskier change) for
+          close to zero real risk reduction, so left as-is rather than
+          rushed right before the defense. Worth revisiting post-defense
+          with more room to verify a toolchain bump doesn't break the
+          build.
+
 ### The highest-leverage item
 
 *Code and feature work above should be stable before this — containerizing
