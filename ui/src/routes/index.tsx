@@ -8,7 +8,7 @@ import { useSessionAuthenticated } from "@/hooks/use-session-authenticated";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "SiftPipe — Hybrid security pipeline" },
+      { title: "SiftPipe" },
       {
         name: "description",
         content:
