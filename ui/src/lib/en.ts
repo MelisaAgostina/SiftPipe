@@ -72,6 +72,9 @@ export const en: Strings = {
     longRunningPhaseHint: "This could take a few minutes",
     collapseSidebarAria: "Collapse sidebar",
     expandSidebarAria: "Expand sidebar",
+    toggleSectionAria: (heading, isOpen) => `${isOpen ? "Collapse" : "Expand"} ${heading} section`,
+    prerequisitesReadyAria: "Prerequisites ready",
+    prerequisitesNotReadyAria: "Prerequisites not ready",
   },
   topBar: {
     dotLabel: {

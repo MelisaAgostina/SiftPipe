@@ -72,6 +72,10 @@ export const es: Strings = {
     longRunningPhaseHint: "Esto puede tardar varios minutos",
     collapseSidebarAria: "Contraer barra lateral",
     expandSidebarAria: "Expandir barra lateral",
+    toggleSectionAria: (heading, isOpen) =>
+      `${isOpen ? "Contraer" : "Expandir"} sección ${heading}`,
+    prerequisitesReadyAria: "Requisitos previos listos",
+    prerequisitesNotReadyAria: "Requisitos previos no listos",
   },
   topBar: {
     dotLabel: {

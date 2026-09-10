@@ -460,4 +460,94 @@ describe("Sidebar", () => {
     });
     expect(button).toBeDisabled();
   });
+
+  it("collapses the Prerequisites section when its toggle is clicked", () => {
+    setup();
+    expect(screen.getByText(en.prerequisiteLabels.repo)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: en.sidebar.toggleSectionAria(en.sidebar.prerequisitesHeading, true),
+      }),
+    );
+
+    expect(screen.queryByText(en.prerequisiteLabels.repo)).not.toBeInTheDocument();
+  });
+
+  it("collapses the Analysis phases section when its toggle is clicked", () => {
+    setup();
+    expect(screen.getByText(en.phaseLabels.b3)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: en.sidebar.toggleSectionAria(en.sidebar.analysisPhasesHeading, true),
+      }),
+    );
+
+    expect(screen.queryByText(en.phaseLabels.b3)).not.toBeInTheDocument();
+  });
+
+  it("shows an indeterminate progress bar under the active phase only", () => {
+    setup({ status: { running: true, current_block: "B5" } });
+
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+  });
+
+  it("does not show a progress bar when no phase is active", () => {
+    setup();
+
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("shows a prerequisites-ready indicator on the collapsed rail when the target is up", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByLabelText(en.sidebar.prerequisitesReadyAria)).toBeInTheDocument();
+  });
+
+  it("shows a prerequisites-not-ready indicator on the collapsed rail when the target is down", () => {
+    setup({ envHealth: { target_up: false, target: "mattermost" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByLabelText(en.sidebar.prerequisitesNotReadyAria)).toBeInTheDocument();
+  });
+
+  it("shows an FR env-mode badge on the collapsed rail in fresh mode by default", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByText("FR")).toBeInTheDocument();
+  });
+
+  it("shows an RE env-mode badge on the collapsed rail after switching to restore mode", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: /restore existing/i }));
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByText("RE")).toBeInTheDocument();
+  });
+
+  it("marks phase state on the collapsed rail's phase stepper", () => {
+    const { container } = setup({ status: { running: true, current_block: "B5" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(container.querySelector('[data-phase-id="b3"]')).toHaveAttribute(
+      "data-phase-state",
+      "done",
+    );
+    expect(container.querySelector('[data-phase-id="b5"]')).toHaveAttribute(
+      "data-phase-state",
+      "active",
+    );
+    expect(container.querySelector('[data-phase-id="b9"]')).toHaveAttribute(
+      "data-phase-state",
+      "pending",
+    );
+  });
 });

@@ -56,6 +56,9 @@ export type Strings = {
     longRunningPhaseHint: string;
     collapseSidebarAria: string;
     expandSidebarAria: string;
+    toggleSectionAria: (heading: string, isOpen: boolean) => string;
+    prerequisitesReadyAria: string;
+    prerequisitesNotReadyAria: string;
   };
   topBar: {
     dotLabel: Record<EnvDotStateId, string>;
