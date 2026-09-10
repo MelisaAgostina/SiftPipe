@@ -774,8 +774,8 @@ def get_results():
 def get_block_result(block_name: str):
     """Devuelve el resultado de un bloque específico del target activo. Ej:
     /api/results/B3_static -> results/{ACTIVE_TARGET.name}_B3_static.json"""
-    file = RESULTS_DIR / f"{ACTIVE_TARGET.name}_{block_name}.json"
-    if not file.exists():
+    file = _safe_file_path(RESULTS_DIR, f"{ACTIVE_TARGET.name}_{block_name}.json")
+    if file is None:
         raise HTTPException(status_code=404, detail=f"{block_name} has no results yet")
     with open(file) as f:
         return json.load(f)

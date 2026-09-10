@@ -110,6 +110,20 @@ class TestApiRoutes(unittest.TestCase):
             api.get_block_result("B3_static")
         self.assertEqual(ctx.exception.status_code, 404)
 
+    def test_get_block_result_rejects_path_traversal(self):
+        """block_name goes straight into RESULTS_DIR / f"{name}_{block_name}.json"
+        with no containment check - unlike /media and /evidence, which both
+        route through _safe_file_path. "/../../secret" builds the string
+        "<target>_/../../secret.json", which splits into ["<target>_", "..",
+        "..", "secret.json"] and walks back out past results/ into whatever
+        the process cwd holds."""
+        os.makedirs("results", exist_ok=True)
+        Path("secret.json").write_text('{"leaked": true}')
+
+        with self.assertRaises(HTTPException) as ctx:
+            api.get_block_result("/../../secret")
+        self.assertEqual(ctx.exception.status_code, 404)
+
     def test_get_results_merges_all_json_files(self):
         os.makedirs("results", exist_ok=True)
         with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
