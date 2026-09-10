@@ -116,6 +116,7 @@ export type Strings = {
     jsonButtonLabel: string;
     runLabel: (id: number, mode: string) => string;
     statusLabels: Record<RunStatusId, string>;
+    allTargetsFilter: string;
     selectRunPrompt: string;
     noPastRuns: string;
     noBlockData: string;

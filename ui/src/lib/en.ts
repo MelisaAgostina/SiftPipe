@@ -151,6 +151,7 @@ export const en: Strings = {
       stopped: "STOPPED",
       discarded: "DISCARDED",
     },
+    allTargetsFilter: "All",
     selectRunPrompt: "Select a run to see its results.",
     noPastRuns:
       "No past runs yet — once a full pipeline run completes, it shows up here for later review.",

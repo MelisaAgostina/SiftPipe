@@ -667,6 +667,12 @@ export function PastRunsView() {
   const query = usePastRuns();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  // null = "All". Purely client-side — every run already carries its own
+  // target, so no new endpoint or query param is needed. Runs predating the
+  // target column (target: null) never match a specific tab, but still show
+  // up under "All", same as targetLabel()'s "unknown target" fallback treats
+  // them elsewhere.
+  const [targetFilter, setTargetFilter] = useState<string | null>(null);
 
   return (
     <QueryState
@@ -676,11 +682,54 @@ export function PastRunsView() {
     >
       {(data) => {
         const archivedCount = data.runs.filter((r) => r.archived).length;
-        const visibleRuns = showArchived ? data.runs : data.runs.filter((r) => !r.archived);
+        const byArchive = showArchived ? data.runs : data.runs.filter((r) => !r.archived);
+        // Distinct targets actually present in this run history, not every
+        // configured target — a tab for a target with zero past runs would
+        // just filter to an empty list. Only worth showing at all once
+        // there's more than one target to actually choose between.
+        const targets = Array.from(
+          new Set(
+            data.runs.map((r) => r.target).filter((target): target is string => target !== null),
+          ),
+        );
+        const visibleRuns = targetFilter
+          ? byArchive.filter((r) => r.target === targetFilter)
+          : byArchive;
 
         return (
           <div className="grid gap-6 md:grid-cols-[360px_1fr]">
             <div className="space-y-2">
+              {targets.length > 1 && (
+                <div className="flex rounded-lg border border-border bg-background/60 p-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setTargetFilter(null)}
+                    className={
+                      "flex-1 rounded-md px-2 py-1.5 font-medium transition-colors " +
+                      (targetFilter === null
+                        ? "bg-accent text-foreground ring-1 ring-border"
+                        : "text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    {t.pastRunsView.allTargetsFilter}
+                  </button>
+                  {targets.map((target) => (
+                    <button
+                      key={target}
+                      type="button"
+                      onClick={() => setTargetFilter(target)}
+                      className={
+                        "flex-1 rounded-md px-2 py-1.5 font-medium transition-colors " +
+                        (targetFilter === target
+                          ? "bg-accent text-foreground ring-1 ring-border"
+                          : "text-muted-foreground hover:text-foreground")
+                      }
+                    >
+                      {targetLabel(target, t)}
+                    </button>
+                  ))}
+                </div>
+              )}
               {visibleRuns.map((run) => (
                 <RunRow
                   key={run.id}

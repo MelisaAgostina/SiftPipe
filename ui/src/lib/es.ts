@@ -154,6 +154,7 @@ export const es: Strings = {
       stopped: "DETENIDA",
       discarded: "DESCARTADA",
     },
+    allTargetsFilter: "Todos",
     selectRunPrompt: "Selecciona una ejecución para ver sus resultados.",
     noPastRuns:
       "Todavía no hay ejecuciones anteriores — una vez que se complete un pipeline completo, aparecerá aquí para revisarlo más tarde.",
