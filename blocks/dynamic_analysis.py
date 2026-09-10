@@ -414,6 +414,24 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
 
                     try:
                         _goto_with_retry(page, url, wait_until="domcontentloaded")
+                        # domcontentloaded fires once the initial HTML/JS has loaded,
+                        # not once a React SPA has actually rendered its content -
+                        # wait_for_mattermost_webapp (blocks/environment.py) already
+                        # solves this exact race for the very first page load, before
+                        # B4/B7 even start. Real gap found live 2026-09-08: it
+                        # recurs on every page visited during the crawl itself, not
+                        # just at container startup - against a Mattermost instance
+                        # healthy for 20+ minutes, town-square still measured 0
+                        # forms/0 inputs immediately after this goto, with the
+                        # message box and channel header appearing only ~0.5s later
+                        # once hydration caught up. Best-effort and non-fatal: some
+                        # views never truly go idle within the timeout (Mattermost
+                        # keeps a standing websocket open), so a page that doesn't
+                        # settle still gets scanned rather than being dropped.
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=8000)
+                        except Exception:
+                            pass
                         if not _still_authenticated(page, target):
                             raise Exception(f"Redirected to {target.login_path} - session no longer valid")
                         successful_pages.append(url)
