@@ -99,6 +99,59 @@ describe("PastRunsView", () => {
     expect(screen.getByText(/unknown target/i)).toBeInTheDocument();
   });
 
+  it("does not show a target filter when every run is for the same target", () => {
+    vi.mocked(usePastRuns).mockReturnValue(
+      loadedQuery({ runs: [run({ id: 1 }), run({ id: 2 })] }) as never,
+    );
+
+    render(<PastRunsView />);
+
+    expect(screen.queryByRole("button", { name: "Mattermost" })).not.toBeInTheDocument();
+  });
+
+  it("shows a target filter once runs span more than one target", () => {
+    vi.mocked(usePastRuns).mockReturnValue(
+      loadedQuery({
+        runs: [run({ id: 1, target: "mattermost" }), run({ id: 2, target: "naviq" })],
+      }) as never,
+    );
+
+    render(<PastRunsView />);
+
+    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mattermost" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "NaViQ" })).toBeInTheDocument();
+  });
+
+  it("filters the run list down to the selected target", () => {
+    vi.mocked(usePastRuns).mockReturnValue(
+      loadedQuery({
+        runs: [run({ id: 1, target: "mattermost" }), run({ id: 2, target: "naviq" })],
+      }) as never,
+    );
+
+    render(<PastRunsView />);
+    fireEvent.click(screen.getByRole("button", { name: "NaViQ" }));
+
+    expect(screen.getByText(/run #2/i)).toBeInTheDocument();
+    expect(screen.queryByText(/run #1/i)).not.toBeInTheDocument();
+  });
+
+  it("clicking All after filtering shows every run again", () => {
+    vi.mocked(usePastRuns).mockReturnValue(
+      loadedQuery({
+        runs: [run({ id: 1, target: "mattermost" }), run({ id: 2, target: "naviq" })],
+      }) as never,
+    );
+
+    render(<PastRunsView />);
+    fireEvent.click(screen.getByRole("button", { name: "NaViQ" }));
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+
+    expect(screen.getByText(/run #1/i)).toBeInTheDocument();
+    expect(screen.getByText(/run #2/i)).toBeInTheDocument();
+  });
+
   it("prompts to select a run before showing any detail", () => {
     vi.mocked(usePastRuns).mockReturnValue(loadedQuery({ runs: [run()] }) as never);
 

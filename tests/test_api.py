@@ -43,7 +43,7 @@ class TestApiRoutes(unittest.TestCase):
         api.pipeline_state.update({
             "running": False, "current_block": None, "waiting_for_human": False,
             "completed": False, "error": None, "logs": [], "run_id": None,
-            "stop_requested": False,
+            "stop_requested": False, "discard_requested": False,
         })
         api.env_state.update({"running": False, "completed": False, "error": None, "logs": []})
         api.pipeline_results.clear()
@@ -643,6 +643,135 @@ class TestApiRoutes(unittest.TestCase):
         mock_b5.assert_called_once()
         resumed_run = api.run_history.get_run(run_id)
         self.assertEqual(set(resumed_run["blocks"].keys()), {"B3_static", "B4_dynamic"})
+
+    # ── Voluntary discard (POST /api/run/discard) ───────────────────────────
+
+    def test_discard_endpoint_rejects_when_not_running(self):
+        with self.assertRaises(HTTPException) as ctx:
+            api.discard_pipeline()
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_discard_endpoint_sets_discard_requested_and_echoes_current_block(self):
+        api.pipeline_state["running"] = True
+        api.pipeline_state["current_block"] = "B4"
+
+        response = api.discard_pipeline()
+
+        self.assertTrue(api.pipeline_state["discard_requested"])
+        self.assertEqual(response, {"discarding_after": "B4"})
+
+    def test_status_reports_discard_requested(self):
+        api.pipeline_state["running"] = True
+        api.pipeline_state["discard_requested"] = True
+
+        self.assertTrue(api.get_status()["discard_requested"])
+
+    def test_discarded_run_is_never_offered_for_resume(self):
+        """_find_resume_point only recognizes status in ("error", "stopped")
+        as resumable-eligible - "discarded" falls outside that set by
+        construction, so a discarded run is never offered for resume with
+        no extra code needed beyond using a distinct status string."""
+        run_id = api.run_history.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{api.ACTIVE_TARGET.name}_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        api.run_history.finish_run(run_id, "discarded")
+
+        self.assertIsNone(api._find_resume_point(api.ACTIVE_TARGET.name))
+
+    def test_discard_during_b5_skips_the_b6_pause_and_finalizes_immediately(self):
+        """Unlike Stop, Discard doesn't need to protect the B6 human-review
+        pause - a discarded run is never resumable in the first place (see
+        test_discarded_run_is_never_offered_for_resume above), so there is
+        no resume-into-B7 path to protect. Discarding during B5 finalizes
+        the run the moment B5 finishes, skipping the pause entirely."""
+        os.makedirs("results", exist_ok=True)
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        def _fake_b3(*a, **k):
+            with open(f"results/{target_name}_B3_static.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        def _fake_b4(*a, **k):
+            with open(f"results/{target_name}_B4_dynamic.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        def _fake_b5(*a, **k):
+            # Simulates the user clicking Discard while B5 was still running.
+            api.pipeline_state["discard_requested"] = True
+            with open(f"results/{target_name}_B5_payloads.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete", "payloads": []}, f)
+
+        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
+             patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4), \
+             patch.object(api, "generate_payloads", side_effect=_fake_b5), \
+             patch.object(api, "execute_attacks") as mock_b7:
+            api._run_pipeline_from(0)
+
+        mock_b7.assert_not_called()
+        self.assertFalse(api.pipeline_state["waiting_for_human"])
+        self.assertFalse(api.pipeline_state["running"])
+        self.assertFalse(api.pipeline_state["discard_requested"])
+        run_row = api.run_history.get_run(run_id)
+        self.assertEqual(run_row["status"], "discarded")
+
+    def test_discard_during_b9_still_reaches_completed_not_discarded(self):
+        """Same last-step exemption Stop already has: a discard requested
+        while B9 (the last block) is running must not downgrade an
+        otherwise fully-completed run to "discarded" - there is nothing
+        left to abandon once every block has actually finished."""
+        os.makedirs("results", exist_ok=True)
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        for stored_name in ("B3_static", "B4_dynamic", "B5_payloads", "B7_dynamic_attacks", "B8_dynamic"):
+            with open(f"results/{target_name}_{stored_name}.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+        api.run_history._snapshot_new_result_files(run_id, target_name)
+
+        def _fake_b9(*a, **k):
+            # Simulates the user clicking Discard while B9 was still running.
+            api.pipeline_state["discard_requested"] = True
+            with open(f"results/{target_name}_B9_correlation.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete", "results": []}, f)
+
+        with patch.object(api, "correlate_results", side_effect=_fake_b9):
+            api._run_pipeline_from(5)  # index 5 == "B9" in PIPELINE_STEPS
+
+        self.assertTrue(api.pipeline_state["completed"])
+        self.assertFalse(api.pipeline_state["discard_requested"])
+        run_row = api.run_history.get_run(run_id)
+        self.assertEqual(run_row["status"], "completed")
+
+    def test_discard_wins_if_both_stop_and_discard_are_requested(self):
+        """Two independent buttons could in principle both get clicked
+        before the current block finishes - Discard is the more final of
+        the two, so it wins the race rather than leaving the outcome to
+        click order."""
+        os.makedirs("results", exist_ok=True)
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        def _fake_b3(*a, **k):
+            api.pipeline_state["stop_requested"] = True
+            api.pipeline_state["discard_requested"] = True
+            with open(f"results/{target_name}_B3_static.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
+             patch.object(api, "run_dynamic_discovery") as mock_b4:
+            api._run_pipeline_from(0)
+
+        mock_b4.assert_not_called()
+        run_row = api.run_history.get_run(run_id)
+        self.assertEqual(run_row["status"], "discarded")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import type { B4Status } from "@/lib/types";
 export type PhaseId = "b3" | "b4" | "b5" | "b6" | "b7" | "b8" | "b9";
 export type PrerequisiteId = "docker" | "repo" | "seed_data" | "llm_api" | "playwright";
 export type TabStringId = "pipeline" | "revision" | "correlacion" | "history" | "logs";
-export type RunStatusId = "running" | "completed" | "error" | "stopped";
+export type RunStatusId = "running" | "completed" | "error" | "stopped" | "discarded";
 export type EnvDotStateId = "inactive" | "preparing" | "ready" | "error";
 
 export type Strings = {
@@ -39,6 +39,11 @@ export type Strings = {
     resumeCaveat: string;
     stopAfterBlock: (phaseLabel: string) => string;
     stoppingAfterBlock: (phaseLabel: string) => string;
+    discardAfterBlock: (phaseLabel: string) => string;
+    discardingAfterBlock: (phaseLabel: string) => string;
+    discardConfirmTitle: string;
+    discardConfirmDescription: string;
+    discardConfirmAction: string;
     resetEnvironmentFresh: string;
     prepareEnvironmentFresh: string;
     naviqFreshResetHint: string;
@@ -51,6 +56,9 @@ export type Strings = {
     longRunningPhaseHint: string;
     collapseSidebarAria: string;
     expandSidebarAria: string;
+    toggleSectionAria: (heading: string, isOpen: boolean) => string;
+    prerequisitesReadyAria: string;
+    prerequisitesNotReadyAria: string;
   };
   topBar: {
     dotLabel: Record<EnvDotStateId, string>;
@@ -111,6 +119,7 @@ export type Strings = {
     jsonButtonLabel: string;
     runLabel: (id: number, mode: string) => string;
     statusLabels: Record<RunStatusId, string>;
+    allTargetsFilter: string;
     selectRunPrompt: string;
     noPastRuns: string;
     noBlockData: string;

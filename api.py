@@ -160,6 +160,7 @@ pipeline_state = {
     "logs": [],
     "run_id": None,          # blocks/run_history.py row for the current/last run
     "stop_requested": False, # set by POST /api/run/stop, read by _run_pipeline_from's loop
+    "discard_requested": False, # set by POST /api/run/discard, read by _run_pipeline_from's loop
 }
 
 # Estado del reset de entorno (Docker/Mattermost) — separado de pipeline_state
@@ -294,6 +295,7 @@ def _fail_pipeline(e):
     pipeline_state["running"] = False
     pipeline_state["current_block"] = None
     pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
     log(f"ERROR in pipeline: {e}")
     run_history.finish_run(pipeline_state["run_id"], "error")
 
@@ -348,6 +350,28 @@ def _run_pipeline_from(start_index):
                 # happen: _run_from_b7 and the "completed" branch below both
                 # reset stop_requested = False, so nothing is left over.
                 is_last_step = state_id == PIPELINE_STEPS[-1][0]
+
+                # Discard is the more final of the two possible user
+                # actions, so it's checked first and wins any race with a
+                # pending stop_requested (both buttons are independently
+                # clickable). Unlike Stop, Discard doesn't need to protect
+                # the B5->B6 pause below: a discarded run is never
+                # resumable — "discarded" falls outside _find_resume_point's
+                # ("error", "stopped") check by construction — so there is
+                # no resume-into-B7 path to guard against, and discarding
+                # during B5 can finalize the instant B5 finishes, skipping
+                # the pause entirely. The last-step exemption still applies
+                # for the same reason it does for Stop below: nothing is
+                # left to abandon once B9 has actually finished.
+                if not is_last_step and pipeline_state["discard_requested"]:
+                    pipeline_state["current_block"] = None
+                    pipeline_state["running"] = False
+                    pipeline_state["stop_requested"] = False
+                    pipeline_state["discard_requested"] = False
+                    log(f"== Pipeline discarded after {state_id} (user request) ==")
+                    run_history.finish_run(pipeline_state["run_id"], "discarded")
+                    return
+
                 if not is_last_step and state_id != "B5" and pipeline_state["stop_requested"]:
                     pipeline_state["current_block"] = None
                     pipeline_state["running"] = False
@@ -368,6 +392,7 @@ def _run_pipeline_from(start_index):
             pipeline_state["running"] = False
             pipeline_state["completed"] = True
             pipeline_state["stop_requested"] = False
+            pipeline_state["discard_requested"] = False
             log("OK Pipeline completed. Results available.")
             run_history.finish_run(pipeline_state["run_id"], "completed")
 
@@ -383,6 +408,7 @@ def _run_fresh_pipeline(mode="unknown"):
     pipeline_state["logs"] = []
     pipeline_state["waiting_for_human"] = False
     pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
     pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
 
     # Safety net, not the primary path (that's naviq_fresh_reset() via
@@ -414,6 +440,7 @@ def _run_from_b7():
     pipeline_state["waiting_for_human"] = False
     pipeline_state["error"] = None
     pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
     _run_pipeline_from(3)
 
 
@@ -446,6 +473,7 @@ def _run_resumed_pipeline(run_id, start_index):
     pipeline_state["error"] = None
     pipeline_state["waiting_for_human"] = False
     pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
     pipeline_state["run_id"] = run_id
     _run_pipeline_from(start_index)
 
@@ -666,6 +694,23 @@ def stop_pipeline():
     return {"stopping_after": pipeline_state["current_block"]}
 
 
+@protected.post("/api/run/discard")
+def discard_pipeline():
+    """Requests that the currently running pipeline be abandoned once its
+    current block finishes — same block-boundary reasoning as Stop (a block
+    already in flight, e.g. a live Playwright session or an in-flight LLM
+    call, must be allowed to finish rather than interrupted mid-way, for
+    data integrity). Unlike Stop, the resulting run is never offered for
+    resume — status "discarded" falls outside _find_resume_point's
+    ("error", "stopped") check by construction. Rejects if nothing is
+    actually running, same as Stop."""
+    if not pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is not running")
+
+    pipeline_state["discard_requested"] = True
+    return {"discarding_after": pipeline_state["current_block"]}
+
+
 @protected.get("/api/status")
 def get_status():
     """Estado actual del pipeline — React hace polling cada 2s a este endpoint."""
@@ -690,6 +735,7 @@ def get_status():
         "error": pipeline_state["error"],
         "resumable_from": resume_point[2] if resume_point is not None else None,
         "stop_requested": pipeline_state["stop_requested"],
+        "discard_requested": pipeline_state["discard_requested"],
     }
 
 
@@ -877,6 +923,7 @@ def reset_pipeline():
         "error": None,
         "logs": [],
         "stop_requested": False,
+        "discard_requested": False,
     })
     return {"message": "State reset"}
 
