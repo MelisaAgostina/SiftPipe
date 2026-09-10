@@ -326,6 +326,11 @@ El flujo “real” que el código soporta hoy es el siguiente:
 6. Consultar corridas pasadas
    - `GET /api/runs` devuelve la lista de corridas persistidas (más reciente primero); `GET /api/runs/{id}` devuelve el snapshot completo de una corrida puntual, misma forma que `GET /api/results` pero histórica. En el frontend, la pestaña "Past Runs" hace esto mismo.
 
+7. Reanudar una corrida que se cayó a mitad de camino
+   - Desde 2026-09, [api.py](api.py) reemplazó las dos funciones de orquestación separadas que tenía antes (`run_pipeline_until_b6`/`run_pipeline_from_b7`) por una única lista ordenada `PIPELINE_STEPS` (B3→B4→B5→B7→B8→B9) más un driver compartido `_run_pipeline_from(start_index)`, que tanto una corrida nueva como una reanudada recorren de la misma forma. Cada bloque se snapshotea en [blocks/run_history.py](blocks/run_history.py) (`_snapshot_new_result_files`) apenas termina, no solo al final — eso es lo que permite ubicar exactamente dónde se cortó una corrida.
+   - Si B3-B9 tira una excepción, la corrida activa del target queda marcada `status="error"` y `resumable=1` en el historial. `GET /api/status` expone esto como `resumable_from` (el bloque bare-id — `"B3".."B9"` — del primer paso que nunca llegó a completarse), y `POST /api/run/resume` (sin body) dispara ese resto de la corrida en background desde ese punto, reusando el mismo `run_id` en vez de arrancar uno nuevo — así no se vuelve a pagar B3/B5 (las llamadas a Anthropic) si el corte fue más adelante, en B7-B9. En el frontend, el botón "Ejecutar análisis" del Sidebar cambia solo a "Reanudar desde {fase}" cuando `resumable_from` no es null, con una advertencia corta de no usarlo si se reinició el entorno a mano desde la falla.
+   - Un Fresh Reset exitoso llama a `run_history.dismiss_resume(target)`, que apaga `resumable` en la corrida errónea más reciente de ese target — elegir "empezar de cero" es lo que apaga la reanudación, no una heurística de antigüedad. Restore mode no la toca.
+
 ## 7. Próximos pasos técnicos inmediatos
 
 1. ✅ Corregir el runtime de B8 y alinear los nombres de archivos entre B7, B8 y la API. — Hecho (ver [fixes.txt](fixes.txt) y sección B8 arriba).

@@ -96,12 +96,14 @@ top of the current structure.*
       with no locking. Low real risk given the GIL and the
       `pipeline_state["running"]` guards, but it's unsynchronized shared
       state crossing a module boundary. Resolved by adding
-      `api.pipeline_results_lock` (a `threading.Lock`), held by both
-      background entry points (`run_pipeline_until_b6`,
-      `run_pipeline_from_b7`) for their full run and by `/api/validate`'s
-      `pipeline_results["B6"]` write — makes the no-concurrent-access
-      invariant self-enforcing instead of dependent on the state-guard
-      checks staying correct forever.
+      `api.pipeline_results_lock` (a `threading.Lock`), held by
+      `_run_pipeline_from` — the shared `PIPELINE_STEPS` driver behind all
+      three background entry points (`_run_fresh_pipeline`, `_run_from_b7`,
+      and `_run_resumed_pipeline`, added later for mid-pipeline resume) —
+      for its full run, and by `/api/validate`'s `pipeline_results["B6"]`
+      write — makes the no-concurrent-access invariant self-enforcing
+      instead of dependent on the state-guard checks staying correct
+      forever.
 - [X] **Separate `main.py`'s orchestrator-script responsibilities from the
       definitions `api.py` actually needs to import.** `main.py` constructs
       the `Anthropic` client and calls `load_dotenv()` at import time, so

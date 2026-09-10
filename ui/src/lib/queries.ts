@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   archiveRun,
   deleteRun,
+  discardPipeline,
   getActiveTarget,
   getBlockResult,
   getEnvironmentHealth,
@@ -14,8 +15,10 @@ import {
   getStatus,
   resetEnvironment,
   resetPipeline,
+  resumePipeline,
   runPipeline,
   setActiveTarget,
+  stopPipeline,
   unarchiveRun,
   validatePayloads,
 } from "./api";
@@ -120,6 +123,30 @@ export function useRunPipeline() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: runPipeline,
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.status }),
+  });
+}
+
+export function useResumePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: resumePipeline,
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.status }),
+  });
+}
+
+export function useStopPipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: stopPipeline,
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.status }),
+  });
+}
+
+export function useDiscardPipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: discardPipeline,
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.status }),
   });
 }

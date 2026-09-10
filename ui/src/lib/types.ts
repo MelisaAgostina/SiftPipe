@@ -11,6 +11,9 @@ export type PipelineStatus = {
   waiting_for_human: boolean;
   completed: boolean;
   error: string | null;
+  resumable_from: BlockId | null;
+  stop_requested: boolean;
+  discard_requested: boolean;
 };
 
 export type LogsResponse = { logs: string[] };
@@ -174,7 +177,7 @@ export type B9Result = {
   judgments: Record<string, B9Judgment>;
 };
 
-export type RunStatus = "running" | "completed" | "error";
+export type RunStatus = "running" | "completed" | "error" | "stopped" | "discarded";
 export type RunSummary = {
   id: number;
   started_at: string;

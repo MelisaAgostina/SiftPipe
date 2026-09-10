@@ -16,6 +16,7 @@ env/
 CLAUDE.local.md
 
 docs_backup/
+db_backups/
 
 # Logs y resultados (opcional, si los generas automáticamente)
 results/

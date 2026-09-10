@@ -171,3 +171,19 @@
 .tour-hint-ring {
   animation: tour-hint-ring 5s ease-out infinite;
 }
+
+/* Active-phase progress bar (Sidebar.tsx) - blocks (B3-B9) don't report a
+   numeric completion %, so this slides indefinitely as an honest "still
+   working" signal rather than faking a percentage. */
+@keyframes phase-progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+.phase-progress-indeterminate {
+  animation: phase-progress-indeterminate 1.2s ease-in-out infinite;
+}

@@ -19,6 +19,23 @@ from blocks.targets import DEFAULT_TARGET
 
 DB_PATH = os.getenv("SIFTPIPE_HISTORY_DB", "siftpipe_history.db")
 
+# _snapshot_new_result_files (below) compares a result file's mtime against
+# the run's own started_at to reject leftover files from an earlier run —
+# see that function's docstring. started_at is captured via Python's
+# datetime.now() at start_run() time; a file's mtime comes back from the OS
+# filesystem layer instead, a genuinely different clock source. Measured
+# empirically on this project's own dev machine (Windows/NTFS): a file
+# written mere milliseconds after start_run() can occasionally report an
+# mtime up to ~40ms *earlier* than started_at, purely from that source
+# mismatch — reproducible under load, not a logic bug (confirmed by
+# comparing against time.time() directly in isolation, where no such gap
+# appears). A real leftover file from an actually-separate earlier run is
+# never this close in time — every block does a real network call (LLM or
+# Playwright) that takes seconds at minimum — so this tolerance can be many
+# orders of magnitude larger than the observed skew without weakening the
+# check's actual purpose at all.
+_MTIME_SKEW_TOLERANCE = 2.0  # seconds
+
 
 def _connect():
     conn = sqlite3.connect(DB_PATH)
@@ -52,6 +69,14 @@ def _connect():
     # (not archived), same as a freshly inserted row would.
     try:
         conn.execute("ALTER TABLE runs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
+    # Same pattern for `resumable` — every pre-existing run defaults to 1
+    # (still resumable), since dismiss_resume() is the only thing that ever
+    # turns it off and no run predating this column could have been through it.
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN resumable INTEGER NOT NULL DEFAULT 1")
     except sqlite3.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise
@@ -100,22 +125,69 @@ def _b9_summary(results_dir, prefix=""):
     return total, confirmed
 
 
+def _snapshot_new_result_files(run_id, target, results_dir="results"):
+    """
+    Inserts one run_blocks row per result file for `target` that isn't
+    already snapshotted for `run_id`. Safe to call more than once for the
+    same run_id (e.g. once per completed block, plus once more at
+    finish_run) — a file already present is skipped, never re-inserted.
+
+    This is finish_run()'s original glob-and-insert body, factored out so
+    it can run incrementally (right after each block completes) instead of
+    only once at the very end. `target` falsy (None or "") falls back to
+    globbing every *.json file, matching a pre-target-column run's original
+    semantics exactly.
+
+    Only considers files whose mtime is at or after this run's own
+    started_at (within _MTIME_SKEW_TOLERANCE — see its own comment) —
+    results/ is wiped by Fresh Reset but NOT between ordinary runs, so a
+    target's results/ can hold complete files left over from an earlier
+    successful run. Without this check, a later run for the same target
+    that crashes partway through would have _find_resume_point see those
+    old files as "already done" for the new run and skip blocks it never
+    actually executed, resuming with stale, unrelated data.
+    """
+    conn = _connect()
+    try:
+        run_row = conn.execute("SELECT started_at FROM runs WHERE id = ?", (run_id,)).fetchone()
+        if run_row is None:
+            return
+        started_at_epoch = datetime.fromisoformat(run_row[0]).timestamp()
+
+        already = {
+            row[0]
+            for row in conn.execute(
+                "SELECT block_name FROM run_blocks WHERE run_id = ?", (run_id,)
+            ).fetchall()
+        }
+        prefix = f"{target}_" if target else ""
+        pattern = f"{prefix}*.json" if prefix else "*.json"
+        for path in sorted(Path(results_dir).glob(pattern)):
+            if path.stat().st_mtime < started_at_epoch - _MTIME_SKEW_TOLERANCE:
+                continue
+            block_name = path.stem[len(prefix):] if prefix else path.stem
+            if block_name in already:
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            conn.execute(
+                "INSERT INTO run_blocks (run_id, block_name, data) VALUES (?, ?, ?)",
+                (run_id, block_name, json.dumps(data)),
+            )
+            already.add(block_name)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def finish_run(run_id, status, results_dir="results"):
     """
-    Call once a run reaches a terminal state (completed or error). Snapshots
-    this run's own block output files against run_id, so a past run can be
-    viewed later even after the next run overwrites those files.
-
-    Block files on disk are target-scoped (results/{target}_{block}.json —
-    see result_path() in blocks/targets.py), so this looks up the run's own
-    target from the runs table and only globs/snapshots that target's files,
-    storing them under their canonical block_name (prefix stripped) so
-    get_run()/list_runs() consumers don't need to know about the on-disk
-    naming convention. Real bug this fixes: two targets run back to back
-    used to both get glob("*.json")'d into the same run_id's snapshot,
-    silently mixing one target's block data into the other's Past Run.
-    A run predating the `target` column (target is NULL) falls back to the
-    old glob-everything behavior, matching its original semantics exactly.
+    Call once a run reaches a terminal state (completed or error). Updates
+    the run's own row, then snapshots any result files not already captured
+    by an earlier incremental _snapshot_new_result_files call — see that
+    function's docstring for why target-scoping and idempotency matter.
     """
     conn = _connect()
     try:
@@ -134,19 +206,61 @@ def finish_run(run_id, status, results_dir="results"):
             """,
             (now, status, total_findings, confirmed_findings, run_id),
         )
+        conn.commit()
+    finally:
+        conn.close()
 
-        pattern = f"{prefix}*.json" if prefix else "*.json"
-        for path in sorted(Path(results_dir).glob(pattern)):
-            block_name = path.stem[len(prefix):] if prefix else path.stem
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
-            conn.execute(
-                "INSERT INTO run_blocks (run_id, block_name, data) VALUES (?, ?, ?)",
-                (run_id, block_name, json.dumps(data)),
-            )
+    _snapshot_new_result_files(run_id, target, results_dir)
 
+
+def get_latest_run(target):
+    """Most recent run for `target`, or None if it has none. Same field
+    shape as one list_runs() entry, plus `resumable`."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, started_at, finished_at, mode, target, status,
+                   total_findings, confirmed_findings, archived, resumable
+            FROM runs WHERE target = ? ORDER BY id DESC LIMIT 1
+            """,
+            (target,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "started_at": row[1],
+        "finished_at": row[2],
+        "mode": row[3],
+        "target": row[4],
+        "status": row[5],
+        "total_findings": row[6],
+        "confirmed_findings": row[7],
+        "archived": bool(row[8]),
+        "resumable": bool(row[9]),
+    }
+
+
+def dismiss_resume(target):
+    """Turns off resumability for the most recent run of `target`, if it's
+    errored or stopped. A no-op if the latest run isn't in one of those
+    states, or there is none — called when Fresh Reset means "start over,"
+    not "resume." A user-stopped run is exactly as resumable as a crashed
+    one (see docs/superpowers/specs/2026-09-09-pipeline-stop-design.md) so
+    it's dismissed the same way."""
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            UPDATE runs SET resumable = 0
+            WHERE id = (SELECT id FROM runs WHERE target = ? ORDER BY id DESC LIMIT 1)
+              AND status IN ('error', 'stopped')
+            """,
+            (target,),
+        )
         conn.commit()
     finally:
         conn.close()
