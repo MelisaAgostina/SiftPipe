@@ -43,6 +43,7 @@ class TestApiRoutes(unittest.TestCase):
         api.pipeline_state.update({
             "running": False, "current_block": None, "waiting_for_human": False,
             "completed": False, "error": None, "logs": [], "run_id": None,
+            "stop_requested": False,
         })
         api.env_state.update({"running": False, "completed": False, "error": None, "logs": []})
         api.pipeline_results.clear()
@@ -535,6 +536,78 @@ class TestApiRoutes(unittest.TestCase):
         stopped_run = api.run_history.get_run(run_id)
         self.assertEqual(stopped_run["status"], "stopped")
         self.assertEqual(set(stopped_run["blocks"].keys()), {"B3_static"})
+
+    def test_stop_during_b5_is_absorbed_by_the_b6_pause_not_recorded_as_stopped(self):
+        """Critical fix: B5 (index 2) sits directly before the B6
+        human-review pause in PIPELINE_STEPS, so a stop request that lands
+        while B5 is still running must not race the pause - if it did,
+        _find_resume_point would see B7 as the next missing step and resume
+        would run execute_attacks() with nobody ever having reviewed the
+        payloads B5 just generated. The B6 pause must always win: the run
+        parks in waiting_for_human exactly like a normal B5 completion, the
+        DB row is never marked "stopped", and B7 never runs."""
+        os.makedirs("results", exist_ok=True)
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        def _fake_b3(*a, **k):
+            with open(f"results/{target_name}_B3_static.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        def _fake_b4(*a, **k):
+            with open(f"results/{target_name}_B4_dynamic.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+
+        def _fake_b5(*a, **k):
+            # Simulates the user clicking Stop while B5 was still running.
+            api.pipeline_state["stop_requested"] = True
+            with open(f"results/{target_name}_B5_payloads.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete", "payloads": []}, f)
+
+        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
+             patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4), \
+             patch.object(api, "generate_payloads", side_effect=_fake_b5), \
+             patch.object(api, "execute_attacks") as mock_b7:
+            api._run_pipeline_from(0)
+
+        mock_b7.assert_not_called()
+        self.assertTrue(api.pipeline_state["waiting_for_human"])
+        self.assertEqual(api.pipeline_state["current_block"], "B6")
+        run_row = api.run_history.get_run(run_id)
+        self.assertNotEqual(run_row["status"], "stopped")
+
+    def test_stop_during_b9_still_reaches_completed_not_stopped(self):
+        """Same absorption rule as the B5/B6 case, but for the other edge:
+        B9 is the last PIPELINE_STEPS entry, so a stop requested while B9 is
+        running must not downgrade an otherwise fully-completed run to
+        "stopped" - it must reach status="completed" with stop_requested
+        cleared."""
+        os.makedirs("results", exist_ok=True)
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        for stored_name in ("B3_static", "B4_dynamic", "B5_payloads", "B7_dynamic_attacks", "B8_dynamic"):
+            with open(f"results/{target_name}_{stored_name}.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete"}, f)
+        api.run_history._snapshot_new_result_files(run_id, target_name)
+
+        def _fake_b9(*a, **k):
+            # Simulates the user clicking Stop while B9 was still running.
+            api.pipeline_state["stop_requested"] = True
+            with open(f"results/{target_name}_B9_correlation.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete", "results": []}, f)
+
+        with patch.object(api, "correlate_results", side_effect=_fake_b9):
+            api._run_pipeline_from(5)  # index 5 == "B9" in PIPELINE_STEPS
+
+        self.assertTrue(api.pipeline_state["completed"])
+        self.assertFalse(api.pipeline_state["stop_requested"])
+        run_row = api.run_history.get_run(run_id)
+        self.assertEqual(run_row["status"], "completed")
 
     def test_stop_then_resume_reaches_actual_completion(self):
         """Mirrors test_crash_during_b8_then_resume_reaches_actual_completion,

@@ -293,6 +293,7 @@ def _fail_pipeline(e):
     pipeline_state["error"] = str(e)
     pipeline_state["running"] = False
     pipeline_state["current_block"] = None
+    pipeline_state["stop_requested"] = False
     log(f"ERROR in pipeline: {e}")
     run_history.finish_run(pipeline_state["run_id"], "error")
 
@@ -335,7 +336,19 @@ def _run_pipeline_from(start_index):
                 run_history._snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
                 log(f"OK {state_id} completed")
 
-                if pipeline_state["stop_requested"]:
+                # The B5->B6 human-review pause and the final B9->completed
+                # transition both must always win over a pending stop
+                # request - stopping mid-B5 must not let resume silently
+                # skip the B6 gate (a human never reviewed the payloads B5
+                # just generated), and stopping on the very last step must
+                # not downgrade an otherwise fully-completed run to
+                # "stopped" (see docs/superpowers/specs/2026-09-09-pipeline-
+                # stop-design.md). In both cases the pending stop is simply
+                # absorbed by the pause/completion that was already about to
+                # happen: _run_from_b7 and the "completed" branch below both
+                # reset stop_requested = False, so nothing is left over.
+                is_last_step = state_id == PIPELINE_STEPS[-1][0]
+                if not is_last_step and state_id != "B5" and pipeline_state["stop_requested"]:
                     pipeline_state["current_block"] = None
                     pipeline_state["running"] = False
                     pipeline_state["stop_requested"] = False
@@ -354,6 +367,7 @@ def _run_pipeline_from(start_index):
             pipeline_state["current_block"] = None
             pipeline_state["running"] = False
             pipeline_state["completed"] = True
+            pipeline_state["stop_requested"] = False
             log("OK Pipeline completed. Results available.")
             run_history.finish_run(pipeline_state["run_id"], "completed")
 
@@ -862,6 +876,7 @@ def reset_pipeline():
         "completed": False,
         "error": None,
         "logs": [],
+        "stop_requested": False,
     })
     return {"message": "State reset"}
 

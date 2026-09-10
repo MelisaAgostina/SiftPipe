@@ -70,6 +70,7 @@ const STATUS_TONE: Record<RunSummary["status"], string> = {
   completed: "text-primary",
   error: "text-destructive",
   running: "text-[var(--status-form)]",
+  stopped: "text-muted-foreground",
 };
 
 // Display labels for the same closed 2-profile set TopBar.tsx's picker

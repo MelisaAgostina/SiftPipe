@@ -142,6 +142,7 @@ export const en: Strings = {
       running: "RUNNING",
       completed: "COMPLETED",
       error: "ERROR",
+      stopped: "STOPPED",
     },
     selectRunPrompt: "Select a run to see its results.",
     noPastRuns:

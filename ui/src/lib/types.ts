@@ -176,7 +176,7 @@ export type B9Result = {
   judgments: Record<string, B9Judgment>;
 };
 
-export type RunStatus = "running" | "completed" | "error";
+export type RunStatus = "running" | "completed" | "error" | "stopped";
 export type RunSummary = {
   id: number;
   started_at: string;

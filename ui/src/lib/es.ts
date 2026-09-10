@@ -145,6 +145,7 @@ export const es: Strings = {
       running: "EN EJECUCIÓN",
       completed: "COMPLETADA",
       error: "ERROR",
+      stopped: "DETENIDA",
     },
     selectRunPrompt: "Selecciona una ejecución para ver sus resultados.",
     noPastRuns:

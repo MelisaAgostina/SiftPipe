@@ -8,7 +8,7 @@ import type { B4Status } from "@/lib/types";
 export type PhaseId = "b3" | "b4" | "b5" | "b6" | "b7" | "b8" | "b9";
 export type PrerequisiteId = "docker" | "repo" | "seed_data" | "llm_api" | "playwright";
 export type TabStringId = "pipeline" | "revision" | "correlacion" | "history" | "logs";
-export type RunStatusId = "running" | "completed" | "error";
+export type RunStatusId = "running" | "completed" | "error" | "stopped";
 export type EnvDotStateId = "inactive" | "preparing" | "ready" | "error";
 
 export type Strings = {

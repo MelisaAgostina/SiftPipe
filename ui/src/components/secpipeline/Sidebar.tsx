@@ -405,7 +405,7 @@ export function Sidebar() {
           )}
           {buttonLabel()}
         </button>
-        {isRunning && (
+        {isRunning && activePhaseId && (
           <button
             onClick={() => stopMutation.mutate()}
             disabled={status?.stop_requested === true || stopMutation.isPending}
