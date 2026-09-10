@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import sys
@@ -129,7 +130,13 @@ class FakePage:
         return FakeGotoResponse(status) if status is not None else None
 
     def wait_for_selector(self, selector, timeout=None, state=None):
-        pass
+        # Mirrors real Playwright: "" isn't valid CSS and raises immediately,
+        # rather than the unconditional no-op this used to be — that
+        # permissiveness is exactly why B4/B7's old
+        # `", ".join(target.authenticated_selectors)` call (empty for any
+        # discovered target) never showed up as a failure here.
+        if selector == "":
+            raise di.PlaywrightTimeoutError('Unexpected token "" while parsing css selector ""')
 
     def fill(self, selector, value):
         pass
@@ -632,6 +639,26 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         # common case for every existing test in this class.
         result = self._run([None, None, None])
         self.assertFalse(any(f["payload_id"].startswith("link_") for f in result["findings"]))
+
+
+class TestLoginWithoutAuthenticatedSelectors(unittest.TestCase):
+    """
+    Regression test for a real bug: discover_target.py always saves
+    authenticated_selectors=[] for a discovered target (its own login check
+    is URL-based, not selector-based), and _login() used to confirm a
+    successful login via `page.wait_for_selector(", ".join(target.
+    authenticated_selectors), ...)` — joining an empty list produced an
+    invalid "" CSS selector, crashing B7's login for every discovered
+    target. _login() now uses the same URL-based check discover_target.py
+    already relies on, so it no longer touches authenticated_selectors at
+    all.
+    """
+
+    def test_login_succeeds_with_no_authenticated_selectors(self):
+        target = dataclasses.replace(di.MATTERMOST, authenticated_selectors=[])
+        page = FakePage(responses=[])
+
+        di._login(page, target)  # crashed before the fix: ", ".join([]) -> invalid "" CSS selector
 
 
 class TestBuildSelector(unittest.TestCase):

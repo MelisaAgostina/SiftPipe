@@ -4,6 +4,9 @@ import { render, screen, fireEvent } from "@testing-library/react";
 vi.mock("@/lib/queries", () => ({
   usePipelineStatus: vi.fn(),
   useRunPipeline: vi.fn(),
+  useResumePipeline: vi.fn(),
+  useStopPipeline: vi.fn(),
+  useDiscardPipeline: vi.fn(),
   useEnvironmentHealth: vi.fn(),
   useEnvironmentStatus: vi.fn(),
   useResetEnvironment: vi.fn(),
@@ -13,12 +16,15 @@ vi.mock("@/lib/queries", () => ({
 
 import {
   useActiveTarget,
+  useDiscardPipeline,
   useEnvironmentHealth,
   useEnvironmentStatus,
   useLiveRunVisible,
   usePipelineStatus,
   useResetEnvironment,
+  useResumePipeline,
   useRunPipeline,
+  useStopPipeline,
 } from "@/lib/queries";
 import { Sidebar } from "./Sidebar";
 import { en } from "@/lib/en";
@@ -26,6 +32,9 @@ import type { BlockId, PipelineStatus } from "@/lib/types";
 
 const runMutate = vi.fn();
 const resetMutate = vi.fn();
+const resumeMutate = vi.fn();
+const stopMutate = vi.fn();
+const discardMutate = vi.fn();
 
 const DEFAULT_STATUS: PipelineStatus = {
   running: false,
@@ -33,6 +42,9 @@ const DEFAULT_STATUS: PipelineStatus = {
   waiting_for_human: false,
   completed: false,
   error: null,
+  resumable_from: null,
+  stop_requested: false,
+  discard_requested: false,
 };
 
 const DEFAULT_TARGET = {
@@ -75,6 +87,18 @@ function setup(
     mutate: resetMutate,
     isPending: overrides.resetPending ?? false,
   } as never);
+  vi.mocked(useResumePipeline).mockReturnValue({
+    mutate: resumeMutate,
+    isPending: false,
+  } as never);
+  vi.mocked(useStopPipeline).mockReturnValue({
+    mutate: stopMutate,
+    isPending: false,
+  } as never);
+  vi.mocked(useDiscardPipeline).mockReturnValue({
+    mutate: discardMutate,
+    isPending: false,
+  } as never);
 
   return render(<Sidebar />);
 }
@@ -83,6 +107,9 @@ describe("Sidebar", () => {
   beforeEach(() => {
     runMutate.mockClear();
     resetMutate.mockClear();
+    resumeMutate.mockClear();
+    stopMutate.mockClear();
+    discardMutate.mockClear();
   });
 
   it("shows Run analysis and an enabled button when the target is up and idle", () => {
@@ -253,5 +280,274 @@ describe("Sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
 
     expect(screen.getByLabelText(en.sidebar.running)).toBeInTheDocument();
+  });
+
+  it("shows Resume from {block} and calls the resume mutation when resumable_from is set", () => {
+    setup({ status: { resumable_from: "B4" } });
+
+    const button = screen.getByRole("button", { name: /resume from/i });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(resumeMutate).toHaveBeenCalledTimes(1);
+    expect(runMutate).not.toHaveBeenCalled();
+  });
+
+  it("does not require a fresh reset first when a resumable run exists", () => {
+    // envStatus.completed: false makes freshResetDone false, so with the
+    // default envMode ("fresh") freshResetPending would normally be true
+    // and disable the button (see the "shows Prepare environment first"-
+    // style tests above) - setting resumable_from must bypass that,
+    // since resuming is explicitly not "start over." Without the bypass
+    // in Sidebar.tsx, this test fails with the button disabled.
+    setup({
+      status: { resumable_from: "B4" },
+      envHealth: { target_up: true, target: "mattermost" },
+      envStatus: { running: false, completed: false, error: null },
+    });
+
+    const button = screen.getByRole("button", { name: /resume from/i });
+    expect(button).toBeEnabled();
+  });
+
+  it("shows Prepare environment first instead of Resume from when the target is down, even with a resumable run", () => {
+    // A resumable run whose target is currently down needs the actionable
+    // message telling the researcher what to do next, not a disabled
+    // "Resume from X" with no explanation of why it's disabled.
+    setup({
+      status: { resumable_from: "B4" },
+      envHealth: { target_up: false, target: "mattermost" },
+    });
+
+    expect(screen.getByRole("button", { name: /prepare environment first/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /resume from/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the resume caveat only when a resumable run exists", () => {
+    setup({ status: { resumable_from: "B4" } });
+    expect(
+      screen.getByText(/only resume if you haven't reset the environment/i),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the resume caveat when there is nothing to resume", () => {
+    setup();
+    expect(
+      screen.queryByText(/only resume if you haven't reset the environment/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a Stop after {block} button while the pipeline is running", () => {
+    setup({ status: { running: true, current_block: "B4" } });
+
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.stopAfterBlock(en.phaseLabels.b4), "i"),
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the stop button when the pipeline is idle", () => {
+    setup();
+
+    expect(screen.queryByRole("button", { name: /stop after/i })).not.toBeInTheDocument();
+  });
+
+  it("does not show the stop button when running but no block is active yet", () => {
+    setup({ status: { running: true, current_block: null } });
+
+    expect(screen.queryByRole("button", { name: /stop after/i })).not.toBeInTheDocument();
+  });
+
+  it("does not show the stop button while only waiting for human review", () => {
+    setup({ status: { waiting_for_human: true } });
+
+    expect(screen.queryByRole("button", { name: /stop after/i })).not.toBeInTheDocument();
+  });
+
+  it("clicking Stop after {block} calls the stop mutation", () => {
+    setup({ status: { running: true, current_block: "B7" } });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.stopAfterBlock(en.phaseLabels.b7), "i"),
+      }),
+    );
+
+    expect(stopMutate).toHaveBeenCalled();
+  });
+
+  it("shows Stopping after {block} and disables the button once stop_requested is true", () => {
+    setup({ status: { running: true, current_block: "B7", stop_requested: true } });
+
+    const button = screen.getByRole("button", {
+      name: new RegExp(en.sidebar.stoppingAfterBlock(en.phaseLabels.b7), "i"),
+    });
+    expect(button).toBeDisabled();
+  });
+
+  it("shows a Discard after {block} button while the pipeline is running", () => {
+    setup({ status: { running: true, current_block: "B4" } });
+
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.discardAfterBlock(en.phaseLabels.b4), "i"),
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the discard button when the pipeline is idle", () => {
+    setup();
+
+    expect(screen.queryByRole("button", { name: /discard after/i })).not.toBeInTheDocument();
+  });
+
+  it("does not show the discard button when running but no block is active yet", () => {
+    setup({ status: { running: true, current_block: null } });
+
+    expect(screen.queryByRole("button", { name: /discard after/i })).not.toBeInTheDocument();
+  });
+
+  it("does not show the discard button while only waiting for human review", () => {
+    setup({ status: { waiting_for_human: true } });
+
+    expect(screen.queryByRole("button", { name: /discard after/i })).not.toBeInTheDocument();
+  });
+
+  it("clicking Discard after {block} opens a confirmation dialog without calling the mutation yet", () => {
+    setup({ status: { running: true, current_block: "B7" } });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.discardAfterBlock(en.phaseLabels.b7), "i"),
+      }),
+    );
+
+    expect(screen.getByText(en.sidebar.discardConfirmTitle)).toBeInTheDocument();
+    expect(discardMutate).not.toHaveBeenCalled();
+  });
+
+  it("confirming the discard dialog calls the discard mutation", () => {
+    setup({ status: { running: true, current_block: "B7" } });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.discardAfterBlock(en.phaseLabels.b7), "i"),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.sidebar.discardConfirmAction }));
+
+    expect(discardMutate).toHaveBeenCalled();
+  });
+
+  it("cancelling the discard dialog does not call the discard mutation", () => {
+    setup({ status: { running: true, current_block: "B7" } });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.discardAfterBlock(en.phaseLabels.b7), "i"),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.common.cancel }));
+
+    expect(discardMutate).not.toHaveBeenCalled();
+  });
+
+  it("shows Discarding after {block} and disables the button once discard_requested is true", () => {
+    setup({ status: { running: true, current_block: "B7", discard_requested: true } });
+
+    const button = screen.getByRole("button", {
+      name: new RegExp(en.sidebar.discardingAfterBlock(en.phaseLabels.b7), "i"),
+    });
+    expect(button).toBeDisabled();
+  });
+
+  it("collapses the Prerequisites section when its toggle is clicked", () => {
+    setup();
+    expect(screen.getByText(en.prerequisiteLabels.repo)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: en.sidebar.toggleSectionAria(en.sidebar.prerequisitesHeading, true),
+      }),
+    );
+
+    expect(screen.queryByText(en.prerequisiteLabels.repo)).not.toBeInTheDocument();
+  });
+
+  it("collapses the Analysis phases section when its toggle is clicked", () => {
+    setup();
+    expect(screen.getByText(en.phaseLabels.b3)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: en.sidebar.toggleSectionAria(en.sidebar.analysisPhasesHeading, true),
+      }),
+    );
+
+    expect(screen.queryByText(en.phaseLabels.b3)).not.toBeInTheDocument();
+  });
+
+  it("shows an indeterminate progress bar under the active phase only", () => {
+    setup({ status: { running: true, current_block: "B5" } });
+
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+  });
+
+  it("does not show a progress bar when no phase is active", () => {
+    setup();
+
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("shows a prerequisites-ready indicator on the collapsed rail when the target is up", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByLabelText(en.sidebar.prerequisitesReadyAria)).toBeInTheDocument();
+  });
+
+  it("shows a prerequisites-not-ready indicator on the collapsed rail when the target is down", () => {
+    setup({ envHealth: { target_up: false, target: "mattermost" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByLabelText(en.sidebar.prerequisitesNotReadyAria)).toBeInTheDocument();
+  });
+
+  it("shows an FR env-mode badge on the collapsed rail in fresh mode by default", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByText("FR")).toBeInTheDocument();
+  });
+
+  it("shows an RE env-mode badge on the collapsed rail after switching to restore mode", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: /restore existing/i }));
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(screen.getByText("RE")).toBeInTheDocument();
+  });
+
+  it("marks phase state on the collapsed rail's phase stepper", () => {
+    const { container } = setup({ status: { running: true, current_block: "B5" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+
+    expect(container.querySelector('[data-phase-id="b3"]')).toHaveAttribute(
+      "data-phase-state",
+      "done",
+    );
+    expect(container.querySelector('[data-phase-id="b5"]')).toHaveAttribute(
+      "data-phase-state",
+      "active",
+    );
+    expect(container.querySelector('[data-phase-id="b9"]')).toHaveAttribute(
+      "data-phase-state",
+      "pending",
+    );
   });
 });

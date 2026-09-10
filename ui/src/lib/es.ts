@@ -45,6 +45,16 @@ export const es: Strings = {
     prepareEnvironmentFirst: "Preparar entorno primero",
     resetRequiredFirst: "Reiniciar entorno primero",
     runAnalysis: "Ejecutar análisis",
+    resumeFrom: (phaseLabel) => `Reanudar desde ${phaseLabel}`,
+    resumeCaveat: "Solo reanudá si no reiniciaste el entorno desde la falla.",
+    stopAfterBlock: (phaseLabel) => `Detener después de ${phaseLabel}`,
+    stoppingAfterBlock: (phaseLabel) => `Deteniendo después de ${phaseLabel}...`,
+    discardAfterBlock: (phaseLabel) => `Descartar después de ${phaseLabel}`,
+    discardingAfterBlock: (phaseLabel) => `Descartando después de ${phaseLabel}...`,
+    discardConfirmTitle: "¿Descartar esta ejecución?",
+    discardConfirmDescription:
+      "El paso actual terminará primero. Una vez descartada, esta ejecución no se puede reanudar.",
+    discardConfirmAction: "Descartar",
     resetEnvironmentFresh: "Reiniciar entorno (limpio)",
     prepareEnvironmentFresh: "Preparar entorno (limpio)",
     naviqFreshResetHint:
@@ -62,6 +72,10 @@ export const es: Strings = {
     longRunningPhaseHint: "Esto puede tardar varios minutos",
     collapseSidebarAria: "Contraer barra lateral",
     expandSidebarAria: "Expandir barra lateral",
+    toggleSectionAria: (heading, isOpen) =>
+      `${isOpen ? "Contraer" : "Expandir"} sección ${heading}`,
+    prerequisitesReadyAria: "Requisitos previos listos",
+    prerequisitesNotReadyAria: "Requisitos previos no listos",
   },
   topBar: {
     dotLabel: {
@@ -141,7 +155,10 @@ export const es: Strings = {
       running: "EN EJECUCIÓN",
       completed: "COMPLETADA",
       error: "ERROR",
+      stopped: "DETENIDA",
+      discarded: "DESCARTADA",
     },
+    allTargetsFilter: "Todos",
     selectRunPrompt: "Selecciona una ejecución para ver sus resultados.",
     noPastRuns:
       "Todavía no hay ejecuciones anteriores — una vez que se complete un pipeline completo, aparecerá aquí para revisarlo más tarde.",

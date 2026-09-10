@@ -3,6 +3,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -300,6 +301,122 @@ class TestRunHistory(unittest.TestCase):
 
         self.assertEqual(detail["blocks"]["B3_static"]["marker"], "naviq-static")
         self.assertNotIn("B7_dynamic_attacks", detail["blocks"])
+
+    def test_snapshot_new_result_files_is_idempotent_across_repeated_calls(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "findings": []}, f)
+
+        run_history._snapshot_new_result_files(run_id, "mattermost")
+        with open("results/mattermost_B4_dynamic.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        run_history._snapshot_new_result_files(run_id, "mattermost")
+        # Calling again with no new files must not duplicate B3/B4's rows.
+        run_history._snapshot_new_result_files(run_id, "mattermost")
+
+        # Verify via the API (deduplicated blocks).
+        detail = run_history.get_run(run_id)
+        self.assertEqual(sorted(detail["blocks"].keys()), ["B3_static", "B4_dynamic"])
+
+        # Verify via the raw database that exactly 2 rows exist (not 4 or 6 from duplicates).
+        conn = sqlite3.connect(run_history.DB_PATH)
+        try:
+            row_count = conn.execute(
+                "SELECT COUNT(*) FROM run_blocks WHERE run_id = ?", (run_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(row_count, 2)
+
+    def test_finish_run_still_snapshots_everything_in_one_call(self):
+        # Behavior-preservation check: finish_run alone (no prior incremental
+        # calls) must still produce the exact same result as before this
+        # refactor.
+        run_id = run_history.start_run(mode="fresh")
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "findings": []}, f)
+        with open("results/mattermost_B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "findings": [{"payload_id": "1_1"}]}, f)
+
+        run_history.finish_run(run_id, "completed")
+        detail = run_history.get_run(run_id)
+
+        self.assertIn("B3_static", detail["blocks"])
+        self.assertIn("B7_dynamic_attacks", detail["blocks"])
+        self.assertEqual(detail["blocks"]["B7_dynamic_attacks"]["findings"][0]["payload_id"], "1_1")
+
+    def test_new_run_defaults_to_resumable(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        run_history.finish_run(run_id, "error")
+
+        latest = run_history.get_latest_run("mattermost")
+        self.assertEqual(latest["id"], run_id)
+        self.assertTrue(latest["resumable"])
+
+    def test_get_latest_run_returns_none_for_unknown_target(self):
+        self.assertIsNone(run_history.get_latest_run("nonexistent"))
+
+    def test_get_latest_run_picks_the_newest_run_for_that_target(self):
+        run_history.start_run(mode="fresh", target="mattermost")
+        second = run_history.start_run(mode="restore", target="mattermost")
+        run_history.start_run(mode="fresh", target="naviq")
+
+        self.assertEqual(run_history.get_latest_run("mattermost")["id"], second)
+
+    def test_dismiss_resume_clears_resumable_on_the_latest_errored_run(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        run_history.finish_run(run_id, "error")
+
+        run_history.dismiss_resume("mattermost")
+
+        self.assertFalse(run_history.get_latest_run("mattermost")["resumable"])
+
+    def test_dismiss_resume_is_a_no_op_when_the_latest_run_is_not_errored(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        run_history.finish_run(run_id, "completed")
+
+        run_history.dismiss_resume("mattermost")
+
+        self.assertTrue(run_history.get_latest_run("mattermost")["resumable"])
+
+    def test_dismiss_resume_is_a_no_op_for_a_target_with_no_runs(self):
+        run_history.dismiss_resume("nonexistent")  # must not raise
+
+    def test_dismiss_resume_clears_resumable_on_the_latest_stopped_run(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        run_history.finish_run(run_id, "stopped")
+
+        run_history.dismiss_resume("mattermost")
+
+        self.assertFalse(run_history.get_latest_run("mattermost")["resumable"])
+
+    def test_snapshot_ignores_files_older_than_the_run(self):
+        # Simulate a leftover file from an earlier run, backdated so its
+        # mtime clearly predates start_run() below (avoids flakiness from
+        # both happening within the same clock tick).
+        with open("results/mattermost_B9_correlation.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+        old_time = time.time() - 3600
+        os.utime("results/mattermost_B9_correlation.json", (old_time, old_time))
+
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete", "findings": []}, f)
+
+        run_history._snapshot_new_result_files(run_id, "mattermost")
+        detail = run_history.get_run(run_id)
+
+        self.assertEqual(list(detail["blocks"].keys()), ["B3_static"])
+
+    def test_snapshot_returns_immediately_for_an_unknown_run_id(self):
+        # run_row is None (no such run) — must not raise (e.g. on
+        # datetime.fromisoformat(None)) and must not snapshot anything.
+        with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
+            json.dump({"status": "complete"}, f)
+
+        run_history._snapshot_new_result_files(9999, "mattermost")
+
+        self.assertIsNone(run_history.get_run(9999))
 
 
 if __name__ == "__main__":

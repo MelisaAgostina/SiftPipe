@@ -305,17 +305,16 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                         f"and {base}/login_page.html for inspection"
                     )
 
-                # target.authenticated_selectors is the generic replacement for
-                # Mattermost's old hardcoded wait_for_url("**/channels/**") +
-                # ".channel-header" wait — any one of them present confirms a
-                # real logged-in page, for any target. state="attached" (not
-                # the default "visible") deliberately: confirmed live against
-                # NaViQ that its own indicator (a[href='/logout/']) matches
-                # two real elements (desktop dropdown item + mobile nav item)
-                # and neither is visible without further interaction/viewport
-                # — we only need the authenticated shell to have rendered,
-                # not for this specific element to be on-screen.
-                page.wait_for_selector(", ".join(target.authenticated_selectors), timeout=15000, state="attached")
+                # Same layout-agnostic check as _still_authenticated() above and
+                # discover_target.py's own login verification: a real session
+                # redirects away from login_path regardless of what the
+                # destination page looks like, so no per-target DOM selector is
+                # needed. Replaces the old target.authenticated_selectors wait,
+                # which crashed outright for any discovered target — that field
+                # is always empty (discover_target.py never guesses it, since it
+                # already uses this same URL check for its own success test),
+                # and joining an empty list produced an invalid "" CSS selector.
+                page.wait_for_url(lambda url: target.login_path not in url, timeout=15000)
                 login_ok = True
                 print("Login exitoso.")
 
@@ -415,15 +414,26 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
 
                     try:
                         _goto_with_retry(page, url, wait_until="domcontentloaded")
-                        if not _still_authenticated(page, target):
-                            raise Exception(f"Redirected to {target.login_path} - session no longer valid")
-                        # Best-effort only, past this point: a mismatch just means this
-                        # page's layout doesn't have the usual marker (see
-                        # _still_authenticated) - not proof the page itself failed.
+                        # domcontentloaded fires once the initial HTML/JS has loaded,
+                        # not once a React SPA has actually rendered its content -
+                        # wait_for_mattermost_webapp (blocks/environment.py) already
+                        # solves this exact race for the very first page load, before
+                        # B4/B7 even start. Real gap found live 2026-09-08: it
+                        # recurs on every page visited during the crawl itself, not
+                        # just at container startup - against a Mattermost instance
+                        # healthy for 20+ minutes, town-square still measured 0
+                        # forms/0 inputs immediately after this goto, with the
+                        # message box and channel header appearing only ~0.5s later
+                        # once hydration caught up. Best-effort and non-fatal: some
+                        # views never truly go idle within the timeout (Mattermost
+                        # keeps a standing websocket open), so a page that doesn't
+                        # settle still gets scanned rather than being dropped.
                         try:
-                            page.wait_for_selector(", ".join(target.authenticated_selectors), timeout=3000, state="attached")
+                            page.wait_for_load_state("networkidle", timeout=8000)
                         except Exception:
                             pass
+                        if not _still_authenticated(page, target):
+                            raise Exception(f"Redirected to {target.login_path} - session no longer valid")
                         successful_pages.append(url)
 
                         label = urlsplit(url).path or url

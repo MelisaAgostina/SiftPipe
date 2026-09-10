@@ -159,6 +159,8 @@ pipeline_state = {
     "error": None,
     "logs": [],
     "run_id": None,          # blocks/run_history.py row for the current/last run
+    "stop_requested": False, # set by POST /api/run/stop, read by _run_pipeline_from's loop
+    "discard_requested": False, # set by POST /api/run/discard, read by _run_pipeline_from's loop
 }
 
 # Estado del reset de entorno (Docker/Mattermost) — separado de pipeline_state
@@ -175,9 +177,9 @@ env_state = {
 # directly by every block function and shared into the two background
 # threading.Threads below with no locking of its own. In practice the two
 # threads never run concurrently — pipeline_state["running"]/
-# ["waiting_for_human"] already serialize them (run_pipeline_until_b6 always
+# ["waiting_for_human"] already serialize them (_run_pipeline_from always
 # finishes, setting waiting_for_human=True, before /api/validate is allowed
-# to start run_pipeline_from_b7) — but that safety currently depends on
+# to start _run_from_b7) — but that safety currently depends on
 # those flag checks staying correct forever. This lock makes the
 # no-concurrent-access invariant self-enforcing instead: both background
 # entry points hold it for their full run, and the one synchronous request-
@@ -273,6 +275,7 @@ def run_environment_reset():
 
     try:
         dispatch_fresh_reset(ACTIVE_TARGET, log_fn=env_log, interactive=False)
+        run_history.dismiss_resume(ACTIVE_TARGET.name)
         env_state["completed"] = True
     except Exception as e:
         env_state["error"] = str(e)
@@ -282,8 +285,8 @@ def run_environment_reset():
 
 
 def _fail_pipeline(e):
-    """Shared except-block bookending for run_pipeline_until_b6 and
-    run_pipeline_from_b7 - previously each wrote out the same
+    """Shared except-block bookending for _run_fresh_pipeline and
+    _run_from_b7 - previously each wrote out the same
     pipeline_state update + log + run_history.finish_run(..., "error") in
     full a second time. Each function still needs its own try/except (a
     human-review pause between B6 and B7 splits the run across two separate
@@ -291,83 +294,188 @@ def _fail_pipeline(e):
     pipeline_state["error"] = str(e)
     pipeline_state["running"] = False
     pipeline_state["current_block"] = None
+    pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
     log(f"ERROR in pipeline: {e}")
     run_history.finish_run(pipeline_state["run_id"], "error")
 
 
-def run_pipeline_until_b6(mode="unknown"):
-    """Corre B3 → B5 y pausa esperando revisión humana."""
-    pipeline_state["running"] = True
-    pipeline_state["completed"] = False
-    pipeline_state["error"] = None
-    pipeline_state["logs"] = []
-    pipeline_state["waiting_for_human"] = False
-    pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
+# (bare id for pipeline_state/current_block, on-disk result name for
+# run_history snapshotting, the actual block call, a descriptive start
+# message for the live Logs tab). Order matters — this is the one place
+# the B3-B9 sequence is defined; PIPELINE_STEPS[i] runs before
+# PIPELINE_STEPS[i+1] and nothing else decides that anymore.
+PIPELINE_STEPS = [
+    ("B3", "B3_static", lambda: run_static_analysis(pipeline_results, ACTIVE_TARGET), "B3 - Static analysis started"),
+    ("B4", "B4_dynamic", lambda: run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"]), "B4 - Dynamic discovery started"),
+    ("B5", "B5_payloads", lambda: generate_payloads(client=client, target_profile=ACTIVE_TARGET), "B5 - Payload generation"),
+    ("B7", "B7_dynamic_attacks", lambda: execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"]), "B7 - Attack execution"),
+    ("B8", "B8_dynamic", lambda: analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET), "B8 - Intelligent results analysis"),
+    ("B9", "B9_correlation", lambda: correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET), "B9 - Static + dynamic correlation"),
+]
 
+
+def _run_pipeline_from(start_index):
+    """
+    Runs PIPELINE_STEPS[start_index:], pausing for B6 human review right
+    after B5 (index 2) exactly like run_pipeline_until_b6 used to, and
+    finishing the run after B9 (index 5) exactly like run_pipeline_from_b7
+    used to. The B6 pause is purely positional — "what happens right after
+    B5, before B7" — so it fires identically whether start_index is 0 (a
+    fresh run) or 3 (resuming straight into B7, which only ever happens
+    after B6 was already approved once for this run_id).
+
+    Caller is responsible for pipeline_state["running"]/["run_id"] already
+    being set before this is called — see _run_fresh_pipeline, _run_from_b7,
+    and _run_resumed_pipeline (Task 4) for the three ways that happens.
+    """
     try:
         with pipeline_results_lock:
-            # Safety net, not the primary path (that's naviq_fresh_reset() via
-            # "Prepare environment") — covers restore mode, or any run started
-            # without clicking Prepare environment first. A no-op if already up.
-            if ACTIVE_TARGET.name == "naviq":
-                ensure_naviq_server_running(log_fn=log)
+            for state_id, stored_name, step, start_message in PIPELINE_STEPS[start_index:]:
+                pipeline_state["current_block"] = state_id
+                log(f">> {start_message}")
+                step()
+                run_history._snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
+                log(f"OK {state_id} completed")
 
-            pipeline_state["current_block"] = "B3"
-            log(">> B3 - Static analysis started")
-            run_static_analysis(pipeline_results, ACTIVE_TARGET)
-            log("OK B3 completed")
+                # The B5->B6 human-review pause and the final B9->completed
+                # transition both must always win over a pending stop
+                # request - stopping mid-B5 must not let resume silently
+                # skip the B6 gate (a human never reviewed the payloads B5
+                # just generated), and stopping on the very last step must
+                # not downgrade an otherwise fully-completed run to
+                # "stopped" (see docs/superpowers/specs/2026-09-09-pipeline-
+                # stop-design.md). In both cases the pending stop is simply
+                # absorbed by the pause/completion that was already about to
+                # happen: _run_from_b7 and the "completed" branch below both
+                # reset stop_requested = False, so nothing is left over.
+                is_last_step = state_id == PIPELINE_STEPS[-1][0]
 
-            pipeline_state["current_block"] = "B4"
-            log(">> B4 - Dynamic discovery started")
-            run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"])
-            log("OK B4 completed")
+                # Discard is the more final of the two possible user
+                # actions, so it's checked first and wins any race with a
+                # pending stop_requested (both buttons are independently
+                # clickable). Unlike Stop, Discard doesn't need to protect
+                # the B5->B6 pause below: a discarded run is never
+                # resumable — "discarded" falls outside _find_resume_point's
+                # ("error", "stopped") check by construction — so there is
+                # no resume-into-B7 path to guard against, and discarding
+                # during B5 can finalize the instant B5 finishes, skipping
+                # the pause entirely. The last-step exemption still applies
+                # for the same reason it does for Stop below: nothing is
+                # left to abandon once B9 has actually finished.
+                if not is_last_step and pipeline_state["discard_requested"]:
+                    pipeline_state["current_block"] = None
+                    pipeline_state["running"] = False
+                    pipeline_state["stop_requested"] = False
+                    pipeline_state["discard_requested"] = False
+                    log(f"== Pipeline discarded after {state_id} (user request) ==")
+                    run_history.finish_run(pipeline_state["run_id"], "discarded")
+                    return
 
-            pipeline_state["current_block"] = "B5"
-            log(">> B5 - Payload generation")
-            generate_payloads(client=client, target_profile=ACTIVE_TARGET)
-            log("OK B5 completed")
+                if not is_last_step and state_id != "B5" and pipeline_state["stop_requested"]:
+                    pipeline_state["current_block"] = None
+                    pipeline_state["running"] = False
+                    pipeline_state["stop_requested"] = False
+                    log(f"== Pipeline stopped after {state_id} (user request) ==")
+                    run_history.finish_run(pipeline_state["run_id"], "stopped")
+                    return
 
-            # Pauses here — the UI shows the payloads for human review
-            pipeline_state["current_block"] = "B6"
-            pipeline_state["waiting_for_human"] = True
-            pipeline_state["running"] = False
-            log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
-
-    except Exception as e:
-        _fail_pipeline(e)
-
-
-def run_pipeline_from_b7():
-    """Corre B7 → B9 después de que el humano validó los payloads."""
-    pipeline_state["running"] = True
-    pipeline_state["waiting_for_human"] = False
-    pipeline_state["error"] = None
-
-    try:
-        with pipeline_results_lock:
-            pipeline_state["current_block"] = "B7"
-            log(">> B7 - Attack execution")
-            execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"])
-            log("OK B7 completed")
-
-            pipeline_state["current_block"] = "B8"
-            log(">> B8 - Intelligent results analysis")
-            analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET)
-            log("OK B8 completed")
-
-            pipeline_state["current_block"] = "B9"
-            log(">> B9 - Static + dynamic correlation")
-            correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET)
-            log("OK B9 completed")
+                if state_id == "B5":
+                    # Pauses here — the UI shows the payloads for human review
+                    pipeline_state["current_block"] = "B6"
+                    pipeline_state["waiting_for_human"] = True
+                    pipeline_state["running"] = False
+                    log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
+                    return
 
             pipeline_state["current_block"] = None
             pipeline_state["running"] = False
             pipeline_state["completed"] = True
+            pipeline_state["stop_requested"] = False
+            pipeline_state["discard_requested"] = False
             log("OK Pipeline completed. Results available.")
             run_history.finish_run(pipeline_state["run_id"], "completed")
 
     except Exception as e:
         _fail_pipeline(e)
+
+
+def _run_fresh_pipeline(mode="unknown"):
+    """Thread target for POST /api/run — starts a brand-new run at B3."""
+    pipeline_state["running"] = True
+    pipeline_state["completed"] = False
+    pipeline_state["error"] = None
+    pipeline_state["logs"] = []
+    pipeline_state["waiting_for_human"] = False
+    pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
+    pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
+
+    # Safety net, not the primary path (that's naviq_fresh_reset() via
+    # "Prepare environment") — covers restore mode, or any run started
+    # without clicking Prepare environment first. A no-op if already up.
+    # Wrapped in its own try/except: ensure_naviq_server_running genuinely
+    # raises in real scenarios (RuntimeError if the dev-server process exits
+    # immediately, TimeoutError if it never becomes reachable, FileNotFoundError
+    # if the venv python is missing). Before this fix that exception escaped
+    # this background thread entirely — pipeline_state["running"] stayed True
+    # forever and every recovery endpoint (/api/run, /api/run/resume,
+    # /api/reset) 409'd with no in-app way out. Routing it through the same
+    # _fail_pipeline() helper _run_pipeline_from uses keeps the failure
+    # contract identical regardless of which stage raised.
+    try:
+        if ACTIVE_TARGET.name == "naviq":
+            ensure_naviq_server_running(log_fn=log)
+    except Exception as e:
+        _fail_pipeline(e)
+        return
+
+    _run_pipeline_from(0)
+
+
+def _run_from_b7():
+    """Thread target for POST /api/validate — continues into B7 after B6
+    approval. Index 3 is "B7" in PIPELINE_STEPS."""
+    pipeline_state["running"] = True
+    pipeline_state["waiting_for_human"] = False
+    pipeline_state["error"] = None
+    pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
+    _run_pipeline_from(3)
+
+
+def _find_resume_point(target_name):
+    """
+    Returns (run_id, start_index, state_id) for the first PIPELINE_STEPS
+    entry not yet snapshotted for the most recent errored-or-stopped, still-
+    resumable run of `target_name` — or None if there's nothing to resume
+    (no runs, the latest one is neither errored nor stopped, or Fresh Reset
+    already dismissed it via dismiss_resume()). A user-stopped run is
+    exactly as resumable as a crashed one — see
+    docs/superpowers/specs/2026-09-09-pipeline-stop-design.md.
+    """
+    latest = run_history.get_latest_run(target_name)
+    if latest is None or latest["status"] not in ("error", "stopped") or not latest["resumable"]:
+        return None
+
+    run_detail = run_history.get_run(latest["id"])
+    done = set(run_detail["blocks"].keys())
+    for index, (state_id, stored_name, _step, _start_message) in enumerate(PIPELINE_STEPS):
+        if stored_name not in done:
+            return latest["id"], index, state_id
+    return None  # every block already snapshotted - nothing left to resume
+
+
+def _run_resumed_pipeline(run_id, start_index):
+    """Thread target for POST /api/run/resume."""
+    pipeline_state["running"] = True
+    pipeline_state["completed"] = False
+    pipeline_state["error"] = None
+    pipeline_state["waiting_for_human"] = False
+    pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
+    pipeline_state["run_id"] = run_id
+    _run_pipeline_from(start_index)
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
@@ -548,20 +656,86 @@ def run_pipeline(body: RunPipelineRequest = RunPipelineRequest()):
     if pipeline_state["waiting_for_human"]:
         raise HTTPException(status_code=409, detail="Waiting for human review in B6")
 
-    thread = threading.Thread(target=run_pipeline_until_b6, args=(body.mode,), daemon=True)
+    thread = threading.Thread(target=_run_fresh_pipeline, args=(body.mode,), daemon=True)
     thread.start()
     return {"message": "Pipeline started"}
+
+
+@protected.post("/api/run/resume")
+def resume_pipeline():
+    """Resumes the active target's most recent errored run from the first
+    block that never completed. Rejects if the pipeline is currently
+    running/waiting, or if there's nothing resumable (see _find_resume_point)."""
+    if pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is already running")
+    if pipeline_state["waiting_for_human"]:
+        raise HTTPException(status_code=409, detail="Waiting for human review in B6")
+
+    resume_point = _find_resume_point(ACTIVE_TARGET.name)
+    if resume_point is None:
+        raise HTTPException(status_code=409, detail="Nothing to resume for this target")
+
+    run_id, start_index, state_id = resume_point
+    thread = threading.Thread(target=_run_resumed_pipeline, args=(run_id, start_index), daemon=True)
+    thread.start()
+    return {"resuming_from": state_id}
+
+
+@protected.post("/api/run/stop")
+def stop_pipeline():
+    """Requests a stop after the block currently running finishes — see
+    docs/superpowers/specs/2026-09-09-pipeline-stop-design.md for why this
+    can't interrupt a block mid-way. Rejects if nothing is actually running
+    (a paused-at-B6 run has nothing in-flight to stop)."""
+    if not pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is not running")
+
+    pipeline_state["stop_requested"] = True
+    return {"stopping_after": pipeline_state["current_block"]}
+
+
+@protected.post("/api/run/discard")
+def discard_pipeline():
+    """Requests that the currently running pipeline be abandoned once its
+    current block finishes — same block-boundary reasoning as Stop (a block
+    already in flight, e.g. a live Playwright session or an in-flight LLM
+    call, must be allowed to finish rather than interrupted mid-way, for
+    data integrity). Unlike Stop, the resulting run is never offered for
+    resume — status "discarded" falls outside _find_resume_point's
+    ("error", "stopped") check by construction. Rejects if nothing is
+    actually running, same as Stop."""
+    if not pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is not running")
+
+    pipeline_state["discard_requested"] = True
+    return {"discarding_after": pipeline_state["current_block"]}
 
 
 @protected.get("/api/status")
 def get_status():
     """Estado actual del pipeline — React hace polling cada 2s a este endpoint."""
+    # _run_resumed_pipeline deliberately never calls run_history.start_run()
+    # for a resumed run (it keeps the original run_id), so the DB row stays
+    # status="error"/resumable=True for that run's entire duration - nothing
+    # ever writes it back to "running". Without this guard, _find_resume_point
+    # would happily report a resumable_from for a run that's actively
+    # executing right now, contradicting "running": true in the same
+    # response. Skipping the DB lookup entirely while running/waiting also
+    # avoids two pointless SQLite queries on every 2s poll during that time.
+    resume_point = (
+        None
+        if pipeline_state["running"] or pipeline_state["waiting_for_human"]
+        else _find_resume_point(ACTIVE_TARGET.name)
+    )
     return {
         "running": pipeline_state["running"],
         "current_block": pipeline_state["current_block"],
         "waiting_for_human": pipeline_state["waiting_for_human"],
         "completed": pipeline_state["completed"],
         "error": pipeline_state["error"],
+        "resumable_from": resume_point[2] if resume_point is not None else None,
+        "stop_requested": pipeline_state["stop_requested"],
+        "discard_requested": pipeline_state["discard_requested"],
     }
 
 
@@ -729,7 +903,7 @@ def validate_payloads(body: ValidatePayloadsRequest):
     log(f"OK B6 - {len(approved)} payloads validated by the researcher")
 
     # Disparar B7 → B9 en background
-    thread = threading.Thread(target=run_pipeline_from_b7, daemon=True)
+    thread = threading.Thread(target=_run_from_b7, daemon=True)
     thread.start()
 
     return {"message": "Validation received. Continuing with B7 → B9."}
@@ -748,6 +922,8 @@ def reset_pipeline():
         "completed": False,
         "error": None,
         "logs": [],
+        "stop_requested": False,
+        "discard_requested": False,
     })
     return {"message": "State reset"}
 

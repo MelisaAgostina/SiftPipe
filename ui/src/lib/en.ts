@@ -45,6 +45,16 @@ export const en: Strings = {
     prepareEnvironmentFirst: "Prepare environment first",
     resetRequiredFirst: "Reset environment first",
     runAnalysis: "Run analysis",
+    resumeFrom: (phaseLabel) => `Resume from ${phaseLabel}`,
+    resumeCaveat: "Only resume if you haven't reset the environment since the failure.",
+    stopAfterBlock: (phaseLabel) => `Stop after ${phaseLabel}`,
+    stoppingAfterBlock: (phaseLabel) => `Stopping after ${phaseLabel}...`,
+    discardAfterBlock: (phaseLabel) => `Discard after ${phaseLabel}`,
+    discardingAfterBlock: (phaseLabel) => `Discarding after ${phaseLabel}...`,
+    discardConfirmTitle: "Discard this run?",
+    discardConfirmDescription:
+      "The current step will finish first. Once discarded, this run can't be resumed.",
+    discardConfirmAction: "Discard",
     resetEnvironmentFresh: "Reset environment (fresh)",
     prepareEnvironmentFresh: "Prepare environment (fresh)",
     naviqFreshResetHint:
@@ -62,6 +72,9 @@ export const en: Strings = {
     longRunningPhaseHint: "This could take a few minutes",
     collapseSidebarAria: "Collapse sidebar",
     expandSidebarAria: "Expand sidebar",
+    toggleSectionAria: (heading, isOpen) => `${isOpen ? "Collapse" : "Expand"} ${heading} section`,
+    prerequisitesReadyAria: "Prerequisites ready",
+    prerequisitesNotReadyAria: "Prerequisites not ready",
   },
   topBar: {
     dotLabel: {
@@ -138,7 +151,10 @@ export const en: Strings = {
       running: "RUNNING",
       completed: "COMPLETED",
       error: "ERROR",
+      stopped: "STOPPED",
+      discarded: "DISCARDED",
     },
+    allTargetsFilter: "All",
     selectRunPrompt: "Select a run to see its results.",
     noPastRuns:
       "No past runs yet — once a full pipeline run completes, it shows up here for later review.",
