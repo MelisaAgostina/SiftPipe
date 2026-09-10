@@ -49,6 +49,12 @@ export const en: Strings = {
     resumeCaveat: "Only resume if you haven't reset the environment since the failure.",
     stopAfterBlock: (phaseLabel) => `Stop after ${phaseLabel}`,
     stoppingAfterBlock: (phaseLabel) => `Stopping after ${phaseLabel}...`,
+    discardAfterBlock: (phaseLabel) => `Discard after ${phaseLabel}`,
+    discardingAfterBlock: (phaseLabel) => `Discarding after ${phaseLabel}...`,
+    discardConfirmTitle: "Discard this run?",
+    discardConfirmDescription:
+      "The current step will finish first. Once discarded, this run can't be resumed.",
+    discardConfirmAction: "Discard",
     resetEnvironmentFresh: "Reset environment (fresh)",
     prepareEnvironmentFresh: "Prepare environment (fresh)",
     naviqFreshResetHint:
@@ -143,6 +149,7 @@ export const en: Strings = {
       completed: "COMPLETED",
       error: "ERROR",
       stopped: "STOPPED",
+      discarded: "DISCARDED",
     },
     selectRunPrompt: "Select a run to see its results.",
     noPastRuns:

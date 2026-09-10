@@ -6,6 +6,7 @@ vi.mock("@/lib/queries", () => ({
   useRunPipeline: vi.fn(),
   useResumePipeline: vi.fn(),
   useStopPipeline: vi.fn(),
+  useDiscardPipeline: vi.fn(),
   useEnvironmentHealth: vi.fn(),
   useEnvironmentStatus: vi.fn(),
   useResetEnvironment: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("@/lib/queries", () => ({
 
 import {
   useActiveTarget,
+  useDiscardPipeline,
   useEnvironmentHealth,
   useEnvironmentStatus,
   useLiveRunVisible,
@@ -32,6 +34,7 @@ const runMutate = vi.fn();
 const resetMutate = vi.fn();
 const resumeMutate = vi.fn();
 const stopMutate = vi.fn();
+const discardMutate = vi.fn();
 
 const DEFAULT_STATUS: PipelineStatus = {
   running: false,
@@ -41,6 +44,7 @@ const DEFAULT_STATUS: PipelineStatus = {
   error: null,
   resumable_from: null,
   stop_requested: false,
+  discard_requested: false,
 };
 
 const DEFAULT_TARGET = {
@@ -91,6 +95,10 @@ function setup(
     mutate: stopMutate,
     isPending: false,
   } as never);
+  vi.mocked(useDiscardPipeline).mockReturnValue({
+    mutate: discardMutate,
+    isPending: false,
+  } as never);
 
   return render(<Sidebar />);
 }
@@ -101,6 +109,7 @@ describe("Sidebar", () => {
     resetMutate.mockClear();
     resumeMutate.mockClear();
     stopMutate.mockClear();
+    discardMutate.mockClear();
   });
 
   it("shows Run analysis and an enabled button when the target is up and idle", () => {
@@ -372,6 +381,82 @@ describe("Sidebar", () => {
 
     const button = screen.getByRole("button", {
       name: new RegExp(en.sidebar.stoppingAfterBlock(en.phaseLabels.b7), "i"),
+    });
+    expect(button).toBeDisabled();
+  });
+
+  it("shows a Discard after {block} button while the pipeline is running", () => {
+    setup({ status: { running: true, current_block: "B4" } });
+
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.discardAfterBlock(en.phaseLabels.b4), "i"),
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the discard button when the pipeline is idle", () => {
+    setup();
+
+    expect(screen.queryByRole("button", { name: /discard after/i })).not.toBeInTheDocument();
+  });
+
+  it("does not show the discard button when running but no block is active yet", () => {
+    setup({ status: { running: true, current_block: null } });
+
+    expect(screen.queryByRole("button", { name: /discard after/i })).not.toBeInTheDocument();
+  });
+
+  it("does not show the discard button while only waiting for human review", () => {
+    setup({ status: { waiting_for_human: true } });
+
+    expect(screen.queryByRole("button", { name: /discard after/i })).not.toBeInTheDocument();
+  });
+
+  it("clicking Discard after {block} opens a confirmation dialog without calling the mutation yet", () => {
+    setup({ status: { running: true, current_block: "B7" } });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.discardAfterBlock(en.phaseLabels.b7), "i"),
+      }),
+    );
+
+    expect(screen.getByText(en.sidebar.discardConfirmTitle)).toBeInTheDocument();
+    expect(discardMutate).not.toHaveBeenCalled();
+  });
+
+  it("confirming the discard dialog calls the discard mutation", () => {
+    setup({ status: { running: true, current_block: "B7" } });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.discardAfterBlock(en.phaseLabels.b7), "i"),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.sidebar.discardConfirmAction }));
+
+    expect(discardMutate).toHaveBeenCalled();
+  });
+
+  it("cancelling the discard dialog does not call the discard mutation", () => {
+    setup({ status: { running: true, current_block: "B7" } });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(en.sidebar.discardAfterBlock(en.phaseLabels.b7), "i"),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: en.common.cancel }));
+
+    expect(discardMutate).not.toHaveBeenCalled();
+  });
+
+  it("shows Discarding after {block} and disables the button once discard_requested is true", () => {
+    setup({ status: { running: true, current_block: "B7", discard_requested: true } });
+
+    const button = screen.getByRole("button", {
+      name: new RegExp(en.sidebar.discardingAfterBlock(en.phaseLabels.b7), "i"),
     });
     expect(button).toBeDisabled();
   });

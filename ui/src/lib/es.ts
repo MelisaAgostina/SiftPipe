@@ -49,6 +49,12 @@ export const es: Strings = {
     resumeCaveat: "Solo reanudá si no reiniciaste el entorno desde la falla.",
     stopAfterBlock: (phaseLabel) => `Detener después de ${phaseLabel}`,
     stoppingAfterBlock: (phaseLabel) => `Deteniendo después de ${phaseLabel}...`,
+    discardAfterBlock: (phaseLabel) => `Descartar después de ${phaseLabel}`,
+    discardingAfterBlock: (phaseLabel) => `Descartando después de ${phaseLabel}...`,
+    discardConfirmTitle: "¿Descartar esta ejecución?",
+    discardConfirmDescription:
+      "El paso actual terminará primero. Una vez descartada, esta ejecución no se puede reanudar.",
+    discardConfirmAction: "Descartar",
     resetEnvironmentFresh: "Reiniciar entorno (limpio)",
     prepareEnvironmentFresh: "Preparar entorno (limpio)",
     naviqFreshResetHint:
@@ -146,6 +152,7 @@ export const es: Strings = {
       completed: "COMPLETADA",
       error: "ERROR",
       stopped: "DETENIDA",
+      discarded: "DESCARTADA",
     },
     selectRunPrompt: "Selecciona una ejecución para ver sus resultados.",
     noPastRuns:

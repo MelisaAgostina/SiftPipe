@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   archiveRun,
   deleteRun,
+  discardPipeline,
   getActiveTarget,
   getBlockResult,
   getEnvironmentHealth,
@@ -138,6 +139,14 @@ export function useStopPipeline() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: stopPipeline,
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.status }),
+  });
+}
+
+export function useDiscardPipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: discardPipeline,
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.status }),
   });
 }

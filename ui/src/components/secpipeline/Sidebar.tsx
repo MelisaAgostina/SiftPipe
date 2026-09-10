@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   useActiveTarget,
+  useDiscardPipeline,
   useEnvironmentHealth,
   useEnvironmentStatus,
   useLiveRunVisible,
@@ -24,6 +25,16 @@ import {
 import { useLang } from "@/hooks/use-lang";
 import type { PhaseId } from "@/lib/strings";
 import { prerequisiteIds, phases } from "./data";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type EnvMode = "fresh" | "restore";
 
@@ -33,6 +44,8 @@ export function Sidebar() {
   const runMutation = useRunPipeline();
   const resumeMutation = useResumePipeline();
   const stopMutation = useStopPipeline();
+  const discardMutation = useDiscardPipeline();
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
 
   const { data: envHealth } = useEnvironmentHealth();
   const { data: envStatus } = useEnvironmentStatus();
@@ -171,6 +184,17 @@ export function Sidebar() {
     return status?.stop_requested
       ? t.sidebar.stoppingAfterBlock(blockLabel)
       : t.sidebar.stopAfterBlock(blockLabel);
+  };
+
+  // Same block-boundary reasoning and translated-label convention as
+  // stopButtonLabel() above — the only difference between Stop and Discard
+  // is what happens once the current block finishes (resumable vs. not),
+  // not when either one takes effect.
+  const discardButtonLabel = () => {
+    const blockLabel = activePhaseId ? t.phaseLabels[activePhaseId as PhaseId] : "";
+    return status?.discard_requested
+      ? t.sidebar.discardingAfterBlock(blockLabel)
+      : t.sidebar.discardAfterBlock(blockLabel);
   };
 
   // Same running/waiting/completed/error precedence as buttonLabel(), reduced
@@ -414,6 +438,38 @@ export function Sidebar() {
             {stopButtonLabel()}
           </button>
         )}
+        {isRunning && activePhaseId && (
+          <button
+            onClick={() => setConfirmDiscardOpen(true)}
+            disabled={status?.discard_requested === true || discardMutation.isPending}
+            className="font-button mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[0.55rem] leading-relaxed text-muted-foreground transition-colors hover:bg-accent hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {discardButtonLabel()}
+          </button>
+        )}
+        <AlertDialog open={confirmDiscardOpen} onOpenChange={setConfirmDiscardOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t.sidebar.discardConfirmTitle}</AlertDialogTitle>
+              <AlertDialogDescription>{t.sidebar.discardConfirmDescription}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="font-sans text-sm h-9 px-4">
+                {t.common.cancel}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                className="font-sans text-sm h-9 px-4 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={discardMutation.isPending}
+                onClick={() => {
+                  discardMutation.mutate();
+                  setConfirmDiscardOpen(false);
+                }}
+              >
+                {t.sidebar.discardConfirmAction}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {status?.resumable_from && (
           <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
