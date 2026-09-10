@@ -382,6 +382,14 @@ class TestRunHistory(unittest.TestCase):
     def test_dismiss_resume_is_a_no_op_for_a_target_with_no_runs(self):
         run_history.dismiss_resume("nonexistent")  # must not raise
 
+    def test_dismiss_resume_clears_resumable_on_the_latest_stopped_run(self):
+        run_id = run_history.start_run(mode="fresh", target="mattermost")
+        run_history.finish_run(run_id, "stopped")
+
+        run_history.dismiss_resume("mattermost")
+
+        self.assertFalse(run_history.get_latest_run("mattermost")["resumable"])
+
     def test_snapshot_ignores_files_older_than_the_run(self):
         # Simulate a leftover file from an earlier run, backdated so its
         # mtime clearly predates start_run() below (avoids flakiness from

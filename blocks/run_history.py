@@ -246,15 +246,18 @@ def get_latest_run(target):
 
 def dismiss_resume(target):
     """Turns off resumability for the most recent run of `target`, if it's
-    errored. A no-op if the latest run isn't errored, or there is none —
-    called when Fresh Reset means "start over," not "resume.\""""
+    errored or stopped. A no-op if the latest run isn't in one of those
+    states, or there is none — called when Fresh Reset means "start over,"
+    not "resume." A user-stopped run is exactly as resumable as a crashed
+    one (see docs/superpowers/specs/2026-09-09-pipeline-stop-design.md) so
+    it's dismissed the same way."""
     conn = _connect()
     try:
         conn.execute(
             """
             UPDATE runs SET resumable = 0
             WHERE id = (SELECT id FROM runs WHERE target = ? ORDER BY id DESC LIMIT 1)
-              AND status = 'error'
+              AND status IN ('error', 'stopped')
             """,
             (target,),
         )
