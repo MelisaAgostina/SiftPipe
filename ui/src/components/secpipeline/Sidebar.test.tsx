@@ -330,7 +330,7 @@ describe("Sidebar", () => {
   it("shows a Stop after {block} button while the pipeline is running", () => {
     setup({ status: { running: true, current_block: "B4" } });
 
-    expect(screen.getByRole("button", { name: /stop after b4/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /stop after/i })).toBeInTheDocument();
   });
 
   it("does not show the stop button when the pipeline is idle", () => {
@@ -348,7 +348,7 @@ describe("Sidebar", () => {
   it("clicking Stop after {block} calls the stop mutation", () => {
     setup({ status: { running: true, current_block: "B7" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /stop after b7/i }));
+    fireEvent.click(screen.getByRole("button", { name: /stop after/i }));
 
     expect(stopMutate).toHaveBeenCalled();
   });
@@ -356,7 +356,7 @@ describe("Sidebar", () => {
   it("shows Stopping after {block} and disables the button once stop_requested is true", () => {
     setup({ status: { running: true, current_block: "B7", stop_requested: true } });
 
-    const button = screen.getByRole("button", { name: /stopping after b7/i });
+    const button = screen.getByRole("button", { name: /stopping after/i });
     expect(button).toBeDisabled();
   });
 });

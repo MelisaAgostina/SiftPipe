@@ -162,13 +162,12 @@ export function Sidebar() {
 
   // Only meaningful while a block is actually executing — a run paused at
   // B6 has nothing in-flight to stop (see the design doc's Out of Scope).
-  // Uses the raw block id ("B4") rather than the translated phase label
-  // ("Dynamic discovery") — this is the block the researcher sees ticking
-  // through logs/status elsewhere in the sidebar, so it stays consistent
-  // with that raw identifier instead of introducing a second, prose name
-  // for the same thing right next to it.
+  // Translates through t.phaseLabels, same as buttonLabel()'s resumeFrom
+  // case above — a juror/professor-facing UI should show a human phase name
+  // ("Stop after Dynamic discovery"), not an internal block code ("Stop
+  // after B4").
   const stopButtonLabel = () => {
-    const blockLabel = status?.current_block ?? "";
+    const blockLabel = activePhaseId ? t.phaseLabels[activePhaseId as PhaseId] : "";
     return status?.stop_requested
       ? t.sidebar.stoppingAfterBlock(blockLabel)
       : t.sidebar.stopAfterBlock(blockLabel);
