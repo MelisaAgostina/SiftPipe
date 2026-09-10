@@ -37,6 +37,8 @@ export type Strings = {
     runAnalysis: string;
     resumeFrom: (phaseLabel: string) => string;
     resumeCaveat: string;
+    stopAfterBlock: (phaseLabel: string) => string;
+    stoppingAfterBlock: (phaseLabel: string) => string;
     resetEnvironmentFresh: string;
     prepareEnvironmentFresh: string;
     naviqFreshResetHint: string;

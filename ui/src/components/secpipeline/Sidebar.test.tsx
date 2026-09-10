@@ -5,6 +5,7 @@ vi.mock("@/lib/queries", () => ({
   usePipelineStatus: vi.fn(),
   useRunPipeline: vi.fn(),
   useResumePipeline: vi.fn(),
+  useStopPipeline: vi.fn(),
   useEnvironmentHealth: vi.fn(),
   useEnvironmentStatus: vi.fn(),
   useResetEnvironment: vi.fn(),
@@ -21,6 +22,7 @@ import {
   useResetEnvironment,
   useResumePipeline,
   useRunPipeline,
+  useStopPipeline,
 } from "@/lib/queries";
 import { Sidebar } from "./Sidebar";
 import { en } from "@/lib/en";
@@ -29,6 +31,7 @@ import type { BlockId, PipelineStatus } from "@/lib/types";
 const runMutate = vi.fn();
 const resetMutate = vi.fn();
 const resumeMutate = vi.fn();
+const stopMutate = vi.fn();
 
 const DEFAULT_STATUS: PipelineStatus = {
   running: false,
@@ -37,6 +40,7 @@ const DEFAULT_STATUS: PipelineStatus = {
   completed: false,
   error: null,
   resumable_from: null,
+  stop_requested: false,
 };
 
 const DEFAULT_TARGET = {
@@ -83,6 +87,10 @@ function setup(
     mutate: resumeMutate,
     isPending: false,
   } as never);
+  vi.mocked(useStopPipeline).mockReturnValue({
+    mutate: stopMutate,
+    isPending: false,
+  } as never);
 
   return render(<Sidebar />);
 }
@@ -92,6 +100,7 @@ describe("Sidebar", () => {
     runMutate.mockClear();
     resetMutate.mockClear();
     resumeMutate.mockClear();
+    stopMutate.mockClear();
   });
 
   it("shows Run analysis and an enabled button when the target is up and idle", () => {
@@ -316,5 +325,38 @@ describe("Sidebar", () => {
     expect(
       screen.queryByText(/only resume if you haven't reset the environment/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a Stop after {block} button while the pipeline is running", () => {
+    setup({ status: { running: true, current_block: "B4" } });
+
+    expect(screen.getByRole("button", { name: /stop after b4/i })).toBeInTheDocument();
+  });
+
+  it("does not show the stop button when the pipeline is idle", () => {
+    setup();
+
+    expect(screen.queryByRole("button", { name: /stop after/i })).not.toBeInTheDocument();
+  });
+
+  it("does not show the stop button while only waiting for human review", () => {
+    setup({ status: { waiting_for_human: true } });
+
+    expect(screen.queryByRole("button", { name: /stop after/i })).not.toBeInTheDocument();
+  });
+
+  it("clicking Stop after {block} calls the stop mutation", () => {
+    setup({ status: { running: true, current_block: "B7" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /stop after b7/i }));
+
+    expect(stopMutate).toHaveBeenCalled();
+  });
+
+  it("shows Stopping after {block} and disables the button once stop_requested is true", () => {
+    setup({ status: { running: true, current_block: "B7", stop_requested: true } });
+
+    const button = screen.getByRole("button", { name: /stopping after b7/i });
+    expect(button).toBeDisabled();
   });
 });

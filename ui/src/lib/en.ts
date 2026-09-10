@@ -47,6 +47,8 @@ export const en: Strings = {
     runAnalysis: "Run analysis",
     resumeFrom: (phaseLabel) => `Resume from ${phaseLabel}`,
     resumeCaveat: "Only resume if you haven't reset the environment since the failure.",
+    stopAfterBlock: (phaseLabel) => `Stop after ${phaseLabel}`,
+    stoppingAfterBlock: (phaseLabel) => `Stopping after ${phaseLabel}...`,
     resetEnvironmentFresh: "Reset environment (fresh)",
     prepareEnvironmentFresh: "Prepare environment (fresh)",
     naviqFreshResetHint:

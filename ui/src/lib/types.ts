@@ -12,6 +12,7 @@ export type PipelineStatus = {
   completed: boolean;
   error: string | null;
   resumable_from: BlockId | null;
+  stop_requested: boolean;
 };
 
 export type LogsResponse = { logs: string[] };

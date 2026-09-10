@@ -19,6 +19,7 @@ import {
   useResetEnvironment,
   useResumePipeline,
   useRunPipeline,
+  useStopPipeline,
 } from "@/lib/queries";
 import { useLang } from "@/hooks/use-lang";
 import type { PhaseId } from "@/lib/strings";
@@ -31,6 +32,7 @@ export function Sidebar() {
   const { data: status } = usePipelineStatus();
   const runMutation = useRunPipeline();
   const resumeMutation = useResumePipeline();
+  const stopMutation = useStopPipeline();
 
   const { data: envHealth } = useEnvironmentHealth();
   const { data: envStatus } = useEnvironmentStatus();
@@ -156,6 +158,20 @@ export function Sidebar() {
     if (envResetting) return t.sidebar.preparingEnvironment;
     if (targetUp) return t.sidebar.resetEnvironmentFresh;
     return t.sidebar.prepareEnvironmentFresh;
+  };
+
+  // Only meaningful while a block is actually executing — a run paused at
+  // B6 has nothing in-flight to stop (see the design doc's Out of Scope).
+  // Uses the raw block id ("B4") rather than the translated phase label
+  // ("Dynamic discovery") — this is the block the researcher sees ticking
+  // through logs/status elsewhere in the sidebar, so it stays consistent
+  // with that raw identifier instead of introducing a second, prose name
+  // for the same thing right next to it.
+  const stopButtonLabel = () => {
+    const blockLabel = status?.current_block ?? "";
+    return status?.stop_requested
+      ? t.sidebar.stoppingAfterBlock(blockLabel)
+      : t.sidebar.stopAfterBlock(blockLabel);
   };
 
   // Same running/waiting/completed/error precedence as buttonLabel(), reduced
@@ -390,6 +406,15 @@ export function Sidebar() {
           )}
           {buttonLabel()}
         </button>
+        {isRunning && (
+          <button
+            onClick={() => stopMutation.mutate()}
+            disabled={status?.stop_requested === true || stopMutation.isPending}
+            className="font-button mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[0.55rem] leading-relaxed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {stopButtonLabel()}
+          </button>
+        )}
         {status?.resumable_from && (
           <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
