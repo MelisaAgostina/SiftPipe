@@ -15,10 +15,10 @@ An LLM-driven pipeline for automated web application security assessment.
 | `Environment prep`   | Docker fresh reset (Mattermost) or dev-server bring-up (NaViQ), per-target seeding 
 | `Static Analysis`   | LLM-based source review per target, OWASP/CWE tagging 
 | `Dynamic Discovery`   | Playwright same-origin BFS crawl, form/input extraction 
-| `Payload Generation`  | LLM-generated attack payloads from B3 + B4 output 
-| `Human Review`   | Validates/filters B5 payloads before B7 runs them 
+| `Payload Generation`  | LLM-generated attack payloads from the static analysis + the dynamic discovery output 
+| `Human Review`   | Validates/filters payloads before the next block runs them 
 | `Attack Execution `   | Runs validated payloads against real forms, captures responses/screenshots/video 
-| `Results Analysis`   | LLM classifies each B7 attempt as confirmed/possible/discarded
+| `Results Analysis`   | LLM classifies each attack attempt as confirmed/possible/discarded
 | `Correlation`   | Matches dynamic findings back to static ones (CWE-exact → LLM judge → OWASP → text fallback), scores severity 
 | `Reporting`   | Bilingual PDF export per run, grouped remediation by CWE 
 | `UI`   | React dashboard for the full pipeline, human review, and past-run history 
