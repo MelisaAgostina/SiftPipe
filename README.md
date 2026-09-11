@@ -2,8 +2,9 @@
   <img width="80%" alt="readme" src="https://github.com/user-attachments/assets/fc012a7d-18db-4ee4-b996-ceab6374461f" />
 </div>
 
-
+<div align="center">
 An LLM-driven pipeline for automated web application security assessment.
+</div>
 
 ---
 
