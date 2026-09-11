@@ -1,26 +1,22 @@
 # SiftPipe
 
-An LLM-driven pipeline for automated web application security assessment — static source analysis, dynamic attack-surface discovery via Playwright, LLM-generated payloads, real browser-based attack execution, and static/dynamic correlation, all exposed through a FastAPI backend and a React frontend. Built as a bachelor's thesis on automated OWASP vulnerability detection.
-
+An LLM-driven pipeline for automated web application security assessment
 ---
 
-## Pipeline Blocks
+## Pipeline main blocks
 
 | Block | Purpose 
 |---|---|
-| `B1` | Environment prep — Docker fresh reset (Mattermost) or dev-server bring-up (NaViQ), per-target seeding 
-| `B3` | Static analysis — LLM-based source review per target, OWASP/CWE tagging 
-| `B4` | Dynamic discovery — Playwright same-origin BFS crawl, form/input extraction 
-| `B5` | Payload generation — LLM-generated attack payloads from B3 + B4 output 
-| `B6` | Human review — validates/filters B5 payloads before B7 runs them 
-| `B7` | Attack execution — runs validated payloads against real forms, captures responses/screenshots/video 
-| `B8` | Results analysis — LLM classifies each B7 attempt as confirmed/possible/discarded
-| `B9` | Correlation — matches dynamic findings back to static ones (CWE-exact → LLM judge → OWASP → text fallback), scores severity 
-| `B10` | Reporting — bilingual PDF export per run, grouped remediation by CWE 
-| `B13` | UI — React dashboard for the full pipeline, human review, and past-run history 
-| `B0`, `B2`, `B11`, `B12` | Orchestration, scope definition, triage integration, extended persistence 
-
-Full block-by-block detail (what's implemented, what's a heuristic vs. a real fix, every bug found and how) lives in [docs/readme-old.md](docs/readme-old.md).
+| `Environment prep` | Docker fresh reset (Mattermost) or dev-server bring-up (NaViQ), per-target seeding 
+| `Static analysis` | LLM-based source review per target, OWASP/CWE tagging 
+| `Dynamic discovery` | Playwright same-origin BFS crawl, form/input extraction 
+| `Payload generation` | LLM-generated attack payloads from B3 + B4 output 
+| `Human review` | Validates/filters B5 payloads before B7 runs them 
+| `Attack execution ` | Runs validated payloads against real forms, captures responses/screenshots/video 
+| `Results analysis` | LLM classifies each B7 attempt as confirmed/possible/discarded
+| `Correlation` | Matches dynamic findings back to static ones (CWE-exact → LLM judge → OWASP → text fallback), scores severity 
+| `Reporting` | Bilingual PDF export per run, grouped remediation by CWE 
+| `UI` | React dashboard for the full pipeline, human review, and past-run history 
 
 ---
 
