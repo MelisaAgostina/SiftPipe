@@ -1,7 +1,7 @@
 """
 blocks/run_history.py
 Persists a lightweight history of pipeline runs so past results survive being
-overwritten by the next run — see readme.md section 7, point 13.
+overwritten by the next run — see docs/readme-old.md section 7, point 13.
 
 The database file deliberately lives OUTSIDE results/: `fresh_reset()`
 (blocks/environment.py) wipes the whole results/ folder on every reset via

@@ -268,7 +268,7 @@ class TestFindRelatedStaticFindings(unittest.TestCase):
 
     def test_findings_with_resolvable_taxonomy_are_ranked_first(self):
         """
-        readme.md's own SESSION 4 note flags this gap directly: relevance
+        docs/readme-old.md's own SESSION 4 note flags this gap directly: relevance
         selection stayed pure keyword matching even after B9 got a real
         CWE/OWASP taxonomy engine (blocks/taxonomy.py) - infer_taxonomy() was
         only ever called *after* selection, on whatever keyword matching
