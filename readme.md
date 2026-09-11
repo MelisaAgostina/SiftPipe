@@ -1,6 +1,7 @@
 # SiftPipe
 
 An LLM-driven pipeline for automated web application security assessment
+
 ---
 
 ## Pipeline main blocks
