@@ -6,19 +6,19 @@ An LLM-driven pipeline for automated web application security assessment — sta
 
 ## Pipeline Blocks
 
-| Block | Purpose | Status |
-|---|---|---|
-| `B1` | Environment prep — Docker fresh reset (Mattermost) or dev-server bring-up (NaViQ), per-target seeding | Done |
-| `B3` | Static analysis — LLM-based source review per target, OWASP/CWE tagging | Partial |
-| `B4` | Dynamic discovery — Playwright same-origin BFS crawl, form/input extraction | Partial |
-| `B5` | Payload generation — LLM-generated attack payloads from B3 + B4 output | Partial |
-| `B6` | Human review — validates/filters B5 payloads before B7 runs them | Done |
-| `B7` | Attack execution — runs validated payloads against real forms, captures responses/screenshots/video | Implemented, tested |
-| `B8` | Results analysis — LLM classifies each B7 attempt as confirmed/possible/discarded | Implemented, tested |
-| `B9` | Correlation — matches dynamic findings back to static ones (CWE-exact → LLM judge → OWASP → text fallback), scores severity | Partial |
-| `B10` | Reporting — bilingual PDF export per run, grouped remediation by CWE | Partial |
-| `B13` | UI — React dashboard for the full pipeline, human review, and past-run history | Partial |
-| `B0`, `B2`, `B11`, `B12` | Orchestration, scope definition, triage integration, extended persistence | Not started |
+| Block | Purpose 
+|---|---|
+| `B1` | Environment prep — Docker fresh reset (Mattermost) or dev-server bring-up (NaViQ), per-target seeding 
+| `B3` | Static analysis — LLM-based source review per target, OWASP/CWE tagging 
+| `B4` | Dynamic discovery — Playwright same-origin BFS crawl, form/input extraction 
+| `B5` | Payload generation — LLM-generated attack payloads from B3 + B4 output 
+| `B6` | Human review — validates/filters B5 payloads before B7 runs them 
+| `B7` | Attack execution — runs validated payloads against real forms, captures responses/screenshots/video 
+| `B8` | Results analysis — LLM classifies each B7 attempt as confirmed/possible/discarded
+| `B9` | Correlation — matches dynamic findings back to static ones (CWE-exact → LLM judge → OWASP → text fallback), scores severity 
+| `B10` | Reporting — bilingual PDF export per run, grouped remediation by CWE 
+| `B13` | UI — React dashboard for the full pipeline, human review, and past-run history 
+| `B0`, `B2`, `B11`, `B12` | Orchestration, scope definition, triage integration, extended persistence 
 
 Full block-by-block detail (what's implemented, what's a heuristic vs. a real fix, every bug found and how) lives in [docs/readme-old.md](docs/readme-old.md).
 
@@ -113,34 +113,8 @@ npm ci
 npm run dev
 ```
 
-Required in `.env` at the repo root (see [blocks/auth.py](blocks/auth.py), [blocks/pipeline.py](blocks/pipeline.py)):
-
-```
-ANTHROPIC_API_KEY=...
-SIFTPIPE_ADMIN_PASSWORD=...
-SIFTPIPE_SESSION_SECRET=...
-SIFTPIPE_TARGET=mattermost        # or naviq — optional, defaults to mattermost
-```
-
-The Mattermost target additionally needs Docker Desktop running (`docker compose` in `mattermost/`); NaViQ manages its own dev server automatically once selected.
-
-```bash
-python -m unittest discover -s tests    # backend tests
-cd ui && npm test                       # frontend tests
-```
-
----
-
-## Deployment
-
-Not yet live. Planned: frontend on Cloudflare Pages, backend on a single AWS EC2 host behind nginx — see [docs/AWS_HOSTING_TODO.md](docs/AWS_HOSTING_TODO.md) for the infra plan and [docs/next-steps-before-deployment.md](docs/next-steps-before-deployment.md) for what's left before it ships (containerization is the current highest-leverage item).
 
 ---
 
 ## Docs
-
-- [docs/readme-old.md](docs/readme-old.md) — the full technical checkpoint: every block's real implementation status, every bug found and fixed, session-by-session
-- [docs/next-steps-before-deployment.md](docs/next-steps-before-deployment.md) — remaining work before the AWS jury deployment, including the security-hardening log (CodeQL/Dependabot setup and findings triage)
-- [docs/MULTI_TARGET_PLAN.md](docs/MULTI_TARGET_PLAN.md) — how the pipeline generalized from a single hardcoded target (Mattermost) to a per-target profile system
-- [docs/AWS_HOSTING_TODO.md](docs/AWS_HOSTING_TODO.md) — deployment infrastructure plan
-- [docs/objetivo3_evidence/](docs/objetivo3_evidence/) — real CVEs found by the pipeline against a live target, with screenshots
+See /docs for ...
