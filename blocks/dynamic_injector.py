@@ -731,6 +731,19 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                     if detections:
                         anomalies += 1
 
+                    # status is only ever None when _execute_one never got a real
+                    # response to judge (goto()/wait_for_selector()/fill() failed,
+                    # or expect_response() itself timed out) - every one of those
+                    # paths already sets "error". Without this flag that state is
+                    # indistinguishable downstream from "submitted cleanly, no
+                    # anomaly found" - real bug found live 2026-09-16: a
+                    # resource-starved run had every payload against one field
+                    # fail this way (Playwright's own goto() timeout, screenshot
+                    # showing Mattermost's loading skeleton, not the real page),
+                    # and it silently reported as "0 anomalies" instead of
+                    # "N attempts never reached the target".
+                    inconclusive = status is None
+
                     # Map to vulnerability label for B8/B9 matching
                     if "SQLi" in detections:
                         vuln = "Injection"
@@ -766,6 +779,7 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                         "anomaly_detected": bool(detections),
                         "detections":       detections,
                         "evidence":         evidence,
+                        "inconclusive":     inconclusive,
                         "screenshot_path":  raw_r.get("screenshot_path"),
                         "video_path":       raw_r.get("video_path"),
                         "error":            raw_r.get("error"),

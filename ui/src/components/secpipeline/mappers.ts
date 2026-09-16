@@ -107,7 +107,13 @@ export function mapB5Group(g: B5PayloadGroup, idx: number, t: Strings): UIFindin
 
 export function mapB8Finding(f: B8Finding, t: Strings): UIFinding {
   const tone =
-    f.result === "confirmed" ? "confirmada" : f.result === "possible" ? "posible" : "descartada";
+    f.result === "confirmed"
+      ? "confirmada"
+      : f.result === "possible"
+        ? "posible"
+        : f.result === "error"
+          ? "error"
+          : "descartada";
   const { category: readableCategory, title } = splitVulnerability(f.vulnerability);
   return {
     tone,

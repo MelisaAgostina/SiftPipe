@@ -119,6 +119,10 @@
   --status-confirmada-fg: oklch(0.2 0.05 155);
   --status-descartada: oklch(0.72 0.16 25);
   --status-descartada-fg: oklch(0.25 0.08 25);
+  /* Neutral gray, not a red/amber/green security verdict on purpose —
+     "error" means B7 never got a real result to judge, not "ruled out". */
+  --status-error: oklch(0.6 0.01 250);
+  --status-error-fg: oklch(0.97 0.005 250);
   --status-callout: oklch(0.88 0.06 80);
   --status-callout-fg: oklch(0.28 0.05 60);
   --chart-1: oklch(0.646 0.222 41.116);

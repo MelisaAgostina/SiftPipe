@@ -75,21 +75,23 @@ def analyze_results(pipeline_results, ask_llm, target_profile=None):
     analyzed = []
     reused = 0
     skipped_no_anomaly = 0
+    skipped_inconclusive = 0
     llm_calls = 0
 
     for item in findings:
-        target    = item.get("endpoint") or item.get("target") or "unknown"
-        payload   = item.get("payload", "")
-        vuln      = item.get("vulnerability", "Unknown")
-        evidence  = item.get("evidence", "")
-        status    = item.get("status_code")
-        anomaly   = item.get("anomaly_detected", False)
-        detects   = item.get("detections", [])
-        pid       = item.get("payload_id", "?")
-        shot      = item.get("screenshot_path", "")
-        video     = item.get("video_path", "")
-        cwe_id    = item.get("cwe_id")
-        owasp_cat = item.get("owasp_category")
+        target       = item.get("endpoint") or item.get("target") or "unknown"
+        payload      = item.get("payload", "")
+        vuln         = item.get("vulnerability", "Unknown")
+        evidence     = item.get("evidence", "")
+        status       = item.get("status_code")
+        anomaly      = item.get("anomaly_detected", False)
+        inconclusive = item.get("inconclusive", False)
+        detects      = item.get("detections", [])
+        pid          = item.get("payload_id", "?")
+        shot         = item.get("screenshot_path", "")
+        video        = item.get("video_path", "")
+        cwe_id       = item.get("cwe_id")
+        owasp_cat    = item.get("owasp_category")
 
         # ── Resume support: reuse a prior successful classification instead
         # of spending tokens on it again ──
@@ -98,6 +100,35 @@ def analyze_results(pipeline_results, ask_llm, target_profile=None):
             analyzed.append(prev_entry)
             reused += 1
             print(f"[B8] [{pid}] {target} -> reused from previous run ({prev_entry.get('result', '?').upper()})")
+            continue
+
+        # ── B7 never got a real response to judge (goto()/expect_response()
+        # timeout, etc. — see blocks/dynamic_injector.py's `inconclusive`).
+        # Must not collapse into "discarded": that would report "no
+        # vulnerability" for a payload that was never actually tested — the
+        # exact shape of a real bug (2026-09-16) where a resource-starved
+        # run silently reported "0 anomalies" instead of "N attempts never
+        # reached the target" ──
+        if inconclusive:
+            llm_result = {
+                "payload_id": pid,
+                "target": target,
+                "payload": payload,
+                "result": "error",
+                "vulnerability": vuln,
+                "cwe_id": cwe_id,
+                "owasp_category": owasp_cat,
+                "confidence": "low",
+                "evidence": (
+                    f"B7 never obtained a response for this payload — not evidence "
+                    f"of a clean result, retest before trusting it: {item.get('error') or 'unknown error'}"
+                ),
+                "screenshot_path": shot,
+                "video_path": video,
+            }
+            analyzed.append(llm_result)
+            skipped_inconclusive += 1
+            print(f"[B8] [{pid}] {target} -> ERROR (B7 never reached target, no LLM call)")
             continue
 
         # ── Skip the LLM call entirely when B7's own heuristics found
@@ -194,7 +225,8 @@ Return ONLY a valid JSON object, no markdown, no extra text:
     pipeline_results["B8"] = final_output
     print(
         f"B8 finalized. LLM calls: {llm_calls} | reused from previous run: {reused} | "
-        f"skipped (no B7 anomaly): {skipped_no_anomaly} | total: {len(analyzed)}"
+        f"skipped (no B7 anomaly): {skipped_no_anomaly} | "
+        f"skipped (B7 inconclusive): {skipped_inconclusive} | total: {len(analyzed)}"
     )
     print(f"Results saved to {b8_output_path}\n")
 

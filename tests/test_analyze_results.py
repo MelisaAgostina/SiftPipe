@@ -111,6 +111,30 @@ class TestAnalyzeResults(unittest.TestCase):
         self.assertEqual(finding["cwe_id"], "CWE-89")
         self.assertEqual(finding["owasp_category"], "A05")
 
+    def test_inconclusive_finding_gets_error_result_without_calling_llm(self):
+        """
+        A B7 finding B7 itself couldn't get a real response for (page.goto()
+        timeout, etc. - marked `inconclusive` by dynamic_injector.py) must
+        not collapse into the same "discarded" bucket as a payload that was
+        actually submitted and found clean - that's exactly what made a
+        real network hiccup look like "0 vulnerabilities found" instead of
+        "N attempts never reached the target".
+        """
+        finding = self._b7_finding("1_1", anomaly=False)
+        finding["inconclusive"] = True
+        finding["status_code"] = None
+        finding["error"] = "Page.goto: Timeout 15000ms exceeded."
+        pipeline_results = {"B7": {"findings": [finding]}}
+
+        def fake_ask_llm(prompt):
+            raise AssertionError("LLM should not be called for an inconclusive finding")
+
+        out = analyze_results(pipeline_results, fake_ask_llm)
+
+        result = out["B8"]["findings"][0]
+        self.assertEqual(result["result"], "error")
+        self.assertIn("Timeout 15000ms exceeded", result["evidence"])
+
     def test_anomalous_finding_calls_llm_and_records_result(self):
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
 
