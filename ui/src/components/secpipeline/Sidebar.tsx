@@ -299,7 +299,6 @@ export function Sidebar() {
         <div className="flex flex-col items-center">
           {phases.map((ph, index) => {
             const state = phaseState(index);
-            const isLast = index === phases.length - 1;
             return (
               <div
                 key={ph.id}
@@ -309,7 +308,6 @@ export function Sidebar() {
                 className="flex flex-col items-center"
               >
                 {phaseCircleIcon(state)}
-                {!isLast && phaseConnectorLine(state)}
               </div>
             );
           })}
@@ -541,14 +539,14 @@ export function Sidebar() {
             <button
               onClick={() => stopMutation.mutate()}
               disabled={status?.stop_requested === true || stopMutation.isPending}
-              className="font-button flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[0.55rem] leading-relaxed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              className="font-button flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[0.55rem] leading-relaxed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
               {stopButtonLabel()}
             </button>
             <button
               onClick={() => setConfirmDiscardOpen(true)}
               disabled={status?.discard_requested === true || discardMutation.isPending}
-              className="font-button flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[0.55rem] leading-relaxed text-muted-foreground transition-colors hover:bg-accent hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+              className="font-button flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[0.55rem] leading-relaxed text-muted-foreground transition-colors hover:bg-accent hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
             >
               {discardButtonLabel()}
             </button>
