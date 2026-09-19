@@ -2,6 +2,10 @@
 volumes/
 backups/
 
+# Caddy's persisted TLS certificates and private keys (docker-compose.yml bind mounts)
+caddy_data/
+caddy_config/
+
 # Entorno de Python
 __pycache__/
 *.pyc

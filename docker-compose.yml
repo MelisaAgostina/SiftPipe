@@ -70,7 +70,7 @@ services:
         condition: service_completed_successfully
 
   # On Linux, bind-mounted host dirs must be owned by the UID each container runs as
-  # (10001 for siftpipe-api/naviq, 2000 for mattermost) or they crash-loop on first write.
+  # (10001 for siftpipe-api/naviq/caddy, 2000 for mattermost) or they crash-loop on first write.
   init-permissions:
     image: alpine:3.20
     restart: "no"
@@ -83,21 +83,31 @@ services:
       - -c
       - |
         set -e
-        mkdir -p /repo/results /repo/evidence /repo/db_backups /repo/logs
+        mkdir -p /repo/results /repo/evidence /repo/db_backups /repo/logs /repo/caddy_data /repo/caddy_config
         touch /repo/siftpipe_history.db
-        chown -R 10001:10001 /repo/results /repo/evidence /repo/db_backups /repo/logs /repo/siftpipe_history.db /naviq-src
+        chown -R 10001:10001 /repo/results /repo/evidence /repo/db_backups /repo/logs /repo/caddy_data /repo/caddy_config /repo/siftpipe_history.db /naviq-src
         mkdir -p /repo/mattermost/volumes/app/mattermost/config /repo/mattermost/volumes/app/mattermost/data /repo/mattermost/volumes/app/mattermost/logs /repo/mattermost/volumes/app/mattermost/plugins /repo/mattermost/volumes/app/mattermost/client/plugins /repo/mattermost/volumes/app/mattermost/bleve-indexes
         chown -R 2000:2000 /repo/mattermost/volumes/app/mattermost
 
   caddy:
-    image: caddy:2
+    build:
+      context: ${SIFTPIPE_REPO_ROOT}
+      dockerfile: docker/caddy/Dockerfile
+    image: siftpipe-caddy:latest
     restart: unless-stopped
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:-localhost}
     ports:
       - "80:80"
       - "443:443"
+    volumes:
+      - ${SIFTPIPE_REPO_ROOT}/caddy_data:/data
+      - ${SIFTPIPE_REPO_ROOT}/caddy_config:/config
     networks:
       - app-net
     depends_on:
+      init-permissions:
+        condition: service_completed_successfully
       siftpipe-api:
         condition: service_healthy
 
