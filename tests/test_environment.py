@@ -152,5 +152,211 @@ class TestStopNaviqServer(unittest.TestCase):
         mock_process.terminate.assert_not_called()
 
 
+SIDECAR_ENV = {"SIDECAR_URL": "http://sidecar:8080"}
+
+
+def _without_sidecar_env():
+    """Patches os.environ so SIDECAR_URL is unset, whatever the developer's shell/.env has."""
+    cleaned = {k: v for k, v in os.environ.items() if k != "SIDECAR_URL"}
+    return patch.dict(os.environ, cleaned, clear=True)
+
+
+class TestSidecarUrl(unittest.TestCase):
+
+    def test_none_when_unset(self):
+        with _without_sidecar_env():
+            self.assertIsNone(env._sidecar_url())
+
+    def test_none_when_empty(self):
+        with patch.dict(os.environ, {"SIDECAR_URL": ""}):
+            self.assertIsNone(env._sidecar_url())
+
+    def test_trailing_slash_stripped(self):
+        with patch.dict(os.environ, {"SIDECAR_URL": "http://sidecar:8080/"}):
+            self.assertEqual(env._sidecar_url(), "http://sidecar:8080")
+
+
+class TestSidecarPost(unittest.TestCase):
+
+    def test_posts_to_the_fixed_endpoint_with_a_timeout(self):
+        with patch.dict(os.environ, SIDECAR_ENV), \
+             patch.object(env.requests, "post", return_value=MagicMock(status_code=200)) as mock_post:
+            env._sidecar_post("/naviq/reset")
+
+        mock_post.assert_called_once_with("http://sidecar:8080/naviq/reset", timeout=env.SIDECAR_REQUEST_TIMEOUT)
+
+    def test_non_200_raises_with_the_status(self):
+        response = MagicMock(status_code=500, text="Internal Server Error")
+        with patch.dict(os.environ, SIDECAR_ENV), \
+             patch.object(env.requests, "post", return_value=response):
+            with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
+                env._sidecar_post("/mattermost/reset")
+
+    def test_unreachable_sidecar_raises_a_clear_error(self):
+        with patch.dict(os.environ, SIDECAR_ENV), \
+             patch.object(env.requests, "post", side_effect=env.requests.exceptions.ConnectionError("refused")):
+            with self.assertRaisesRegex(RuntimeError, "Could not reach the reset sidecar"):
+                env._sidecar_post("/mattermost/reset")
+
+
+class TestFreshResetTargetsTheRightBackend(unittest.TestCase):
+    """fresh_reset() must use the sidecar inside the containerized stack (no Docker CLI there)
+    and keep the original local Docker path everywhere else."""
+
+    MM_STEPS = ("wait_for_mattermost", "wait_for_mattermost_webapp", "create_admin_account",
+                "run_seed_script", "clear_results_folder")
+
+    def _patch_steps(self, stack):
+        return {name: stack.enter_context(patch.object(env, name)) for name in self.MM_STEPS}
+
+    def test_sidecar_mode_calls_the_sidecar_and_never_touches_docker(self):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, SIDECAR_ENV))
+            steps = self._patch_steps(stack)
+            post = stack.enter_context(patch.object(env, "_sidecar_post"))
+            docker_calls = {name: stack.enter_context(patch.object(env, name))
+                            for name in ("check_docker_available", "docker_down", "wipe_volumes", "docker_up")}
+            run = stack.enter_context(patch.object(env.subprocess, "run"))
+
+            env.fresh_reset(log_fn=lambda *a: None, interactive=False)
+
+        post.assert_called_once_with("/mattermost/reset")
+        for name, mock in docker_calls.items():
+            mock.assert_not_called()
+        run.assert_not_called()
+        for name in self.MM_STEPS:
+            steps[name].assert_called_once()
+
+    def test_local_mode_uses_docker_and_never_the_sidecar(self):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            stack.enter_context(_without_sidecar_env())
+            self._patch_steps(stack)
+            post = stack.enter_context(patch.object(env, "_sidecar_post"))
+            docker_calls = {name: stack.enter_context(patch.object(env, name))
+                            for name in ("check_docker_available", "docker_down", "wipe_volumes", "docker_up")}
+
+            env.fresh_reset(log_fn=lambda *a: None, interactive=False)
+
+        post.assert_not_called()
+        for name, mock in docker_calls.items():
+            mock.assert_called_once()
+
+
+class TestNaviqFreshResetTargetsTheRightBackend(unittest.TestCase):
+
+    def test_sidecar_mode_resets_via_sidecar_and_runs_no_local_manage_py(self):
+        with patch.dict(os.environ, SIDECAR_ENV), \
+             patch.object(env, "_sidecar_post") as post, \
+             patch.object(env, "_wait_for_naviq_container") as wait, \
+             patch.object(env, "clear_results_folder") as clear, \
+             patch.object(env, "naviq_delete_db") as delete_db, \
+             patch.object(env, "naviq_create_test_account") as create_account, \
+             patch.object(env.subprocess, "run") as run, \
+             patch.object(env.subprocess, "Popen") as popen:
+            env.naviq_fresh_reset(log_fn=lambda *a: None)
+
+        post.assert_called_once_with("/naviq/reset")
+        wait.assert_called_once()
+        clear.assert_called_once()
+        delete_db.assert_not_called()
+        create_account.assert_not_called()
+        run.assert_not_called()
+        popen.assert_not_called()
+
+    def test_local_mode_still_runs_the_full_local_sequence(self):
+        with _without_sidecar_env(), \
+             patch.object(env, "_sidecar_post") as post, \
+             patch.object(env, "naviq_delete_db") as delete_db, \
+             patch.object(env, "naviq_create_test_account") as create_account, \
+             patch.object(env, "ensure_naviq_server_running") as ensure, \
+             patch.object(env, "clear_results_folder"), \
+             patch.object(env.subprocess, "run") as run:
+            env.naviq_fresh_reset(log_fn=lambda *a: None)
+
+        post.assert_not_called()
+        delete_db.assert_called_once()
+        create_account.assert_called_once()
+        ensure.assert_called_once()
+        # migrate + the seven seed commands
+        self.assertEqual(run.call_count, 1 + len(NAVIQ_SEED_COMMANDS))
+
+
+class TestEnsureNaviqServerRunningInContainer(unittest.TestCase):
+    """In the containerized stack Docker owns the server process: never spawn one, only wait."""
+
+    def test_no_op_when_already_reachable(self):
+        with patch.dict(os.environ, SIDECAR_ENV), \
+             patch.object(env.requests, "get", return_value=MagicMock(status_code=200)), \
+             patch.object(env.subprocess, "Popen") as popen:
+            env.ensure_naviq_server_running(log_fn=lambda *a: None)
+
+        popen.assert_not_called()
+
+    def test_waits_until_the_container_answers_without_spawning_anything(self):
+        responses = iter([env.requests.exceptions.ConnectionError(),
+                          env.requests.exceptions.ConnectionError(),
+                          MagicMock(status_code=200)])
+
+        def fake_get(*args, **kwargs):
+            result = next(responses)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        with patch.dict(os.environ, SIDECAR_ENV), \
+             patch.object(env.requests, "get", side_effect=fake_get), \
+             patch.object(env.time, "sleep"), \
+             patch.object(env.subprocess, "Popen") as popen:
+            env.ensure_naviq_server_running(log_fn=lambda *a: None)
+
+        popen.assert_not_called()
+
+    def test_raises_timeout_if_the_container_never_answers(self):
+        with patch.dict(os.environ, SIDECAR_ENV), \
+             patch.object(env.requests, "get", side_effect=env.requests.exceptions.ConnectionError()), \
+             patch.object(env.time, "sleep"), \
+             patch.object(env.subprocess, "Popen") as popen:
+            with self.assertRaises(TimeoutError):
+                env.ensure_naviq_server_running(log_fn=lambda *a: None, timeout=0.05)
+
+        popen.assert_not_called()
+
+
+class TestClearResultsFolder(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self._tmp.name, "results")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_removes_files_and_nested_directories(self):
+        os.makedirs(os.path.join(self.path, "dynamic", "shots"))
+        Path(self.path, "a.json").write_text("x")
+        Path(self.path, "dynamic", "shots", "b.png").write_text("y")
+
+        env.clear_results_folder(path=self.path, log_fn=lambda *a: None)
+
+        self.assertTrue(os.path.isdir(self.path))
+        self.assertEqual(os.listdir(self.path), [])
+
+    def test_keeps_the_folder_itself_so_a_bind_mount_survives(self):
+        os.makedirs(self.path)
+        Path(self.path, "a.json").write_text("x")
+        inode_before = os.stat(self.path).st_ino
+
+        env.clear_results_folder(path=self.path, log_fn=lambda *a: None)
+
+        self.assertEqual(os.stat(self.path).st_ino, inode_before)
+
+    def test_creates_the_folder_when_missing(self):
+        env.clear_results_folder(path=self.path, log_fn=lambda *a: None)
+
+        self.assertTrue(os.path.isdir(self.path))
+
+
 if __name__ == "__main__":
     unittest.main()

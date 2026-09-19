@@ -10,6 +10,8 @@ services:
     environment:
       - MM_URL=http://mattermost:8065
       - NAVIQ_URL=http://naviq:8001
+      - SIDECAR_URL=http://sidecar:8080
+      - PLAYWRIGHT_HEADLESS=true
     volumes:
       - ${SIFTPIPE_REPO_ROOT}/results:/app/results
       - ${SIFTPIPE_REPO_ROOT}/evidence:/app/evidence

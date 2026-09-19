@@ -1,0 +1,40 @@
+name: Deploy
+
+# Manual only: nothing deploys unless someone clicks "Run workflow" in the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      reset_history:
+        description: "Type RESET to ALSO permanently wipe SiftPipe's run history after deploying. Leave blank for a normal deploy."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write # lets the job prove its identity to AWS (OIDC); no AWS keys are stored in GitHub
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # The "Run workflow" branch dropdown could pick another branch; only main may deploy.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-arn: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy on the server via SSM
+        env:
+          INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
+          RESET_INPUT: ${{ inputs.reset_history }}
+        run: bash scripts/ssm-deploy.sh
