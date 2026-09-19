@@ -4,7 +4,7 @@ set -e
 cd /app
 
 echo "setuptools>=68.0.0" > /tmp/overrides.txt
-uv pip install --system -r requirements.txt --override /tmp/overrides.txt
+uv pip install -r requirements.txt --override /tmp/overrides.txt
 
 python manage.py migrate
 

@@ -734,7 +734,7 @@ pass further down exercises it directly instead of a stand-in.*
 *Code and feature work above should be stable before this — containerizing
 mid-feature-churn just means rebuilding the image repeatedly for no reason.*
 
-- [ ] **Containerize SiftPipe itself.** No Dockerfile exists for the project
+- [X] **Containerize SiftPipe itself.** No Dockerfile exists for the project
       today — only Mattermost's own submodule Dockerfiles. A Dockerfile for
       `api.py` (Python + Playwright/Chromium deps baked in) plus a
       `docker-compose.yml` that also brings up Mattermost turns AWS setup
@@ -747,7 +747,7 @@ mid-feature-churn just means rebuilding the image repeatedly for no reason.*
 
 ### AWS deployment ease
 
-- [ ] Docker (see "highest-leverage item" above).
+- [X] Docker (see "highest-leverage item" above).
 - [ ] **Caddy instead of nginx + certbot** — automatic HTTPS with a ~5-line
       Caddyfile, meaningfully less manual TLS setup for a short-lived demo
       box.
