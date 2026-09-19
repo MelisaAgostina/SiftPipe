@@ -34,6 +34,21 @@ def wipe_host_dir(host_path: str) -> None:
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
+def truncate_host_file(host_path: str) -> None:
+    # For files bind-mounted directly into a container: deleting the source would make the
+    # container's next start fail (mount source gone), so empty it in place instead. Fails if
+    # missing rather than creating a root-owned file the app's UID couldn't write.
+    parent_dir = os.path.dirname(host_path)
+    filename = os.path.basename(host_path)
+    cmd = [
+        "docker", "run", "--rm",
+        "-v", f"{parent_dir}:/target",
+        "alpine:3.20",
+        "sh", "-c", f"test -f /target/{filename} && : > /target/{filename}",
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
 def delete_host_file(host_path: str) -> None:
     # Bind-mounting the file itself and rm-ing that exact path fails with
     # EBUSY (can't unlink an active mount point) — mount the parent dir

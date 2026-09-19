@@ -806,6 +806,8 @@ mid-feature-churn just means rebuilding the image repeatedly for no reason.*
         matters for a defense-day demo: nothing about the live server
         changes unless someone chooses that exact moment for it to.
 
+[] sudo chown -R 10001:10001 naviq-src/naviq/ (or building the image with a UID that already matches whoever owns that checkout — the design doc's second option) is a real, non-optional one-time step for the actual server setup,
+
 ### Testing / QA
 
 *Do this against the containerized build above, not the bare-venv setup —

@@ -7,6 +7,7 @@ from docker_ops import (
     compose_up_services,
     compose_restart_service,
     delete_host_file,
+    truncate_host_file,
     wipe_host_dir,
 )
 from pydantic import BaseModel
@@ -71,7 +72,7 @@ def siftpipe_reset_history(body: SiftpipeResetRequest):
     compose_files = _env_list("SIFTPIPE_COMPOSE_FILES")
     service = _env("SIFTPIPE_COMPOSE_SERVICE")
 
-    delete_host_file(db_path)
+    truncate_host_file(db_path)
 
     if os.environ.get("SIFTPIPE_RESET_ALSO_CLEAR_ARTIFACTS", "false").lower() == "true":
         wipe_host_dir(_env("SIFTPIPE_RESULTS_DIR"))

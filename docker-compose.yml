@@ -1,0 +1,108 @@
+services:
+  siftpipe-api:
+    build:
+      context: ${SIFTPIPE_REPO_ROOT}
+      dockerfile: docker/siftpipe-api/Dockerfile
+    image: siftpipe-api:latest
+    restart: unless-stopped
+    env_file:
+      - ${SIFTPIPE_REPO_ROOT}/.env
+    environment:
+      - MM_URL=http://mattermost:8065
+      - NAVIQ_URL=http://naviq:8001
+    volumes:
+      - ${SIFTPIPE_REPO_ROOT}/results:/app/results
+      - ${SIFTPIPE_REPO_ROOT}/evidence:/app/evidence
+      - ${SIFTPIPE_REPO_ROOT}/siftpipe_history.db:/app/siftpipe_history.db
+      - ${SIFTPIPE_REPO_ROOT}/db_backups:/app/db_backups
+      - ${SIFTPIPE_REPO_ROOT}/logs:/app/logs
+      - ${NAVIQ_SRC_PATH}:/app/naviq-src/naviq:ro
+    networks:
+      - app-net
+      - control-net
+    depends_on:
+      init-permissions:
+        condition: service_completed_successfully
+      naviq:
+        condition: service_healthy
+
+  sidecar:
+    build:
+      context: ${SIFTPIPE_REPO_ROOT}
+      dockerfile: docker/sidecar/Dockerfile
+    image: siftpipe-sidecar:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SIFTPIPE_REPO_ROOT}:${SIFTPIPE_REPO_ROOT}:ro
+    environment:
+      - COMPOSE_PROJECT_NAME=siftpipe
+      - SIFTPIPE_REPO_ROOT=${SIFTPIPE_REPO_ROOT}
+      - NAVIQ_SRC_PATH=${NAVIQ_SRC_PATH}
+      - SIDECAR_REPO_ROOT=${SIFTPIPE_REPO_ROOT}
+      - MATTERMOST_COMPOSE_FILES=${SIFTPIPE_REPO_ROOT}/mattermost/docker-compose.yml,${SIFTPIPE_REPO_ROOT}/docker-compose.yml,${SIFTPIPE_REPO_ROOT}/docker-compose.override.yml
+      - MATTERMOST_COMPOSE_SERVICES=mattermost,postgres
+      - MATTERMOST_VOLUME_DIRS=${SIFTPIPE_REPO_ROOT}/mattermost/volumes/db,${SIFTPIPE_REPO_ROOT}/mattermost/volumes/app
+      - NAVIQ_DB_PATH=${NAVIQ_SRC_PATH}/db.sqlite3
+      - NAVIQ_COMPOSE_FILES=${SIFTPIPE_REPO_ROOT}/docker-compose.yml
+      - NAVIQ_COMPOSE_SERVICE=naviq
+      - SIFTPIPE_HISTORY_DB_PATH=${SIFTPIPE_REPO_ROOT}/siftpipe_history.db
+      - SIFTPIPE_COMPOSE_FILES=${SIFTPIPE_REPO_ROOT}/docker-compose.yml
+      - SIFTPIPE_COMPOSE_SERVICE=siftpipe-api
+    networks:
+      - control-net
+
+  naviq:
+    build:
+      context: ${SIFTPIPE_REPO_ROOT}
+      dockerfile: docker/naviq/Dockerfile
+    image: siftpipe-naviq:latest
+    restart: unless-stopped
+    environment:
+      - NAVIQ_USERNAME=${NAVIQ_USERNAME}
+      - NAVIQ_PASSWORD=${NAVIQ_PASSWORD}
+    volumes:
+      - ${NAVIQ_SRC_PATH}:/app
+    networks:
+      - app-net
+    depends_on:
+      init-permissions:
+        condition: service_completed_successfully
+
+  # On Linux, bind-mounted host dirs must be owned by the UID each container runs as
+  # (10001 for siftpipe-api/naviq, 2000 for mattermost) or they crash-loop on first write.
+  init-permissions:
+    image: alpine:3.20
+    restart: "no"
+    network_mode: none
+    volumes:
+      - ${SIFTPIPE_REPO_ROOT}:/repo
+      - ${NAVIQ_SRC_PATH}:/naviq-src
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /repo/results /repo/evidence /repo/db_backups /repo/logs
+        touch /repo/siftpipe_history.db
+        chown -R 10001:10001 /repo/results /repo/evidence /repo/db_backups /repo/logs /repo/siftpipe_history.db /naviq-src
+        mkdir -p /repo/mattermost/volumes/app/mattermost/config /repo/mattermost/volumes/app/mattermost/data /repo/mattermost/volumes/app/mattermost/logs /repo/mattermost/volumes/app/mattermost/plugins /repo/mattermost/volumes/app/mattermost/client/plugins /repo/mattermost/volumes/app/mattermost/bleve-indexes
+        chown -R 2000:2000 /repo/mattermost/volumes/app/mattermost
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - app-net
+    depends_on:
+      siftpipe-api:
+        condition: service_healthy
+
+networks:
+  app-net:
+    name: app-net
+  control-net:
+    name: control-net
