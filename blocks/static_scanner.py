@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import re
 from pathlib import Path
 
 from blocks.targets import MATTERMOST, result_path
@@ -200,6 +201,13 @@ def rank_by_security_relevance(files):
     everything unrelated) without letting one repeated filename crowd out
     a different, more specific security-relevant file.
     """
+    unique_relevant, repeated_relevant, everything_else = _path_tiers(files)
+    return unique_relevant + repeated_relevant + everything_else
+
+
+def _path_tiers(files):
+    """The three path-only groups rank_by_security_relevance concatenates, kept separate so
+    rank_by_content can reuse them as a small bonus."""
     seen_basenames = set()
     unique_relevant, repeated_relevant, everything_else = [], [], []
     for file_path in files:
@@ -213,8 +221,152 @@ def rank_by_security_relevance(files):
         else:
             seen_basenames.add(basename)
             unique_relevant.append(file_path)
+    return unique_relevant, repeated_relevant, everything_else
 
-    return unique_relevant + repeated_relevant + everything_else
+
+# ── Content-aware ranking ─────────────────────────────────────────────────────
+# Path names alone can't see where a codebase's real logic lives: Django names its
+# important files views.py/forms.py in every app, so on NaViQ only 8 of 109 candidates
+# matched a path keyword and 7 of those were near-empty admin.py registration files -
+# the other MAX_FILES slots went to manage.py and apps.py. Each signal group below
+# mirrors an OWASP category B3 already asks the LLM about (OWASP_SCOPE above), matched
+# with cheap regexes on the same first SCAN_HEAD_CHARS characters B3 would send. This
+# only decides *which* files win the limited slots; the LLM still makes every judgment.
+SCAN_HEAD_CHARS = 15000
+MIN_MEANINGFUL_CHARS = 150      # below this a file can't hold real logic (empty __init__.py, one-line urls.py)
+TINY_FILE_PENALTY = 3.0         # larger than any path bonus, so trivia never outranks a real file
+UNIQUE_RELEVANT_PATH_BONUS = 2.5
+REPEATED_RELEVANT_PATH_BONUS = 0.5
+
+# Plain substring checks, not regexes: this runs over every candidate file (3,682 for
+# Mattermost) on each B3 run, and alternation regexes over 15k characters took over a minute.
+# Deliberately absent: tokens that appear in almost every file (an ORM's objects.filter(,
+# model .save(, Go's .Exec(), because a signal that always fires ranks nothing.
+#
+# (signal name, weight, case-sensitive substrings, lower-case substrings matched case-insensitively).
+# A file's score adds each group's weight once, however often it matches. Every token is text
+# to look for inside the scanned source (e.g. "eval("); nothing here is ever executed.
+CONTENT_SIGNALS = (
+    # A05 injection: raw SQL and command execution
+    ("injection_sinks", 3,
+     ("cursor.execute", ".raw(", ".extra(", "RawSQL", "subprocess.", "os.system", "os.popen", "exec.Command",
+      "child_process", "shell=True", "Runtime.getRuntime", "execSync"), ()),
+    # A05 injection: unsafe deserialization/eval and unescaped output (XSS, template injection)
+    ("unsafe_eval_or_output", 2,
+     ("eval(", "pickle.load", "yaml.load(", "marshal.loads", "unserialize", "ObjectInputStream", "mark_safe", "|safe",
+      "innerHTML", "dangerouslySetInnerHTML", "template.HTML(", "Markup(", "autoescape off", "document.write"), ()),
+    # attack surface: code that reads attacker-controlled input or defines routes
+    ("request_input", 3,
+     ("request.GET", "request.POST", "request.FILES", "request.body", "request.data", "request.args", "request.form",
+      "request.json", "request.COOKIES", "request.META", "request.query_params", "r.FormValue", "r.URL.Query",
+      "r.Body", "c.Query(", "c.Param(", "c.PostForm", "c.Params.", "getParameter", "req.body", "req.query", "req.params",
+      "mux.Vars", "@app.route", "@api_view", "HandleFunc"), ()),
+    # A01 access control: authorization decorators and permission checks
+    ("access_control", 3,
+     ("login_required", "permission_required", "is_staff", "is_superuser", "has_perm", "HasPermission", "IsAuthenticated",
+      "AllowAny", "csrf_exempt", "get_object_or_404", "Authorize(", "user_passes_test", "RequireUserId"), ("rbac",)),
+    # path traversal / SSRF / open redirect / uploads
+    ("file_and_network", 2,
+     ("open(", "os.path.join", "send_file", "FileResponse", "os.Open", "ioutil.", "filepath.Join", "requests.get(",
+      "requests.post(", "requests.put(", "requests.request(", "urlopen(", "http.Get(", "http.Post(", "redirect(",
+      "HttpResponseRedirect", "shutil.", "tempfile."), ("upload",)),
+    # A02 misconfiguration and hardcoded secrets
+    ("secrets_and_config", 2, (),
+     ("secret", "api_key", "apikey", "passwd", "credential", "debug = true", "debug=true", "allowed_hosts", "verify=false",
+      "verify = false", "insecureskipverify", "cors_allow_all", "cors_origin", "secure_ssl", "secure_hsts", "secure_proxy",
+      "x_frame")),
+    # A07 authentication, sessions, tokens and weak crypto
+    ("auth_and_crypto", 2, (),
+     ("check_password", "set_password", "authenticate(", "jwt", "bearer", "session", "make_password", "md5", "sha1", "rc4",
+      "math/rand", "math.random", "random.randint", "random.choice", "random.random")),
+)
+
+# SQL assembled from pieces (the actual injection pattern), as opposed to merely running SQL.
+_STRING_BUILT_SQL = re.compile(
+    r"(?:select|insert into|update|delete from)\b[^\n]{0,200}(?:%s|%d|\{\w|\"\s*\+|sprintf|\.format\()", re.IGNORECASE
+)
+_SQL_HINTS = ("select ", "insert into", "update ", "delete from")
+
+
+def content_signals(content):
+    """[(signal_name, weight), ...] for every signal group present in `content`. Pure."""
+    lowered = content.lower()
+    found = []
+    for name, weight, case_sensitive, case_insensitive in CONTENT_SIGNALS:
+        hit = any(token in content for token in case_sensitive) or any(token in lowered for token in case_insensitive)
+        if not hit and name == "injection_sinks":
+            hit = any(hint in lowered for hint in _SQL_HINTS) and _STRING_BUILT_SQL.search(content) is not None
+        if hit:
+            found.append((name, weight))
+    return found
+
+
+# Path components that mark scaffolding rather than shipped application logic. Test helpers
+# (Mattermost's storetest/, testlib) are dense in SQL and auth calls, so without this they
+# outrank the real handlers; tooling directories (scripts/, migrations/) are one-off code.
+TEST_PATH_PENALTY = 3.0
+TOOLING_PATH_PENALTY = 1.5
+_TEST_DIRS = frozenset({"test", "tests", "testing", "testdata", "testutil", "testutils", "testlib", "storetest",
+                        "mocks", "mock", "fixtures", "fixture", "e2e", "cypress", "spec", "specs", "__tests__"})
+_TOOLING_DIRS = frozenset({"scripts", "tools", "examples", "migrations", "demo", "docs"})
+
+
+def path_penalty(path, root=None):
+    """TEST_PATH_PENALTY for test scaffolding, TOOLING_PATH_PENALTY for dev tooling, else 0.
+    Components are taken relative to `root` (the target's source dir) so a checkout that
+    happens to live under a folder called "tests" doesn't penalize every file."""
+    relative = os.path.relpath(path, root) if root else path
+    parts = re.split(r"[\\/]", relative.lower())
+    directories, stem = parts[:-1], os.path.splitext(parts[-1])[0]
+    if (
+        any(part in _TEST_DIRS for part in directories)
+        or stem.startswith("test_")
+        or stem.endswith(("_test", "_tests", "_mock", "_mocks"))
+        or "testutil" in stem or "test_util" in stem or "test_helper" in stem
+    ):
+        return TEST_PATH_PENALTY
+    if any(part in _TOOLING_DIRS for part in directories):
+        return TOOLING_PATH_PENALTY
+    return 0.0
+
+
+def _read_head(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read(SCAN_HEAD_CHARS)
+    except OSError:
+        return None
+
+
+def rank_by_content(files, read_head=_read_head, root=None):
+    """
+    Orders `files` by how likely they are to hold something worth an LLM call:
+    [(path, score, [signal names]), ...], best first. Score = content signals + a small
+    bonus when the path also matches SECURITY_RELEVANT_KEYWORDS (see rank_by_security_relevance),
+    minus TINY_FILE_PENALTY for near-empty files and path_penalty() for test scaffolding and
+    dev tooling. Ties go to the larger file (more code to go wrong), then to the original
+    order, so the result is deterministic.
+
+    Nothing is dropped: a small project with fewer files than MAX_FILES still scans them all,
+    and an unreadable file just sorts last (the scan loop reports the real error itself).
+    `read_head` is injectable so this stays testable without touching the filesystem; `root` is
+    the target's source dir, so path_penalty() only looks at directories inside it.
+    """
+    unique_relevant, repeated_relevant, _ = _path_tiers(files)
+    path_bonus = {path: UNIQUE_RELEVANT_PATH_BONUS for path in unique_relevant}
+    path_bonus.update({path: REPEATED_RELEVANT_PATH_BONUS for path in repeated_relevant})
+
+    scored = []
+    for index, path in enumerate(files):
+        head = read_head(path) or ""
+        signals = content_signals(head)
+        score = sum(weight for _, weight in signals) + path_bonus.get(path, 0.0) - path_penalty(path, root)
+        if len(head) < MIN_MEANINGFUL_CHARS:
+            score -= TINY_FILE_PENALTY
+        scored.append((path, score, [name for name, _ in signals], len(head), index))
+
+    scored.sort(key=lambda entry: (-entry[1], -entry[3], entry[4]))
+    return [(path, score, signals) for path, score, signals, _, _ in scored]
 
 
 def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
@@ -245,16 +397,20 @@ def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
     )
     logger.info(f"Total files listed: {len(files)}")
 
-    files = rank_by_security_relevance(files)
+    ranked = rank_by_content(files, root=target_profile.source_dir)[:MAX_FILES]
+    logger.info(
+        "B3 file selection (score, signals): "
+        + "; ".join(f"{os.path.basename(path)} ({score:g}: {', '.join(signals) or 'none'})" for path, score, signals in ranked)
+    )
 
     results = []
 
-    files_to_scan = files[:MAX_FILES]
+    files_to_scan = [path for path, _, _ in ranked]
     total_files = len(files_to_scan)
     for index, file_path in enumerate(files_to_scan, start=1):
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()[:15000]  # Truncamiento de seguridad
+                content = f.read()[:SCAN_HEAD_CHARS]  # Truncamiento de seguridad
 
             logger.info(f"Analizando ({index}/{total_files}): {os.path.basename(file_path)}...")
             prompt = get_analysis_prompt(content)
