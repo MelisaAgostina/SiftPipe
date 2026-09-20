@@ -2170,3 +2170,47 @@ Not yet done: this closes the discovery+detection gap, not the specific
 lutto_website finding itself - no live run against a real instance of it
 yet, so "does this actually fire against the real bug" is still unverified
 in practice, only by construction.
+
+
+================================================================================
+SESSION 14 — B3: numbered source lines so the LLM cites the right one
+(2026-09-20)
+================================================================================
+
+Problem: B3's reported "line" numbers were unreliable - some off by 20+
+against real NaViQ code. B3 sent the raw file text and asked the model to
+report the line of each finding, which forces it to count newlines
+implicitly. LLMs read tokens, not lines, so the error grows with distance
+from the top of the file. Every downstream consumer of "line" (the
+correlation step's matched_b3 location, the PDF report's file:line) inherited
+the wrong number. An earlier decision had accepted this as a known limit
+("no line-number correction"); this fix addresses it at the source instead
+of correcting after the fact.
+
+Solution: blocks/static_scanner.py gained number_lines(), which prefixes
+every line with its 1-based number ("  12| code", right-aligned).
+run_static_analysis() now passes get_analysis_prompt(number_lines(content));
+the 15,000-char truncation still happens first, so numbers always match the
+real file. Splits on "\n" only, not str.splitlines(), so form feed / U+2028
+(not line breaks in an editor) cannot shift the numbering. The prompt gained
+instruction 6: lines are prefixed "N|", copy that number into "line", do not
+count, and do not include the prefix in "evidence".
+
+Tests: 7 new in test_static_scanner.py (numbering, right-alignment, trailing
+newline, blank lines, empty input, form-feed, prompt wording).
+
+Verification: 411/411 tests passing, ruff clean. Live check against real
+NaViQ files with claude-haiku-4-5, same prompt with and without numbering,
+metric = does the cited line contain the quoted evidence (independent of
+whether the finding is a real vulnerability):
+  without numbering: 0 of 5 cited lines matched (off by 8 to 30 lines)
+  with numbering:    3 of 3 matched exactly (downloads/views.py x2,
+                     evaluation/management/commands/batch_evaluate.py x1)
+No "N| " prefix leaked into any evidence snippet.
+
+Not yet done / caveats: small sample (3 files with findings, 1 run each).
+On downloads/webhooks.py the numbered prompt returned no findings where the
+old one returned two (both IDOR claims, likely false positives) - one
+sample, so not known whether numbering changes detection rate. Findings on
+two other files (evaluation/admin.py: none in either variant) were not
+informative. A wider run is still needed to quantify the effect.

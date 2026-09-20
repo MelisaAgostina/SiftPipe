@@ -117,7 +117,24 @@ def load_files_list(file_path):
         return [line.strip() for line in f if line.strip()]
 
 
+def number_lines(content):
+    """
+    Prefix every line with its 1-based line number ("  12| code"), so the LLM
+    can copy the real number into its "line" field instead of counting lines
+    itself - LLMs are unreliable at counting, real gap found live against
+    NaViQ: reported lines were off by 20+. Split on "\\n" only (not
+    str.splitlines(), which also breaks on \\x0c/\\u2028 that editors don't
+    count as line breaks), so numbers match what an editor shows. Pure.
+    """
+    lines = content.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()  # trailing newline is not an extra line
+    width = len(str(len(lines)))
+    return "\n".join(f"{n:>{width}}| {line}" for n, line in enumerate(lines, start=1))
+
+
 def get_analysis_prompt(file_content):
+    """`file_content` is expected to already carry number_lines() prefixes."""
     prompt = f"""You are a security auditor. Analyze the provided code for OWASP vulnerabilities.
 
 FOCUS ONLY ON:
@@ -149,8 +166,11 @@ CRITICAL INSTRUCTIONS:
    That is not a finding. "evidence" must always be an exact snippet of code that IS actually present
    and IS actually the problem, at its real "line" number (never 0). If a category has nothing wrong,
    omit it from the array entirely instead of describing its own absence.
+6. Every line of the code below starts with its line number and a "|" separator (e.g. "12| x = 1").
+   Set "line" to the number shown on the line where the problem is. Do NOT count lines yourself.
+   Do NOT include the "N| " prefix in "evidence" - quote only the code itself.
 
-CODE TO ANALYZE:
+CODE TO ANALYZE (each line prefixed with its line number):
 {file_content}
 """
     return prompt
@@ -413,7 +433,7 @@ def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
                 content = f.read()[:SCAN_HEAD_CHARS]  # Truncamiento de seguridad
 
             logger.info(f"Analizando ({index}/{total_files}): {os.path.basename(file_path)}...")
-            prompt = get_analysis_prompt(content)
+            prompt = get_analysis_prompt(number_lines(content))
             llm_response = ask_llm(prompt)
             logger.debug(f"RAW LLM RESPONSE: {llm_response}")
 

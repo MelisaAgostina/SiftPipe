@@ -12,6 +12,7 @@ from blocks.static_scanner import (
     content_signals,
     get_analysis_prompt,
     load_files_list,
+    number_lines,
     path_penalty,
     rank_by_content,
     rank_by_security_relevance,
@@ -194,6 +195,41 @@ class TestGetAnalysisPrompt(unittest.TestCase):
         prompt = get_analysis_prompt("os.system(user_input)")
         self.assertIn("cwe_id", prompt)
         self.assertIn("CWE-89", prompt)
+
+
+class TestNumberLines(unittest.TestCase):
+    """
+    Real gap found live against NaViQ: the LLM's reported "line" was off by
+    20+ because it had to count lines itself. Each line is now sent with its
+    real number so the model copies it instead of counting.
+    """
+
+    def test_prefixes_each_line_with_its_one_based_number(self):
+        self.assertEqual(number_lines("a\nb\nc"), "1| a\n2| b\n3| c")
+
+    def test_numbers_are_right_aligned_to_the_widest_number(self):
+        numbered = number_lines("\n".join(f"x{i}" for i in range(1, 11)))
+        self.assertEqual(numbered.splitlines()[0], " 1| x1")
+        self.assertEqual(numbered.splitlines()[9], "10| x10")
+
+    def test_trailing_newline_does_not_add_a_phantom_line(self):
+        self.assertEqual(number_lines("a\nb\n"), "1| a\n2| b")
+
+    def test_blank_lines_keep_their_number(self):
+        self.assertEqual(number_lines("a\n\nc"), "1| a\n2| \n3| c")
+
+    def test_empty_content_yields_empty_string(self):
+        self.assertEqual(number_lines(""), "")
+
+    def test_only_newline_counts_as_a_line_break(self):
+        """Form feed / U+2028 aren't line breaks in an editor, so they must not shift numbering."""
+        self.assertEqual(number_lines("a\x0cb\nc"), "1| a\x0cb\n2| c")
+
+    def test_prompt_explains_the_line_number_prefix(self):
+        prompt = get_analysis_prompt(number_lines("os.system(user_input)"))
+        self.assertIn("1| os.system(user_input)", prompt)
+        self.assertIn("Do NOT count lines yourself", prompt)
+        self.assertIn('Do NOT include the "N| " prefix in "evidence"', prompt)
 
 
 class TestRankBySecurityRelevance(unittest.TestCase):
