@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE_URL = "http://localhost:8065/api/v4"
+BASE_URL = f"{os.getenv('MM_URL', 'http://localhost:8065')}/api/v4"
 ADMIN_EMAIL = os.getenv("MM_ADMIN_EMAIL", "test@mail.com")
 ADMIN_PASS = os.getenv("MM_ADMIN_PASS")  # never hardcode this      # Cambiar por tu contraseña admin
 

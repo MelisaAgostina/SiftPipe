@@ -7,8 +7,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from blocks.static_scanner import (
     OWASP_SCOPE,
+    TEST_PATH_PENALTY,
+    TOOLING_PATH_PENALTY,
+    content_signals,
     get_analysis_prompt,
     load_files_list,
+    number_lines,
+    path_penalty,
+    rank_by_content,
     rank_by_security_relevance,
     scan_and_save_files,
 )
@@ -191,6 +197,41 @@ class TestGetAnalysisPrompt(unittest.TestCase):
         self.assertIn("CWE-89", prompt)
 
 
+class TestNumberLines(unittest.TestCase):
+    """
+    Real gap found live against NaViQ: the LLM's reported "line" was off by
+    20+ because it had to count lines itself. Each line is now sent with its
+    real number so the model copies it instead of counting.
+    """
+
+    def test_prefixes_each_line_with_its_one_based_number(self):
+        self.assertEqual(number_lines("a\nb\nc"), "1| a\n2| b\n3| c")
+
+    def test_numbers_are_right_aligned_to_the_widest_number(self):
+        numbered = number_lines("\n".join(f"x{i}" for i in range(1, 11)))
+        self.assertEqual(numbered.splitlines()[0], " 1| x1")
+        self.assertEqual(numbered.splitlines()[9], "10| x10")
+
+    def test_trailing_newline_does_not_add_a_phantom_line(self):
+        self.assertEqual(number_lines("a\nb\n"), "1| a\n2| b")
+
+    def test_blank_lines_keep_their_number(self):
+        self.assertEqual(number_lines("a\n\nc"), "1| a\n2| \n3| c")
+
+    def test_empty_content_yields_empty_string(self):
+        self.assertEqual(number_lines(""), "")
+
+    def test_only_newline_counts_as_a_line_break(self):
+        """Form feed / U+2028 aren't line breaks in an editor, so they must not shift numbering."""
+        self.assertEqual(number_lines("a\x0cb\nc"), "1| a\x0cb\n2| c")
+
+    def test_prompt_explains_the_line_number_prefix(self):
+        prompt = get_analysis_prompt(number_lines("os.system(user_input)"))
+        self.assertIn("1| os.system(user_input)", prompt)
+        self.assertIn("Do NOT count lines yourself", prompt)
+        self.assertIn('Do NOT include the "N| " prefix in "evidence"', prompt)
+
+
 class TestRankBySecurityRelevance(unittest.TestCase):
     """
     Real gap found live 2026-09-05: with MAX_FILES=10 capping B3's scan of
@@ -245,6 +286,169 @@ class TestRankBySecurityRelevance(unittest.TestCase):
         # The repeated admin.py files still rank ahead of the truly
         # unrelated file - the keyword's signal isn't thrown away entirely.
         self.assertLess(ranked.index("contact/admin.py"), ranked.index("misc/notes.py"))
+
+
+REALISTIC_BODY = "\n".join(f"x{i} = {i}" for i in range(40))   # comfortably above MIN_MEANINGFUL_CHARS
+
+
+def _reader(contents):
+    """Fake read_head: file path -> text (None simulates an unreadable file)."""
+    return lambda path: contents[path]
+
+
+class TestContentSignals(unittest.TestCase):
+
+    def names(self, text):
+        return {name for name, _ in content_signals(text)}
+
+    def test_plain_code_has_no_signals(self):
+        self.assertEqual(content_signals(REALISTIC_BODY), [])
+
+    def test_django_view_reading_input_behind_an_auth_decorator(self):
+        code = "@login_required\ndef view(request):\n    name = request.POST['name']\n"
+
+        self.assertTrue({"request_input", "access_control"} <= self.names(code))
+
+    def test_go_handler_signals(self):
+        code = 'func h(c *Context, w http.ResponseWriter, r *http.Request) {\n  id := c.Params.UserId\n  c.RequireUserId()\n}'
+
+        self.assertTrue({"request_input", "access_control"} <= self.names(code))
+
+    def test_command_execution_is_an_injection_sink(self):
+        self.assertIn("injection_sinks", self.names("subprocess.run(cmd, shell=True)"))
+
+    def test_sql_assembled_from_pieces_is_an_injection_sink(self):
+        self.assertIn("injection_sinks", self.names('q := fmt.Sprintf("SELECT * FROM users WHERE id = %s", id)'))
+
+    def test_a_plain_parameterized_query_is_not_flagged_as_string_built(self):
+        self.assertNotIn("injection_sinks", self.names('rows := stmt.Run("SELECT id FROM users WHERE id = ?", id)'))
+
+    def test_secret_matching_ignores_case(self):
+        self.assertIn("secrets_and_config", self.names("apiKey = os.getenv('API_KEY'); Secret_Value = 1"))
+
+    def test_each_group_counts_once_however_often_it_matches(self):
+        once = content_signals("subprocess.run(a)")
+        many = content_signals("subprocess.run(a)\n" * 50)
+
+        self.assertEqual(once, many)
+
+    def test_ubiquitous_orm_and_query_calls_are_not_signals(self):
+        # Tokens present in nearly every file rank nothing; see CONTENT_SIGNALS' comment.
+        self.assertEqual(content_signals("Item.objects.filter(a=1)\nobj.save()\ndb.Exec(q)\n" + REALISTIC_BODY), [])
+
+
+class TestPathPenalty(unittest.TestCase):
+
+    def test_ordinary_application_file_has_no_penalty(self):
+        self.assertEqual(path_penalty("src/api4/post.go"), 0.0)
+
+    def test_test_scaffolding_directories_are_penalized(self):
+        self.assertEqual(path_penalty("server/channels/store/storetest/channel_store.go"), TEST_PATH_PENALTY)
+        self.assertEqual(path_penalty("app/tests/helpers.py"), TEST_PATH_PENALTY)
+
+    def test_test_named_files_are_penalized(self):
+        self.assertEqual(path_penalty("api4/shared_channel_test_utils.go"), TEST_PATH_PENALTY)
+        self.assertEqual(path_penalty("api4/handler_test.go"), TEST_PATH_PENALTY)
+        self.assertEqual(path_penalty("app/test_users.py"), TEST_PATH_PENALTY)
+
+    def test_dev_tooling_directories_get_the_smaller_penalty(self):
+        self.assertEqual(path_penalty("scripts/create_tables.py"), TOOLING_PATH_PENALTY)
+        self.assertLess(TOOLING_PATH_PENALTY, TEST_PATH_PENALTY)
+
+    def test_a_words_like_latest_or_contest_is_not_mistaken_for_test(self):
+        self.assertEqual(path_penalty("api/latest.go"), 0.0)
+        self.assertEqual(path_penalty("contest/views.py"), 0.0)
+
+    def test_only_directories_inside_the_source_root_count(self):
+        # The checkout itself lives under a folder called "tests" - that must not penalize every file.
+        path = "/home/dev/tests/target/src/views.py"
+
+        self.assertEqual(path_penalty(path), TEST_PATH_PENALTY)
+        self.assertEqual(path_penalty(path, root="/home/dev/tests/target"), 0.0)
+
+
+class TestRankByContent(unittest.TestCase):
+    """
+    Real gap found live 2026-09-19 against NaViQ (containerized run): with path names as the only
+    signal, 7 of B3's 10 slots went to near-empty admin.py registration files and 2 more to
+    manage.py/apps.py, so a scan that "found nothing" had never looked at users/views.py or
+    evaluation/views.py at all.
+    """
+
+    def rank(self, contents, **kwargs):
+        return [path for path, _, _ in rank_by_content(list(contents), _reader(contents), **kwargs)]
+
+    def test_files_with_real_logic_outrank_boilerplate_registration_files(self):
+        contents = {
+            "blog/admin.py": "from django.contrib import admin\nadmin.site.register(Post)\n",
+            "manage.py": "import os\nos.environ.setdefault('X', 'y')\n" + REALISTIC_BODY,
+            "users/views.py": "@login_required\ndef profile(request):\n    return render(request.GET['next'])\n" + REALISTIC_BODY,
+        }
+
+        ranked = self.rank(contents)
+
+        self.assertEqual(ranked[0], "users/views.py")
+
+    def test_a_tiny_file_ranks_below_a_normal_file_with_no_signals(self):
+        contents = {"pkg/__init__.py": "", "pkg/util.py": REALISTIC_BODY}
+
+        self.assertEqual(self.rank(contents), ["pkg/util.py", "pkg/__init__.py"])
+
+    def test_nothing_is_dropped(self):
+        contents = {"a.py": "", "b.py": REALISTIC_BODY, "c.py": None}
+
+        self.assertEqual(sorted(self.rank(contents)), ["a.py", "b.py", "c.py"])
+
+    def test_an_unreadable_file_sorts_last(self):
+        contents = {"a.py": None, "b.py": REALISTIC_BODY}
+
+        self.assertEqual(self.rank(contents), ["b.py", "a.py"])
+
+    def test_test_scaffolding_does_not_outrank_a_real_handler_that_it_narrowly_beats_on_content(self):
+        """The penalty exists to break near-ties: Mattermost's storetest/ files scored just above
+        its API handlers on content alone. Without the penalty the scaffold below wins 13 to 12."""
+        scaffold = "subprocess.run(x)\nrequest.GET\nlogin_required\nopen(f)\nsecret\n" + REALISTIC_BODY
+        handler = "request.GET\nlogin_required\nopen(f)\nsecret\njwt\n" + REALISTIC_BODY
+        contents = {"store/storetest/user_store.go": scaffold, "api4/user.go": handler}
+
+        ranked = dict((path, score) for path, score, _ in rank_by_content(list(contents), _reader(contents)))
+        self.assertGreater(ranked["api4/user.go"], ranked["store/storetest/user_store.go"])
+
+        no_penalty = {path: content_signals(text) for path, text in contents.items()}
+        raw = {path: sum(weight for _, weight in signals) for path, signals in no_penalty.items()}
+        self.assertGreater(raw["store/storetest/user_store.go"], raw["api4/user.go"])
+
+    def test_a_small_file_whose_path_signals_security_still_beats_unrelated_code(self):
+        # navitools/decorators.py is 400 bytes but is NaViQ's staff-only gate.
+        contents = {
+            "navitools/decorators.py": "def staff_only(view):\n    if not request.user.is_staff:\n        raise PermissionDenied\n" + "# pad\n" * 15,
+            "misc/report.py": REALISTIC_BODY,
+        }
+
+        self.assertEqual(self.rank(contents)[0], "navitools/decorators.py")
+
+    def test_ties_go_to_the_larger_file_then_to_original_order(self):
+        contents = {"a.py": REALISTIC_BODY, "b.py": REALISTIC_BODY + "\nextra = 1", "c.py": REALISTIC_BODY}
+
+        self.assertEqual(self.rank(contents), ["b.py", "a.py", "c.py"])
+
+    def test_ranking_is_deterministic(self):
+        contents = {
+            "a.py": "request.GET\n" + REALISTIC_BODY,
+            "b.py": "request.POST\n" + REALISTIC_BODY,
+            "c.py": REALISTIC_BODY,
+        }
+
+        self.assertEqual(self.rank(contents), self.rank(contents))
+
+    def test_results_carry_the_score_and_the_signals_behind_it(self):
+        contents = {"api/views.py": "request.GET\nlogin_required\n" + REALISTIC_BODY}
+
+        (path, score, signals), = rank_by_content(list(contents), _reader(contents))
+
+        self.assertEqual(path, "api/views.py")
+        self.assertEqual(sorted(signals), ["access_control", "request_input"])
+        self.assertGreater(score, 0)
 
 
 class TestOwaspScopeCodes(unittest.TestCase):

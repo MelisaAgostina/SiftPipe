@@ -4,6 +4,7 @@ import { useB8, useB9 } from "@/lib/queries";
 import type { B9Classification, B9Entry } from "@/lib/types";
 import { useLang } from "@/hooks/use-lang";
 import type { Strings } from "@/lib/strings";
+import { CLASSIFICATION_DISPLAY_LABELS } from "@/lib/classification";
 import { mapB8Finding, mapB9Entry } from "./mappers";
 import { Callout } from "./Callout";
 import { FirstRunGuide } from "./FirstRunGuide";
@@ -83,11 +84,16 @@ function FilterChips<T extends string>({
   options,
   selected,
   onToggle,
+  renderLabel = (opt) => opt,
 }: {
   label: string;
   options: T[];
   selected: Set<T>;
   onToggle: (value: T) => void;
+  /** Display text for an option, independent of the value used for
+   * selection/filtering - e.g. classification's real "DESCARTED" value
+   * still shows as "DISCARDED" (see lib/classification.ts). */
+  renderLabel?: (opt: T) => string;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -100,7 +106,7 @@ function FilterChips<T extends string>({
           onPressedChange={() => onToggle(opt)}
           className="text-xs"
         >
-          {opt}
+          {renderLabel(opt)}
         </Toggle>
       ))}
     </div>
@@ -150,6 +156,7 @@ export function AllFindings({
           options={CLASSIFICATION_OPTIONS}
           selected={classifications}
           onToggle={(v) => setClassifications((prev) => toggleInSet(prev, v))}
+          renderLabel={(opt) => CLASSIFICATION_DISPLAY_LABELS[opt]}
         />
         <FilterChips
           label={t.correlationView.filterSeverityLabel}

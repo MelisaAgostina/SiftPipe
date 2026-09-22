@@ -1,0 +1,21 @@
+services:
+  fixture-mattermost:
+    image: alpine:3.20
+    command: sh -c "echo original > /data/marker.txt && sleep infinity"
+    volumes:
+      - ./fixture-volumes/mattermost:/data
+  fixture-postgres:
+    image: alpine:3.20
+    command: sh -c "echo original > /data/marker.txt && sleep infinity"
+    volumes:
+      - ./fixture-volumes/postgres:/data
+  fixture-naviq:
+    image: alpine:3.20
+    command: sh -c "if [ ! -f /data/db.sqlite3 ]; then echo fresh-db > /data/db.sqlite3; fi; sleep infinity"
+    volumes:
+      - ./fixture-volumes/naviq:/data
+  fixture-siftpipe:
+    image: alpine:3.20
+    command: sh -c "if [ ! -f /data/siftpipe_history.db ]; then echo fresh-history > /data/siftpipe_history.db; fi; sleep infinity"
+    volumes:
+      - ./fixture-volumes/siftpipe:/data

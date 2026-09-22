@@ -27,6 +27,34 @@ WEBAPP_READY_TIMEOUT = 90                # seconds to wait for the React webapp 
 # are bind mounts, not named volumes — `docker compose down -v` does NOT
 # remove them. They have to be wiped explicitly for a real fresh start.
 
+# --- Containerized stack (docker-compose.yml) ---
+# Inside the siftpipe-api container there's no Docker CLI and no NaViQ venv,
+# so target resets are delegated to the sidecar service, the only holder of
+# the Docker socket (docs/containerize-siftpipe-design.md §7/§8). The
+# compose file sets SIDECAR_URL for that container only; when it's unset
+# (local dev, CLI runs) every function below behaves exactly as before.
+SIDECAR_REQUEST_TIMEOUT = 180            # seconds for the sidecar to finish a reset call (compose down/wipe/up)
+# The naviq container reinstalls its dependencies, migrates, seeds and
+# recreates the test account on every start (docker/naviq/entrypoint.sh),
+# nothing like the sub-second local dev server the 20s above assumes.
+NAVIQ_CONTAINER_READY_TIMEOUT = 300
+
+
+def _sidecar_url():
+    """Base URL of the reset sidecar, or None when running outside the containerized stack."""
+    return (os.getenv("SIDECAR_URL") or "").rstrip("/") or None
+
+
+def _sidecar_post(path):
+    """POSTs a fixed reset endpoint on the sidecar; raises RuntimeError with the reason on any failure."""
+    url = f"{_sidecar_url()}{path}"
+    try:
+        resp = requests.post(url, timeout=SIDECAR_REQUEST_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"[env] Could not reach the reset sidecar at {url}: {e}")
+    if resp.status_code != 200:
+        raise RuntimeError(f"[env] Sidecar {path} failed (HTTP {resp.status_code}): {resp.text[:200]}")
+
 
 def check_docker_available():
     """Fails fast with a clear message if Docker Desktop isn't running."""
@@ -271,6 +299,16 @@ def run_seed_script(log_fn=print):
     log_fn("[env] Seed completed.")
 
 
+def _empty_directory(path):
+    """Removes everything inside `path` but not `path` itself."""
+    for name in os.listdir(path):
+        full = os.path.join(path, name)
+        if os.path.isdir(full) and not os.path.islink(full):
+            shutil.rmtree(full)
+        else:
+            os.remove(full)
+
+
 def clear_results_folder(path="results", retries=10, retry_delay=1.5, log_fn=print):
     """Wipes old results so no stale JSON survives across runs.
 
@@ -281,12 +319,16 @@ def clear_results_folder(path="results", retries=10, retry_delay=1.5, log_fn=pri
     `finally`, so a lingering headless=False Chromium process shouldn't be
     the cause anymore — but the retry stays as a safety net for AV/indexer
     locks on the screenshot files it wrote to results/dynamic/.
+
+    Empties the folder instead of deleting it: in the containerized stack
+    results/ is a bind mount, and a mount point itself can't be removed
+    (EBUSY), only what's inside it.
     """
     if os.path.exists(path):
         log_fn(f"[env] Clearing folder '{path}'...")
         for attempt in range(1, retries + 1):
             try:
-                shutil.rmtree(path)
+                _empty_directory(path)
                 break
             except PermissionError as e:
                 if attempt == retries:
@@ -449,7 +491,26 @@ def _naviq_server_reachable():
         return False
 
 
-def ensure_naviq_server_running(log_fn=print, timeout=NAVIQ_SERVER_READY_TIMEOUT):
+def _wait_for_naviq_container(log_fn, timeout):
+    """Containerized stack: Docker (restart: unless-stopped) owns the server process, so this
+    process never spawns one - it only waits for the naviq container to answer."""
+    if _naviq_server_reachable():
+        log_fn("[env] NaViQ container already reachable.")
+        return
+    log_fn("[env] Waiting for the NaViQ container to be reachable...")
+    start = time.time()
+    while time.time() - start < timeout:
+        if _naviq_server_reachable():
+            log_fn(f"[env] NaViQ container ready after {round(time.time() - start, 1)}s.")
+            return
+        time.sleep(2)
+    raise TimeoutError(
+        f"[env] NaViQ container did not respond at {NAVIQ_URL} within {timeout}s. "
+        "Check 'docker compose logs naviq' on the server."
+    )
+
+
+def ensure_naviq_server_running(log_fn=print, timeout=None):
     """
     Starts NaViQ's dev server (`manage.py runserver`) as a background
     subprocess if it isn't already reachable. Idempotent - safe to call on
@@ -469,6 +530,13 @@ def ensure_naviq_server_running(log_fn=print, timeout=NAVIQ_SERVER_READY_TIMEOUT
     live-verified safe (Phase 4), so start-order relative to a fresh reset's
     other steps doesn't matter.
     """
+    if _sidecar_url():
+        _wait_for_naviq_container(log_fn, NAVIQ_CONTAINER_READY_TIMEOUT if timeout is None else timeout)
+        return
+
+    if timeout is None:
+        timeout = NAVIQ_SERVER_READY_TIMEOUT
+
     if _naviq_server_reachable():
         log_fn("[env] NaViQ dev server already running.")
         return
@@ -541,6 +609,16 @@ def naviq_fresh_reset(log_fn=print):
     6. Clear SiftPipe's own old results (shared with Mattermost's reset)
     """
     log_fn("\n=== INITIATING NAVIQ FRESH RESET ===")
+    if _sidecar_url():
+        # The sidecar deletes db.sqlite3 and restarts the naviq container, whose own
+        # entrypoint (docker/naviq/entrypoint.sh) then migrates, seeds and recreates
+        # the test account - steps 2-4 below - before serving.
+        log_fn("[env] Asking the sidecar to reset NaViQ (delete db, restart container)...")
+        _sidecar_post("/naviq/reset")
+        _wait_for_naviq_container(log_fn, NAVIQ_CONTAINER_READY_TIMEOUT)
+        clear_results_folder(log_fn=log_fn)
+        log_fn("=== NAVIQ FRESH RESET COMPLETED ===\n")
+        return
     for step_name, argv in naviq_reset_plan():
         if step_name == "delete_db":
             naviq_delete_db(log_fn=log_fn)
@@ -573,10 +651,15 @@ def fresh_reset(log_fn=print, interactive=True):
     8. Clear old results
     """
     log_fn("\n=== INITIATING FRESH RESET ===")
-    check_docker_available()
-    docker_down(log_fn=log_fn)
-    wipe_volumes(log_fn=log_fn)
-    docker_up(log_fn=log_fn)
+    if _sidecar_url():
+        # Steps 1-3 (docker down, wipe volumes, docker up) happen inside the sidecar.
+        log_fn("[env] Asking the sidecar to reset Mattermost (down, wipe volumes, up)...")
+        _sidecar_post("/mattermost/reset")
+    else:
+        check_docker_available()
+        docker_down(log_fn=log_fn)
+        wipe_volumes(log_fn=log_fn)
+        docker_up(log_fn=log_fn)
     wait_for_mattermost(log_fn=log_fn)
     wait_for_mattermost_webapp(log_fn=log_fn)
     create_admin_account(log_fn=log_fn, interactive=interactive)

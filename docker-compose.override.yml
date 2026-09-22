@@ -1,0 +1,12 @@
+services:
+  mattermost:
+    networks:
+      - app-net
+    ports: !override []
+    depends_on:
+      init-permissions:
+        condition: service_completed_successfully
+
+  postgres:
+    networks:
+      - app-net

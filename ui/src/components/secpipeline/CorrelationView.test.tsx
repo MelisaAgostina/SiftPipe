@@ -130,4 +130,21 @@ describe("CorrelationView", () => {
 
     expect(screen.queryByText(/match_tier:/i)).not.toBeInTheDocument();
   });
+
+  it("shows the classification filter chip and finding badge as DISCARDED, not the raw DESCARTED backend value", () => {
+    vi.mocked(useB8).mockReturnValue(loadedQuery({ findings: [] }) as never);
+    vi.mocked(useB9).mockReturnValue(
+      loadedQuery({
+        status: "complete",
+        total_correlated: 1,
+        results: [b9Entry({ classification: "DESCARTED", source: "Static (False Positive)" })],
+      }) as never,
+    );
+
+    render(<CorrelationView liveVisible={true} />);
+
+    expect(screen.queryByText("DESCARTED")).not.toBeInTheDocument();
+    // The filter chip and the finding's own badge both render "DISCARDED".
+    expect(screen.getAllByText("DISCARDED").length).toBeGreaterThanOrEqual(2);
+  });
 });
