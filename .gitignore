@@ -49,3 +49,8 @@ test-results/
 # MULTI_TARGET_PLAN.md's "Open questions" for why this isn't a submodule
 # like mattermost-src/mattermost)
 naviq-src/
+
+# test-fixtures/naviq-stub/ is a real (committed) minimal Django project used
+# as NAVIQ_SRC_PATH by the CI docker-smoke job — its own migrate-generated
+# DB is throwaway, not the fixture itself
+test-fixtures/naviq-stub/db.sqlite3

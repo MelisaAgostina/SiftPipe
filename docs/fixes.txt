@@ -2211,6 +2211,6 @@ No "N| " prefix leaked into any evidence snippet.
 Not yet done / caveats: small sample (3 files with findings, 1 run each).
 On downloads/webhooks.py the numbered prompt returned no findings where the
 old one returned two (both IDOR claims, likely false positives) - one
-sample, so not known whether numbering changes detection rate. Findings on
-two other files (evaluation/admin.py: none in either variant) were not
+sample, so not known whether numbering changes detection rate.
+evaluation/admin.py returned no findings in either variant, so it was not
 informative. A wider run is still needed to quantify the effect.

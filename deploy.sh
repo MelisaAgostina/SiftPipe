@@ -35,8 +35,15 @@ case "$cmd" in
   down)
     compose down
     ;;
-  logs)
-    compose logs -f "$@"
+  config|ps|exec|logs)
+    # Thin passthroughs (used by the CI docker-smoke job and useful for local
+    # debugging) - kept as an explicit whitelist rather than forwarding any
+    # unrecognized "$cmd", so a typo still hits the usage error below instead
+    # of a confusing raw docker-compose one. "logs" no longer hardcodes -f
+    # (follow) as of the CI docker-smoke job - CI needs `logs` to actually
+    # exit so it can dump output on failure; pass -f yourself for the old
+    # follow behavior, same as plain `docker compose logs -f`.
+    compose "$cmd" "$@"
     ;;
   reset)
     target="${1:-}"
@@ -70,7 +77,7 @@ print(urllib.request.urlopen(req, timeout=120).read())
     esac
     ;;
   *)
-    echo "Usage: $0 {up|down|logs|reset}" >&2
+    echo "Usage: $0 {up|down|logs|reset|config|ps|exec}" >&2
     exit 1
     ;;
 esac
