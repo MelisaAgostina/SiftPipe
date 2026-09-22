@@ -23,6 +23,7 @@ cd $REMOTE_DIR
 git checkout main
 git pull --ff-only origin main
 git submodule update --init --depth 1
+./scripts/fetch-mattermost-secrets.sh
 ./deploy.sh up"
 
 if [ "$RESET_INPUT" = "RESET" ]; then
