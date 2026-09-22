@@ -1,24 +1,16 @@
 # Local QA Pass — SiftPipe containerized build
 
-**Date:** 2026-09-21 → 2026-09-22
-**Branch:** `feat/containerize-siftpipe`
-**Base commit:** `450ad25` ("end to end smoke test added to ci under docker-smoke")
-**Scope:** Phase 1 of the two-phase Live QA plan recorded in `docs/next-steps-before-deployment.md` ("Testing / QA" → "Live QA pass")
-
 ## 1. Purpose and where this sits in the deployment plan
 
 SiftPipe was fully containerized (Docker Compose: `siftpipe-api`, `sidecar`, `naviq`, `mattermost`, `postgres`, `caddy`) in prior work, and an automated CI job (`docker-smoke`, added the same day as this pass, commit `450ad25`) now boots the whole stack against a throwaway NaViQ stub on every push/PR. That CI job proves the *containers* boot and reach a healthy state — it does not exercise the application itself, and it never touches real data.
 
-The next step in the deployment plan is a real, human-facing QA pass, split deliberately into two phases so that AWS time and money are only spent once the application itself is already known to work:
 
-- **Phase 1 (this report):** local, against the real containerized backend and real data, zero AWS involved, zero cost beyond a possible real pipeline run.
-- **Phase 2 (not yet run):** a disposable ~1-day AWS deploy, specifically to catch what Phase 1 structurally cannot — real HTTPS certificate issuance, the cross-origin login-cookie path between Cloudflare Pages and the EC2 backend, and the GitHub Actions deploy workflow itself. See `docs/next-steps-before-deployment.md`'s "AWS deployment steps" section for the full plan.
+- **Local QA** against the real containerized backend and real data, zero AWS involved, zero cost beyond a possible real pipeline run.
 
-This report documents Phase 1 only.
 
 ## 2. Methodology and environment
 
-Everything below ran against the **real repository and real data** — not a scratch copy or synthetic fixtures — because Phase 1's purpose is specifically to validate real historical data (Past Runs, `siftpipe_history.db`) and real state-mutating flows (Fresh Reset), which a throwaway environment can't meaningfully exercise.
+Everything below ran against the **real repository and real data** — not a scratch copy or synthetic fixtures — because the purpose of this run is specifically to validate real historical data (Past Runs, `siftpipe_history.db`) and real state-mutating flows (Fresh Reset), which a throwaway environment can't meaningfully exercise.
 
 - **Host:** Docker Desktop 4.43.2, WSL2 backend, Ubuntu-24.04 distro. The stack was brought up from inside WSL (`deploy.sh up`), pointed at the real repo via `/mnt/c/Users/melis/SiftPipe`, with the real `.env`, `mattermost/.env`, and `naviq-src/naviq` (real NaViQ checkout).
 - **Backups verified current before touching anything:** `.env`, `mattermost/.env`, and `siftpipe_history.db` backups in `C:\Users\melis\SiftPipe-plan4-backups\` were confirmed to match the live files' modification times before proceeding.
@@ -39,7 +31,7 @@ chmod /data/caddy/pki/authorities/local/...: operation not permitted
 
 **Root cause:** Caddy's automatic local-HTTPS setup generates and `chmod`s its own local root certificate. WSL2's DrvFs (the bind mount used when the real repo, hosted on the Windows filesystem, is mounted into WSL at `/mnt/c/...`) only partially emulates POSIX permission semantics, and this specific `chmod` fails under it. This did **not** occur in the earlier CI `docker-smoke` job, which bind-mounts a scratch copy on *native* WSL ext4 storage rather than the Windows-hosted repo directly — confirming this is an artifact of testing against the real repo's location on this particular host, not a defect in Caddy's configuration or in SiftPipe.
 
-**Handling:** `caddy` was stopped for the duration of this pass; `siftpipe-api`'s port was published directly instead, so the frontend could reach the backend without going through the reverse proxy. This is consistent with Phase 1's scope — Caddy/TLS behavior is explicitly Phase 2's job to verify for real (see §1). Real HTTPS issuance on Linux (the actual EC2 target) remains unverified until then.
+**Handling:** `caddy` was stopped for the duration of this pass; `siftpipe-api`'s port was published directly instead, so the frontend could reach the backend without going through the reverse proxy. This is consistent with the local scope — Caddy/TLS behavior is explicitly deployed-version job to verify for real. Real HTTPS issuance on Linux (the actual EC2 target) remains unverified until then.
 
 ## 4. Flows tested
 
@@ -88,12 +80,10 @@ All against the real containerized backend, real Mattermost and real NaViQ:
 
 ## 7. Current state of SiftPipe (as of this report)
 
-- Branch `feat/containerize-siftpipe`, base commit `450ad25`. Finding 1's fix (§6) is complete but **not yet committed**.
 - Containerized architecture (Docker Compose, 6 services) is fully built and CI-tested on every push/PR via the `docker-smoke` job — config validation, image builds, real container boot, health-check polling.
-- **Phase 1 of the Live QA pass: passed.** Application-level behavior is verified correct against real data, against both real targets, including the state-mutating Fresh Reset flow, with zero errors observed anywhere in the pass.
-- **Known, accepted, environment-specific limitation:** Caddy's automatic local HTTPS does not work when the repo is bind-mounted into WSL2 via DrvFs rather than native Linux storage (§3). Confirmed not to reproduce in CI's native-WSL scratch-copy testing. Real HTTPS issuance is unverified until Phase 2.
+- **Local Live QA pass: passed.** Application-level behavior is verified correct against real data, against both real targets, including the state-mutating Fresh Reset flow, with zero errors observed anywhere in the pass.
+- **Known, accepted, environment-specific limitation:** Caddy's automatic local HTTPS does not work when the repo is bind-mounted into WSL2 via DrvFs rather than native Linux storage (§3). Confirmed not to reproduce in CI's native-WSL scratch-copy testing. Real HTTPS issuance is unverified until deployed-version.
 - The GitHub Actions deploy workflow (`.github/workflows/deploy.yml`, `scripts/ssm-deploy.sh`) exists and is written, but has **never been run against real AWS**.
-- **Not yet done:** merge to `main` (the deploy workflow only deploys `main`); durable AWS scaffolding (Secrets Manager, budget alert, IAM/OIDC role); the disposable ~1-day AWS test deploy (Phase 2 of the Live QA pass, including a temporary Cloudflare Pages frontend to exercise the cross-origin cookie path); the real deploy, targeted mid–end of October. Full detail in `docs/next-steps-before-deployment.md`.
 
 ## 8. Appendix — exact environment
 
