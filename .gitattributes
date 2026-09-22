@@ -1,0 +1,9 @@
+# Force LF line endings for all text files, regardless of the local
+# machine's core.autocrlf setting. Without this, Git for Windows'
+# system-wide core.autocrlf=true default checks files out with CRLF while
+# storing LF in the repo - fine for Git itself (it normalizes on commit),
+# but Prettier/ESLint expect LF and flag every CRLF byte as an error, and a
+# Linux CI runner checks the same repo out with LF, so behavior differed by
+# OS with nothing in the repo itself controlling it. `text=auto` still lets
+# Git auto-detect and skip real binary files (images, the sqlite .db, etc.).
+* text=auto eol=lf

@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # ruff format --check is deliberately not wired in yet - it would
+      # currently fail on 31/34 files that predate the formatter being
+      # configured. Add this step once that one-time bulk reformat is done
+      # (see next-steps-before-deployment.md).
+
+      - name: Test (unittest)
+        run: python -m unittest discover -s tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  docker-smoke:
+    # Boots the *entire* compose stack (mattermost, postgres, naviq,
+    # siftpipe-api, sidecar, caddy) on the runner and asserts every service
+    # that has a HEALTHCHECK actually reaches "healthy" - catches the class
+    # of bug that only ever showed up live (ALLOWED_HOSTS, venv ownership,
+    # the healthcheck grace period, compose var interpolation), before a
+    # merge instead of after one. Real NaViQ (naviq-src/, gitignored) is
+    # never present on this runner, so NAVIQ_SRC_PATH points at
+    # test-fixtures/naviq-stub instead - see its README.md for what that
+    # does and does not verify. No Anthropic API key is ever used for real:
+    # nothing here runs the actual B1-B9 pipeline, only container boot.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # submodules: true - mattermost-src/mattermost (.gitmodules) is a real
+      # git submodule; actions/checkout skips submodules by default, which
+      # would leave siftpipe-api's `COPY mattermost-src/ ./mattermost-src/`
+      # copying an empty directory - exactly the class of build-context bug
+      # this job exists to catch, so it can't skip fetching it.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Write synthetic .env files (placeholders only, nothing here is called for real)
+        run: |
+          cp .env.example .env
+          cp mattermost/.env.example mattermost/.env
+
+      - name: docker compose config (catches interpolation/YAML errors for free)
+        env:
+          NAVIQ_SRC_PATH: ${{ github.workspace }}/test-fixtures/naviq-stub
+        run: ./deploy.sh config >/dev/null
+
+      - name: Bring the stack up
+        env:
+          NAVIQ_SRC_PATH: ${{ github.workspace }}/test-fixtures/naviq-stub
+        run: ./deploy.sh up
+
+      - name: Wait for siftpipe-api and naviq healthchecks
+        env:
+          NAVIQ_SRC_PATH: ${{ github.workspace }}/test-fixtures/naviq-stub
+        run: |
+          wait_healthy() {
+            local service="$1" timeout="${2:-240}" waited=0 cid status
+            cid="$(./deploy.sh ps -q "$service")"
+            [ -n "$cid" ] || { echo "$service: no container" >&2; return 1; }
+            while true; do
+              status="$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo unknown)"
+              [ "$status" = "healthy" ] && { echo "$service: healthy (${waited}s)"; return 0; }
+              [ "$waited" -ge "$timeout" ] && { echo "$service: still '$status' after ${timeout}s" >&2; return 1; }
+              sleep 5
+              waited=$((waited + 5))
+            done
+          }
+          wait_healthy siftpipe-api
+          wait_healthy naviq
+
+      - name: Hit the API's own health endpoint
+        env:
+          NAVIQ_SRC_PATH: ${{ github.workspace }}/test-fixtures/naviq-stub
+        run: |
+          ./deploy.sh exec -T siftpipe-api python3 -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=5).status == 200 else 1)"
+
+      - name: Dump logs on failure
+        if: failure()
+        env:
+          NAVIQ_SRC_PATH: ${{ github.workspace }}/test-fixtures/naviq-stub
+        run: ./deploy.sh logs --no-color --tail=200
+
+      - name: Tear down
+        if: always()
+        env:
+          NAVIQ_SRC_PATH: ${{ github.workspace }}/test-fixtures/naviq-stub
+        run: ./deploy.sh down

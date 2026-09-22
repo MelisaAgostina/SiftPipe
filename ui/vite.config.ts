@@ -12,4 +12,13 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
+  // Local dev only — the Lovable config defaults to :8080, which on this
+  // machine collides with an unrelated Apache instance also bound there
+  // (IPv4 vs IPv6 dual-stack, so localhost:8080 nondeterministically hit
+  // either one). Only enforced outside Lovable's actual cloud sandbox
+  // (LOVABLE_SANDBOX/DEV_SERVER__PROJECT_PATH), which hard-locks port 8080
+  // regardless of this setting.
+  vite: {
+    server: { port: 5173, strictPort: true },
+  },
 });

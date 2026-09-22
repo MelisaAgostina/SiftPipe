@@ -1,0 +1,2216 @@
+SiftPipe — Fixes Log (first real end-to-end pipeline run)
+Date: 2026-07-30
+
+This documents the problems found running the pipeline B3→B9 end to end for
+the first time, and the fixes applied. Scope was deliberately kept narrow:
+B7 (dynamic_injector.py) and B8/B9's core analysis logic were left alone
+unless a fix was structurally necessary; most of the value came from fixing
+DATA (validated_payloads.json) rather than code.
+
+
+1. PROBLEMS OBSERVED
+---------------------
+
+1.1 validated_payloads.json was a placeholder, not a real B6 curation
+    results/validated_payloads.json contained a hardcoded 1-target/3-payload
+    "smoke-test" stub. human_review.py's entire design (B6) is "human filters
+    B5_payloads.json down into validated_payloads.json" — that step had never
+    actually been performed. Result: B7 only ever executed 3 payloads against
+    1 target, so B8 had almost nothing to analyze and B9 had almost no
+    dynamic data to correlate.
+
+1.2 B9's vulnerability-label matching could never produce a Hybrid match
+    correlate_results.py matched B3 (static) and B8 (dynamic) findings by
+    exact string equality on the "vulnerability" field. B7 emits underscored
+    labels (e.g. "Broken_Access_Control", "Command_Injection"), while B3's
+    static scanner emits spaced labels (e.g. "Broken Access Control",
+    "Injection"). These could never be string-equal, so the
+    "Hybrid (Static + Dynamic)" / CONFIRMED branch in B9 was effectively
+    dead code — B9 could only ever report "Dynamic" or "Estático" sources,
+    regardless of how good the underlying data was.
+
+1.3 B8 had no resilience against Groq's daily token cap
+    ask_llm() in main.py catches every exception (including HTTP 429 rate
+    limit errors) and returns a fake finding: {"vulnerability": "API Error",
+    "evidence": str(e)}. analyze_results() (B8) called the LLM once per B7
+    finding with no memory of prior runs. Once the free-tier daily cap
+    (100,000 tokens/day) was hit mid-run, every remaining payload silently
+    became a bogus "API Error" pseudo-finding in results/B8_dynamic.json,
+    and a naive re-run would burn tokens again on payloads that had already
+    been classified successfully before the cap was hit.
+
+
+2. FIXES APPLIED
+-----------------
+
+2.1 Curated validated_payloads.json from B5's real output (data only)
+    Rebuilt results/validated_payloads.json from results/B5_payloads.json:
+      - Dropped all fileUploadInput entries — dynamic_injector.py already
+        hard-skips these (set_input_files isn't implemented), so keeping
+        them was dead weight.
+      - Grouped remaining entries by (page_url, field_id) and de-duplicated
+        payload variants, since B5 had generated multiple overlapping
+        "form field" / "input" entries for the same real page.
+    Result: 5 targets, all backed by real forms B4 (dynamic_analysis.py)
+    actually discovered in attack_surface.json (town-square, canal-analisis,
+    off-topic, the DM channel, search) — 37 total payload executions instead
+    of 3. No code in B7/B8/B9 was touched for this fix.
+
+2.2 correlate_results.py — normalized vulnerability-label matching
+    Added _normalize_vuln_label(value): lowercases the string and replaces
+    underscores with spaces before comparison. The match condition changed
+    from strict equality (b3_vuln == vuln_type) to:
+        b3_vuln == norm_vuln_type OR b3_vuln in norm_vuln_type OR norm_vuln_type in b3_vuln
+    (both sides normalized), keeping the existing OWASP-category substring
+    check as a secondary path.
+
+    Why this shape: the substring check (not just equality) lets a narrow
+    dynamic label like "Command_Injection" match a broader static category
+    like "Injection", which mirrors how the two scanners actually categorize
+    things (B7 is specific per-payload, B3 is a general OWASP bucket).
+
+    Technical implication: this is a label-matching fix, not a leniency
+    change to scoring. A dynamic finding still has to be independently
+    classified "confirmed" by the LLM in B8 to reach the Hybrid/CONFIRMED
+    branch in B9 — this fix only removes a spelling/format mismatch that was
+    silently preventing that branch from ever being reachable. Verified with
+    a synthetic case: B3 "Injection" + B8 "Command_Injection"/confirmed now
+    correctly produces source "Hybrid (Static + Dynamic)", classification
+    "CONFIRMED" (previously: "Dynamic" / "POSSIBLE").
+
+    Known side effect (not fixed, by request): correlate_results() always
+    writes results/B9_correlation.json to disk, even when called for a test
+    or with synthetic pipeline_results. Running tests/test_correlate_results.py
+    will overwrite the real B9 output; re-run B9 against real B3/B8 data
+    afterward if you need it back.
+
+2.3 analyze_results.py (B8) — resumable analysis + heuristic pre-filter
+    Two independent changes to the per-finding loop:
+
+    (a) Resume support
+        Before the loop, load any existing results/B8_dynamic.json and index
+        it by payload_id. If a payload already has a usable prior result
+        (result in {confirmed, possible, discarded} AND vulnerability not in
+        {"API Error", "Error de Parseo JSON"}), reuse that entry instead of
+        calling the LLM again.
+        Why: without this, every re-run re-spent tokens on payloads that had
+        already been classified successfully before a rate limit was hit,
+        making recovery from a partial run strictly worse over time.
+
+    (b) Skip the LLM when B7 found nothing
+        If a finding has anomaly_detected == false (none of B7's own
+        rule-based checks fired — no SQL error string, no reflected payload,
+        no shell error marker, no 401/403, etc.), skip the LLM call entirely
+        and record it locally as {"result": "discarded", "confidence": "low",
+        "evidence": "No rule-based anomaly detected by B7; LLM call skipped."}.
+        Why: a finding with zero heuristic signal is, in practice, always
+        going to come back "discarded" from the LLM anyway — this was
+        confirmed against the one real historical case where this played out
+        (payload 1_3, anomaly-free, LLM independently said "discarded").
+        Skipping doesn't change the outcome, it just stops paying for a
+        foregone conclusion.
+
+    Measured effect on the current 37-payload validated_payloads.json:
+        - B7 flags 27/37 findings as anomalous (anomaly_detected: true).
+        - Of those, 1 already had a valid prior result (reused, 0 tokens).
+        - Net: a full B8 run needs 26 real LLM calls instead of 37 (~30%
+          reduction), and after any partial rate-limit failure, only the
+          still-unresolved payloads are retried — not the whole batch.
+        Verified by running analyze_results() with a mock ask_llm() and
+        confirming the call counts (llm_calls=26, reused=1,
+        skipped_no_anomaly=10) matched the prediction exactly.
+
+    Explicitly NOT done: no retry/backoff loop for 429s. Groq's cap is
+    tokens-per-day, not tokens-per-minute — the error messages observed gave
+    6-13 minute wait estimates per request, so a short backoff loop would
+    not have helped and would have just made a run hang. If a run still hits
+    the cap mid-batch, the affected payloads are written as
+    "vulnerability": "API Error" (as before) and are safe to retry on the
+    next analyze_results() call — they are correctly NOT treated as "usable"
+    prior results, so they'll be retried for real, not silently skipped.
+
+2.4 tests/test_correlate_results.py (new)
+    Added stdlib unittest tests (chose unittest over pytest: pytest isn't
+    installed in the project's .venv and there's no requirements.txt yet, so
+    this avoids introducing a new dependency for one test file). Covers:
+      - _normalize_vuln_label() directly (underscore→space, lowercasing,
+        non-string input).
+      - Three correlation outcomes end to end: Hybrid/CONFIRMED match,
+        Dynamic-only POSSIBLE (no static match), Static false-positive
+        (discarded dynamic result that does match a static finding).
+    Run with: python -m unittest tests/test_correlate_results.py -v
+    Note: this will overwrite results/B9_correlation.json as a side effect
+    (see 2.2) — re-run B9 for real afterward if needed.
+
+
+3. KNOWN LIMITATIONS / NOT FIXED
+----------------------------------
+
+- Groq's 100k tokens/day free-tier cap is an external constraint. The B8
+  changes reduce consumption but don't remove the ceiling — a large enough
+  validated_payloads.json can still exhaust it in one run.
+- correlate_results() writes results/B9_correlation.json unconditionally,
+  with no way to redirect output (e.g. for isolated test runs). Left as-is
+  per direction given during this session.
+- The target app (a stock, unmodified Mattermost instance) is not actually
+  vulnerable to the classic OWASP payloads used (XSS/SQLi/command
+  injection/path traversal). Most B7/B8 findings are expected to stay
+  "discarded" or "possible" (via B7's reflected-payload heuristic, which is
+  a byproduct of Mattermost's API normally echoing posted message content
+  back in its JSON response — not a real vulnerability). These fixes address
+  data volume, token cost, and correlation correctness; they do not and
+  cannot manufacture real vulnerabilities that aren't there.
+
+
+================================================================================
+SESSION 2 — --mode fresh debugging (2026-07-31)
+================================================================================
+
+Scope: `python main.py --mode fresh` had never been verified to actually
+work. The user reported it failing on a prior run. This session isolated
+fresh_reset() (blocks/environment.py) from the rest of the pipeline, found
+every bug blocking it, fixed them, and verified a real end-to-end run
+against a live Mattermost/Postgres stack via Docker Desktop.
+
+
+1. PROBLEMS OBSERVED
+---------------------
+
+1.1 No check that Docker was even running
+    docker_down()/docker_up() called subprocess.run(..., check=True) with no
+    try/except. If Docker Desktop isn't running (confirmed to be the case at
+    the start of this session via `docker info`), this throws an uncaught
+    CalledProcessError and kills the whole pipeline with a raw traceback —
+    almost certainly what happened on the reported failed run.
+
+1.2 `docker compose down -v` did not actually reset anything
+    mattermost/docker-compose.yml bind-mounts Postgres/Mattermost data to
+    host paths (./volumes/db, ./volumes/app per mattermost/.env) instead of
+    declaring named volumes in a top-level `volumes:` section. `-v` only
+    removes named volumes, so it was a no-op here — confirmed by finding
+    mattermost/volumes/{app,db} already populated with a prior run's data.
+    Net effect: "fresh" mode silently behaved like "restore" at the data
+    layer — same admin, same seeded users, same channel/team — while
+    claiming ("full wipe" in the docstring) to reset everything.
+
+1.3 seed.py assumed an admin account already existed
+    A side effect of 1.2: because the DB was never actually wiped, seed.py's
+    login as MM_ADMIN_EMAIL/MM_ADMIN_PASS kept working by accident. Once the
+    wipe in 2.2/2.3 below made resets real, a genuinely fresh Mattermost
+    instance has zero accounts — there's no admin to log in as, and no API
+    endpoint to create one before any account exists (self-registration is
+    normally gated by EnableOpenServer, confirmed False in this instance's
+    saved config).
+
+1.4 seed.py silently swallowed failures
+    Only the initial login call had .raise_for_status(). User/team/channel/
+    membership/post creation calls were unchecked — if any of them failed
+    (e.g. "already exists" from 1.2's stale data), the corresponding *_id
+    became None, later calls failed or no-opped silently, and the script
+    still printed "Seed script finalizado con éxito" regardless.
+
+1.5 60s boot timeout too short for a real fresh boot
+    wait_for_mattermost()'s default READY_TIMEOUT was 60s. A real fresh boot
+    (new Postgres, DB migrations from scratch) measured 101-105s across two
+    live runs in this session — comfortably over the old limit.
+
+1.6 Volume wipe hit PermissionError on Windows
+    Found while testing the fix for 1.2: Postgres writes its bind-mounted
+    data files with Linux ownership/permissions. Under Docker Desktop on
+    Windows, a plain Python shutil.rmtree() on those paths from the host
+    raises PermissionError ([WinError 5] Access is denied) partway through —
+    the host user's Windows account doesn't have rights to remove them
+    directly.
+
+1.7 results/ folder deletion hit a transient Windows file lock
+    Also found during live testing: shutil.rmtree("results") intermittently
+    raised PermissionError on the top-level directory itself (contents
+    already deleted) — consistent with a brief handle held by VS Code's file
+    watcher (results/ was open in the editor during the test run) or a
+    similar indexer. Not reproducible on every run.
+
+1.8 run_seed_script() invoked "python" literally
+    subprocess.run(["python", "seed.py"]) instead of using sys.executable —
+    could silently pick a different interpreter than the one running
+    main.py (e.g. missing requests/dotenv) depending on PATH, independent of
+    which venv main.py itself was launched from.
+
+
+2. FIXES APPLIED (all in blocks/environment.py unless noted)
+--------------------------------------------------------------
+
+2.1 check_docker_available()  — new
+    Runs `docker info` up front; raises a clear RuntimeError ("Docker
+    daemon not reachable. Start Docker Desktop...") instead of letting a
+    deep subprocess call crash with a raw traceback. Also wrapped
+    docker_down()/docker_up() themselves in try/except CalledProcessError
+    for the same reason (e.g. compose file errors, port conflicts).
+
+2.2 wipe_volumes()  — new
+    Explicitly deletes mattermost/volumes/db and mattermost/volumes/app
+    after `docker compose down -v`, since -v alone does nothing for this
+    stack's bind mounts (see 1.2).
+
+2.3 wipe_volumes() runs the delete inside a throwaway Alpine container
+    `docker run --rm -v <abs path to mattermost/volumes>:/target alpine sh
+    -c "rm -rf /target/db /target/app"` instead of Python's shutil.rmtree
+    on the host — sidesteps 1.6 because the container has the same
+    Linux-side rights that created the files in the first place. Verified
+    working after the fix (previously crashed with WinError 5 on the first
+    live test).
+
+2.4 create_admin_account()  — new
+    POSTs to /api/v4/users (unauthenticated) with MM_ADMIN_EMAIL/
+    MM_ADMIN_PASS/MM_ADMIN_USERNAME (defaults to "admin") right after
+    Mattermost responds to ping. On a zero-user instance this is
+    automatically granted System Admin by Mattermost itself — a bootstrap
+    exception that exists specifically so a fresh instance doesn't need a
+    human at the setup wizard. Verifies the account actually works with a
+    real login call afterward (not just a 201 status) before continuing.
+    Falls back to wait_for_admin_setup() (a new input()-based prompt, same
+    pattern as human_review.py's B6 pause) only if the automated call
+    fails for any reason — e.g. a Mattermost instance where the bootstrap
+    exception has been disabled at the org level.
+
+2.5 READY_TIMEOUT raised from 60s to 120s
+    Based on the 101-105s measured boot times in this session's live runs
+    (see 1.5). Still configurable via the function's timeout parameter.
+
+2.6 clear_results_folder() — retry loop added
+    Retries shutil.rmtree() up to 5 times with a 1s delay on PermissionError
+    before giving up, to absorb the transient Windows lock from 1.7 instead
+    of crashing the very last step of an otherwise-successful fresh reset.
+
+2.7 run_seed_script() now uses sys.executable instead of "python"
+    Fixes 1.8 — guarantees seed.py runs under the exact same interpreter
+    (and therefore the exact same installed dependencies) as main.py.
+
+2.8 seed.py — added .raise_for_status() to every request
+    User/team/team-membership/channel/channel-membership/post creation
+    calls now all check their response status, fixing 1.4. A failure now
+    surfaces immediately with the real HTTP error instead of silently
+    producing a None id and a false "finalizado con éxito" message.
+
+2.9 fresh_reset() sequencing updated to:
+    check_docker_available() -> docker_down() -> wipe_volumes() ->
+    docker_up() -> wait_for_mattermost() -> create_admin_account() ->
+    run_seed_script() -> clear_results_folder()
+
+
+3. VERIFICATION
+-----------------
+
+Ran fresh_reset() directly (isolated from main.py's B3-B9 blocks, to avoid
+burning Groq tokens/time on unrelated stages) against a real Docker Desktop
++ Mattermost + Postgres stack, twice:
+  - Run 1: caught the WinError 5 in wipe_volumes() (fix 2.3 applied
+    afterward) and confirmed the admin-creation/seed/timeout fixes all
+    worked on the same run (admin created and verified, seed.py completed
+    all 7 steps, Mattermost took 104.8s to boot).
+  - Run 2 (after 2.3 and 2.6): full sequence completed clean, including the
+    volume wipe via container and the results/ retry. Mattermost boot took
+    101.2s.
+
+
+4. KNOWN LIMITATIONS / NOT FIXED
+-----------------------------------
+
+- seed.py's subprocess output prints "Seed script finalizado con éxito" as
+  mojibake ("con �xito") in the parent console — a console-encoding
+  cosmetic issue (not a crash, exit code 0), left as-is; flag if it's worth
+  fixing properly (e.g. PYTHONIOENCODING=utf-8 on the subprocess env).
+- The API layer (api.py) still has no way to trigger fresh_reset() or
+  choose fresh/restore mode at all — /api/run always starts directly at B3.
+  Not addressed in this session; next step if/when connecting fresh mode to
+  the frontend.
+- wait_for_admin_setup()'s manual fallback path uses input(), which only
+  works in the console flow. If fresh_reset() is ever called from the API's
+  background-thread flow, that fallback would hang; the automated path in
+  create_admin_account() should be treated as the only supported path for
+  a non-interactive/API context.
+
+
+================================================================================
+SESSION 3 — B4 resilience + B7 HTTP-capture fix (2026-07-31)
+================================================================================
+
+Scope: readme.md flagged two known-weak spots — B4 (dynamic_analysis.py) is
+"the most fragile point in the pipeline" (hardcoded selectors/routes, no
+error reporting), and B7 (dynamic_injector.py) "doesn't robustly capture the
+real HTTP response body". Addressed both, code-only (no live Docker/
+Mattermost run this session — verified via the existing test suite, now 68
+tests, all passing).
+
+
+1. B4 (blocks/dynamic_analysis.py) — config, retries, real error reporting
+--------------------------------------------------------------------------
+
+1.1 Problem: hardcoded credentials/team/channel, unlike B7
+    discover_attack_surface()'s defaults (base_url, login_id, password) and
+    its page_routes list were literal strings ("equipo-tesina",
+    "canal-analisis", "usuario_test", "victima@test.com", "Password123!"),
+    while dynamic_injector.py (B7) already reads the same values from .env
+    (MM_URL/MM_TEAM/MM_USERNAME/MM_PASSWORD). Any change to seed.py's
+    fixture data silently broke B4 without a config change to match.
+
+    Fix: added module-level env-backed config (MM_URL, MM_TEAM, MM_CHANNEL,
+    MM_USERNAME, MM_PASSWORD, MM_SEED_USERNAME — the last two are new,
+    documented in .env), same pattern as B7. page_routes is now built from
+    these instead of literals. MM_CHANNEL/MM_SEED_USERNAME added to .env
+    with defaults matching seed.py's NEW_CHANNEL/NEW_USER so behavior is
+    unchanged unless .env is edited.
+
+1.2 Problem: one uncaught exception anywhere silently produced empty,
+    "successful"-looking output
+    The whole login -> team-setup -> forms -> per-route crawl sequence lived
+    inside one outer try/except that just printed and returned whatever had
+    been gathered so far — main.py's run_dynamic_discovery() then always
+    wrote {"status": "complete", ...} regardless. A login failure and a
+    "discovered nothing because that's genuinely everything" run were
+    indistinguishable to the UI.
+
+    Fix: every stage (login, team_setup, forms:dashboard, each route,
+    inputs:final_page) now has its own try/except appending a structured
+    {"stage": ..., "message": ...} entry to a local `errors` list instead of
+    only printing. A new pure helper, _determine_status(login_ok, errors),
+    classifies the run as "failed" (login never worked — nothing usable),
+    "partial" (login worked, but something along the way didn't), or
+    "complete" (no errors at all). attack_surface now carries "status" and
+    "errors" keys; main.py's run_dynamic_discovery() now reads
+    attack_surface.get("status"/"errors") into the B4_dynamic.json summary
+    instead of hardcoding "complete". Covered by 4 new unit tests on
+    _determine_status (no browser needed, same rationale as
+    build_attack_surface_records).
+
+1.3 Problem: no resilience to a single transient nav failure
+    Any one-off network hiccup on a page.goto() call failed that stage
+    outright. Added _goto_with_retry() (2 attempts, 1s backoff) and used it
+    for the login page load, the create_team flow, and each route crawl.
+
+1.4 Explicitly NOT changed: headless=False
+    Considered making headless mode configurable (relevant for a future
+    API/UI-triggered run, where a visible Chromium window on the server is
+    generally undesirable) but left as-is by request — visibility into the
+    live run is wanted for now. Revisit when B4 is actually wired to the API.
+
+    browser.close() is now in a try/finally around the whole login->crawl
+    sequence (previously implicit via the outer try/except's fallthrough;
+    now guaranteed even if a future change adds an uncaught path).
+
+
+2. B7 (blocks/dynamic_injector.py) — HTTP response capture rewrite
+---------------------------------------------------------------------
+
+2.1 Problem: no correlation between "this payload's submission" and
+    "whatever matching response arrived"
+    The old design registered ONE page.on("response", ...) listener for the
+    whole session, writing into a shared `captured` dict, filtered only by
+    `"/api/v4/posts" in response.url or "/api/v4/commands" in response.url`
+    — a plain substring check with no HTTP-method filter. Mattermost's
+    client fires GETs like /api/v4/posts/{id}/thread right after a new post
+    renders; those also matched the substring and could silently overwrite
+    `captured` with an unrelated 200 OK body instead of the actual
+    submission's response (which is what would carry SQL error strings,
+    reflected payload content, stack traces, etc.).
+
+2.2 Problem: capture was gated on a fixed 2-second sleep, not a real
+    synchronization point
+    _execute_one() pressed Enter, slept 2000ms, then checked whatever was in
+    `captured`. A server response slower than 2s left status_code/
+    response_body empty — visually identical to "request submitted cleanly,
+    nothing to report", when it actually meant "we stopped watching before
+    the answer came back". This is the concrete mechanism behind the
+    readme's "no captura de forma robusta el cuerpo HTTP real" note.
+
+2.3 Fix: page.expect_response() scoped to the submit action
+    Replaced the persistent listener + shared dict with Playwright's
+    expect_response() context manager, entered right around
+    page.keyboard.press("Enter"). New pure predicate _is_submission_response
+    checks response.request.method == "POST" AND the URL (right-stripped of
+    a trailing slash) ends exactly with "/api/v4/posts" or
+    "/api/v4/commands/execute" — no longer a loose substring match, so a
+    same-prefix GET can't be mistaken for the submission. A genuine timeout
+    (8s, no matching response observed) now raises PlaywrightTimeoutError,
+    caught explicitly and recorded as
+    result["error"] = "No matching POST /api/v4/posts (or /commands/execute)
+    response observed within 8s" — a real signal instead of silently empty
+    fields. Covered by 5 new unit tests on _is_submission_response (method
+    filtering, exact-suffix matching, the /thread false-positive case) plus
+    one integration-level test confirming a timeout surfaces as a visible
+    error rather than a false "nothing happened".
+
+2.4 Test infrastructure updated to match
+    tests/test_dynamic_injector.py's FakePage previously delivered fake
+    responses by calling the stored on("response") callback from inside
+    wait_for_timeout() — a fake built around the same race this fix removes.
+    Replaced with FakeExpectResponse, a context manager stand-in for
+    page.expect_response() that hands back the next queued FakeResponse (or
+    raises the fake timeout if None was queued), independent of any sleep.
+    FakeResponse gained a .request.method attribute so _is_submission_response
+    can be exercised for real.
+
+
+3. VERIFICATION
+-----------------
+
+Full suite: `python -m unittest discover -s tests -v` — 68 tests, all
+passing (62 before this session + 4 for _determine_status + 6 for
+dynamic_injector's new capture logic). No live Docker/Mattermost run this
+session; B4's live-boot path was already verified end-to-end in SESSION 2,
+and this session's changes to it are additive (config sourcing, error
+tracking, retries) rather than a change to the core navigation logic itself.
+
+
+4. KNOWN LIMITATIONS / NOT FIXED
+-----------------------------------
+
+- B4 still opens a visible (headless=False) browser window — fine for local
+  runs, will need to become configurable before B4 can be triggered from the
+  API/UI without popping a Chromium window on the server (see 1.4).
+- B7's 8-second response timeout is a fixed constant, not configurable per
+  call. Reasonable for Mattermost's normal post-submission latency, but a
+  genuinely slow target could still produce a false "no response observed"
+  error.
+- _is_submission_response() is Mattermost-API-specific (hardcoded to
+  /api/v4/posts and /api/v4/commands/execute). If B7 ever targets a
+  different endpoint shape, this predicate needs to grow alongside it.
+
+
+================================================================================
+SESSION 4 — Taxonomy-based evaluation engine for B5/B9 (2026-07-31)
+================================================================================
+
+Scope: replace B9's free-text substring correlation and B5's pure-keyword
+target relevance with something closer to what real DAST/SAST correlation
+engines do — a formal CWE/OWASP taxonomy, taxonomy-tier matching with an
+LLM-judge fallback for ambiguous pairs, and a weighted composite confidence/
+severity score instead of a single LLM-assigned label. Design was agreed
+with the user up front on two axes: (1) correlation = taxonomy matching +
+LLM-judge only for ambiguous pairs (not a full LLM-judge cross product, to
+respect Groq's 100k tokens/day cap), and (2) findings get a computed
+weighted score instead of a bare high/medium/low label.
+
+
+1. NEW: blocks/taxonomy.py
+-----------------------------
+
+Curated CWE catalog (14 entries, scoped to what OWASP_SCOPE in
+static_scanner.py actually looks for and what dynamic_injector.py's
+rule-based detections actually produce — not an attempt at the full ~900-
+entry CWE catalog) + the real OWASP Top 10 2021 category list.
+
+infer_taxonomy(finding) resolves a finding's {cwe_id, owasp_category} in
+priority order: (1) an explicit cwe_id already on the finding, (2) an
+explicit owasp_category/category with no CWE, (3) a lookup from the
+free-text "vulnerability" label via LABEL_TO_CWE — the fallback that keeps
+this working for legacy/pre-taxonomy data and test fixtures that don't carry
+a cwe_id. This graceful-degradation design is why the 3 pre-existing B9
+tests (SESSION 1) kept passing unmodified: their hand-authored fixtures
+never had cwe_id, so they exercise tier 3 automatically.
+
+1.1 Found and fixed while building this: static_scanner.py's OWASP_SCOPE
+    dict keys didn't match the real OWASP Top 10 2021 numbering — Injection
+    was tagged "A05" (should be A03) and Security Misconfiguration was
+    tagged "A02" (should be A05). B3 has been emitting the wrong category
+    code for every finding it ever produced. Fixed so it lines up with
+    taxonomy.py's OWASP_TOP10_2021 table; Broken Access Control (A01) and
+    Identification/Authentication Failures (A07) were already correct.
+
+
+2. NEW: blocks/scoring.py
+----------------------------
+
+compute_score(static_confidence, dynamic_result, dynamic_confidence,
+match_tier) -> (score in [0,1], severity). Weighted composite: dynamic
+evidence 0.50, static evidence 0.25, correlation match tier 0.25 — weighted
+toward dynamic evidence deliberately, since a live-proven exploitation
+attempt is stronger signal than a static heuristic guess; match tier is a
+corroboration multiplier, not the primary signal. Severity buckets
+(CRITICAL/HIGH/MEDIUM/LOW) are threshold-based on the score, not another
+LLM call. Every weight is a module-level constant, not buried in branching
+logic, specifically so the formula is auditable/citable.
+
+
+3. B3 (static_scanner.py) — cwe_id added to the existing LLM call
+----------------------------------------------------------------------
+
+get_analysis_prompt()'s requested JSON schema gained a "cwe_id" field (with
+worked examples: CWE-89 for SQLi, CWE-78 for OS Command Injection, etc.) —
+same LLM call already being made, no new token cost per file scanned.
+
+
+4. B7 (dynamic_injector.py) — deterministic taxonomy, no LLM involved
+---------------------------------------------------------------------
+
+After computing `vuln` from the rule-based `detections` list (unchanged
+logic), each finding now also gets cwe_id/owasp_category via
+infer_taxonomy({"vulnerability": vuln}) — free, since B7's detection is
+already rule-based/deterministic, not an LLM call.
+
+
+5. B8 (analyze_results.py) — taxonomy carried through, not re-derived
+-----------------------------------------------------------------------
+
+B8 classifies confirmed/possible/discarded; it doesn't decide WHAT the
+vulnerability class is — that's B7's rule engine's job. So cwe_id/
+owasp_category are read off the incoming B7 finding and setdefault'd onto
+the B8 output (in both the no-anomaly-skip path and the real LLM-call
+path), rather than asking the classification LLM call to reinvent them.
+
+
+6. B9 (correlate_results.py) — the actual evaluation engine rewrite
+------------------------------------------------------------------------
+
+correlate_results(pipeline_results=None, ask_llm=None) — new optional
+ask_llm param (main.py and api.py's call sites updated to pass it through;
+existing/test call sites that omit it still work, see 6.4).
+
+Matching is now tried in priority order per dynamic finding, each tier a
+stronger signal than the last:
+  1. "cwe"   — exact CWE-ID match between both sides. Deterministic, free.
+  2. "judge" — same OWASP category but a different/missing CWE ("ambiguous").
+               One LLM call decides if they're really the same underlying
+               issue: {"same_vulnerability": true|false, "rationale": ...}.
+               Only attempted when ask_llm is provided.
+  3. "owasp" — same OWASP category, but the judge was unavailable/not
+               provided/returned something unparseable — a shared category
+               is still real signal on its own, just weaker than a judge "yes".
+  4. "text"  — the original substring/category-string matching, reached only
+               when neither side has ANY usable taxonomy (keeps the pipeline
+               working even against data with no taxonomy info at all).
+
+6.1 Judge calls are resumable and capped
+    _load_previous_judgments() reads a "judgments" dict persisted inside
+    results/B9_correlation.json (same file, new top-level key) and reuses a
+    cached verdict for a given (payload_id, static file, candidate index) key
+    instead of re-asking. MAX_JUDGE_CALLS = 15 caps new calls per run — same
+    rationale as B3's MAX_FILES=10 and B8's reuse logic: protect Groq's
+    100k tokens/day cap on a run with many ambiguous pairs.
+
+6.2 Every correlated entry gained cwe_id, owasp_category, match_tier, score,
+    and severity fields, in addition to the existing vulnerability/target/
+    classification/confidence/source/evidence fields (additive — nothing
+    existing was removed, api.py's /api/results/B9_correlation passthrough
+    needs no changes).
+
+6.3 Static-only findings (no dynamic counterpart at all) now also get a
+    score via a new "untested" dynamic_result weight (0.3) in scoring.py,
+    instead of a hardcoded "MEDIUM" string with nothing backing it. Also
+    fixed a pre-existing typo: their classification was "POSIBLE", now
+    "POSSIBLE" (matches every other classification value B9 emits).
+
+6.4 Backward compatible by construction, verified: the 3 pre-existing B9
+    tests (SESSION 1, exact CWE-less fixtures) still pass unmodified —
+    walked through the match_tier logic by hand for each: tier 1 (cwe) never
+    fires since none of those fixtures carry a cwe_id, tier 2 (judge) is
+    skipped when ask_llm isn't passed and immediately falls through to a
+    tier-3 "owasp" match instead, reproducing the exact same match_found
+    outcome the old string-matching logic produced for those 3 specific cases.
+
+
+7. B5 (generate_payloads.py) — targets tagged with taxonomy
+----------------------------------------------------------------
+
+After find_related_static_findings() (keyword-overlap logic unchanged — a
+full rewrite of relevance ranking was judged out of scope this round), the
+best-matching related finding's taxonomy is computed once via
+infer_taxonomy() and: (a) surfaced to the LLM as a prompt hint ("Likely
+relevant: CWE-89 (OWASP A03) — weight the 5 payloads toward this class"),
+using the same LLM call already being made, and (b) attached to the output
+item as cwe_id/owasp_category via setdefault(), so B7/B9 can trace a
+generated payload set back to a specific CWE instead of only the LLM's
+free-text "rationale". Targets with no related static finding get
+cwe_id/owasp_category = None (the prompt's existing "cover 5 different
+classes generically" instruction still applies for those).
+
+
+8. VERIFICATION
+-----------------
+
+Full suite: `python -m unittest discover -s tests -v` — 102 tests, all
+passing (68 before this session + 14 for taxonomy.py + 8 for scoring.py +
+9 new/extended for correlate_results.py's judge/CWE/budget/reuse paths +
+1 extended B7 test + 2 extended B8 tests + 2 extended B5 tests + 3 for the
+OWASP_SCOPE code fix). No live Docker/Mattermost/Groq run this session —
+verified via unit tests with fake ask_llm callables, same approach as
+SESSION 3.
+
+
+9. KNOWN LIMITATIONS / NOT FIXED
+-----------------------------------
+
+- CWE_CATALOG and LABEL_TO_CWE are a curated ~14-entry subset, not the full
+  CWE catalog. A vulnerability class outside this set gets cwe_id=None from
+  the label-fallback tier (owasp_category may still resolve if the LLM/rule
+  engine provides a category directly) and correlates via the "text" tier.
+- The LLM-judge prompt asks for a single yes/no + rationale; it doesn't ask
+  the LLM to propose a corrected CWE ID for either side, so a "no" verdict on
+  a genuinely-related pair just means "not correlated this run" rather than
+  refining the taxonomy data itself.
+- find_related_static_findings() in B5 still ranks by keyword overlap, not
+  taxonomy — the taxonomy tag is computed from whatever that keyword search
+  already returns, it doesn't change which finding is picked as "related".
+- The weighted-score formula in scoring.py (0.50/0.25/0.25 split, the
+  specific per-tier weights) is a reasoned starting point, not empirically
+  tuned against a labeled dataset — worth revisiting once there's enough
+  real correlated-finding history to check the buckets against.
+
+
+--------------------------------------------------------------------------------
+SESSION 4 ADDENDUM — OWASP Top 10 2021 -> 2025 correction (2026-07-31)
+--------------------------------------------------------------------------------
+
+Everything above this addendum was built against OWASP Top 10:2021. The user
+asked "why 2021 and not 2025?" — a fair question given today's date. Checked
+via web search: OWASP Top 10:2025 was announced at AppSec DC in November
+2025 and finalized in January 2026 (https://owasp.org/Top10/2025/), months
+before this session. 2021 was the wrong edition to build against; corrected
+the same day.
+
+What changed between the two editions (per OWASP's official 2025 page):
+  A01 Broken Access Control        — unchanged position; SSRF (2021's A10)
+                                      folded into this category
+  A02 Security Misconfiguration    — moved up from A05:2021
+  A03 Software Supply Chain Failures — NEW (this pipeline doesn't scan for it)
+  A04 Cryptographic Failures       — moved down from A02:2021
+  A05 Injection                    — moved down from A03:2021
+  A06 Insecure Design              — moved down from A04:2021
+  A07 Authentication Failures      — same position, renamed from "Identification
+                                      and Authentication Failures"
+  A08 Software or Data Integrity Failures — same position, minor rename
+  A09 Security Logging and Alerting Failures — same position, minor rename
+  A10 Mishandling of Exceptional Conditions — NEW (2021's A09 Logging renamed
+                                      and moved to A09 above; SSRF, 2021's A10,
+                                      moved into A01 as noted)
+
+Fixes applied:
+  - blocks/taxonomy.py: OWASP_TOP10_2021 -> OWASP_TOP10_2025 with the real
+    2025 names/order. CWE_CATALOG's "owasp" values remapped accordingly
+    (CWE-89/78/79 Injection-family: A03->A05; CWE-798/259 hardcoded creds:
+    A02->A04; CWE-16/200 misconfig/disclosure: A05->A02; CWE-918 SSRF:
+    A10->A01, folded into Broken Access Control per the 2025 merge). Added
+    CWE-1104 (A03, supply chain) and CWE-755 (A10, exceptional conditions) as
+    representative entries for the two new categories, and moved CWE-209
+    (error-message info exposure) from the old A05 to A10, since "improper
+    error handling" is now explicitly what A10 covers.
+  - blocks/static_scanner.py: OWASP_SCOPE re-keyed a second time this session
+    — Injection A03->A05, Security Misconfiguration A05->A02, Broken Access
+    Control and Authentication Failures unchanged (A01/A07).
+  - All test fixtures/assertions referencing hardcoded "A03"/"A05" category
+    codes updated to match (tests/test_taxonomy.py, test_static_scanner.py,
+    test_dynamic_injector.py, test_generate_payloads.py, test_analyze_results.py,
+    test_correlate_results.py). One pre-existing B9 test (Hybrid/CONFIRMED
+    with B3 category "A03") was quietly passing via the tier-4 text-substring
+    fallback even after the mismatch, since "injection" is a plain substring
+    of "command injection" — not caught by the test suite itself, only by
+    manually tracing match_tier logic; corrected the fixture's category to
+    A05 so it now exercises the intended "owasp" tier instead.
+
+Verification: full suite still 102 tests, all passing after the fixture
+updates (`python -m unittest discover -s tests`).
+
+Known limitation, unchanged from the original SESSION 4 entry: CWE_CATALOG/
+LABEL_TO_CWE remain a curated subset (now 16 entries), not the full CWE
+catalog — nothing in the pipeline currently generates findings for the two
+new 2025 categories (A03 Software Supply Chain Failures, A10 Mishandling of
+Exceptional Conditions) beyond the placeholder catalog entries added above.
+
+
+================================================================================
+SESSION 5 — Wire the React UI to the real backend + build the B6 approval UI
+(2026-08-01)
+================================================================================
+
+Scope: before this session, ui/src/components/secpipeline/ had exactly ONE
+component talking to the real backend (Sidebar.tsx — status polling + the
+"run" button). PipelineView, CorrelationView, and LogsView all rendered
+static mock arrays from data.ts, and there was no UI at all for the B6
+human-review step (the only way past it was a console input() prompt or a
+raw curl to POST /api/validate). This session replaced the mock data path
+end to end and built the missing B6 approval UI. Planned via plan mode: two
+Explore agents mapped the frontend component tree and the exact backend JSON
+shapes, a Plan agent designed the implementation against both, and the user
+explicitly confirmed the B6 UI should be built now rather than deferred.
+
+
+1. BUGS FOUND (both confirmed against source, not inferred)
+--------------------------------------------------------------
+
+1.1 Sidebar.tsx's phase highlighting has never worked
+    BLOCK_TO_PHASE mapped lowercase keys ("b3".."b9") to values
+    ("static"/"dynamic"/etc.) that don't exist as ids anywhere. api.py sets
+    pipeline_state["current_block"] to uppercase "B3".."B9" (confirmed in
+    api.py's run_pipeline_until_b6()/run_pipeline_from_b7()), and data.ts's
+    phases array already uses ids "b3".."b9" directly. So the lookup never
+    matched on either axis (case, and the mapped-to values were never real
+    ids to begin with) — the "active phase" highlight in the sidebar has
+    silently never worked since the component was written.
+
+1.2 Tag.tsx conflated the CSS lookup key with the displayed text
+    `styles[tag]` for the class, `{tag}` for the rendered label — this only
+    worked because mock data happened to use the same 5 strings for both.
+    Real backend values ("CONFIRMED", "high" confidence, etc.) don't fit a
+    5-value closed union and were never meant to be forced into one.
+
+
+2. FIXES / NEW CODE
+-----------------------
+
+2.1 ui/src/lib/types.ts, api.ts, queries.ts (new)
+    types.ts: every backend response shape transcribed field-by-field from
+    api.py and blocks/*.py (not guessed) — B3Finding/B3Result,
+    B4Summary/B4Raw, B5PayloadGroup/B5Result, B7Finding/B7Result,
+    B8Finding/B8Result, B9Entry/B9Result, PipelineStatus, etc. — with
+    optional/nullable fields marked exactly where the backend actually omits
+    or nulls them (e.g. B8Finding's cwe_id/screenshot_path can be absent on
+    entries reused from an older run; B9Entry's confidence field really does
+    contain the literal value "MEDIUM " with a trailing space in real output).
+    api.ts: centralizes API_BASE and one typed function per endpoint,
+    replacing the two inline fetch("http://localhost:8000/...") calls that
+    were only in Sidebar.tsx. getBlockResult<T>() treats a 404 as null (a
+    normal "block hasn't produced results yet" state) rather than throwing;
+    every other non-2xx throws a typed ApiError carrying FastAPI's parsed
+    .detail string, so real backend error text reaches the UI instead of a
+    generic "request failed".
+    queries.ts: one React Query hook per concern (usePipelineStatus, useB3
+    through useB9, useValidatedPayloads, useLogs, useRunPipeline,
+    useValidatePayloads, useResetPipeline), all keyed through one queryKeys
+    object so repeated calls dedupe into one network request. Polling policy:
+    pipeline-status always every 2s (unchanged); B3-B5 poll every 3s while
+    running OR waiting_for_human (so B5 is fresh right as B6 starts); B7-B9
+    poll every 3s only while running; logs poll every 2s only while running
+    (nothing new is logged during the B6 wait) — otherwise every query relies
+    on React Query's default refetchOnMount/refetchOnWindowFocus so switching
+    tabs always shows current data without wasted continuous polling once
+    idle. Mutations invalidate exactly the queries they affect.
+
+2.2 Tag.tsx / FindingRow.tsx / Section.tsx decoupled from mock shapes
+    Tag now takes {tone, label} instead of {tag} — tone still keys the same
+    5-value CSS lookup (ui/src/styles.css only defines --status-posible/
+    form/confirmada/descartada, no new tokens needed; "input" reuses "form"'s
+    colors as it always did), but label can now be any real backend string.
+    FindingRow/Section repointed to the new UIFinding/UISection types —
+    structurally unchanged otherwise, both were already generic enough.
+
+2.3 ui/src/components/secpipeline/mappers.ts (new)
+    One pure function per source block translating its real shape into
+    UIFinding (mapB3Finding, mapB4Form, mapB4Input, mapB5Group, mapB8Finding,
+    mapB9Entry), plus classifyLogLine() for log-line tone. classifyLogLine's
+    heuristic (">> " = start, "OK " = success, "ERROR" = error, "==...==" =
+    divider) is matched against the exact literal prefixes api.py's log()
+    calls actually emit, confirmed by reading every log() call site in
+    api.py — not guessed from the mock data's old tone field.
+
+2.4 Sidebar.tsx fixed (bug 1.1)
+    Deleted BLOCK_TO_PHASE entirely; activePhaseId is now
+    `status?.current_block?.toLowerCase() ?? null`, which matches data.ts's
+    "b3".."b9" ids directly. Also switched the two inline fetch() calls to
+    usePipelineStatus()/useRunPipeline() from lib/queries.ts — pure refactor,
+    button/label/disabled logic unchanged beyond the bug fix.
+
+2.5 PipelineView.tsx, CorrelationView.tsx, LogsView.tsx rewritten
+    All three now read real data via the new hooks instead of importing
+    static arrays from data.ts. A new shared QueryState.tsx component handles
+    the loading/error/empty three-way branch once instead of repeating it in
+    every section of every view.
+    - PipelineView: B3/B4/B5 as three independent sections (one block can
+      have data while another doesn't yet); B4 additionally gets its own
+      status/error banner (failed/partial/complete + per-stage errors) since
+      that's real signal the old mock data never carried.
+    - CorrelationView: the previously-hardcoded "SQLi en auth.go:42" /
+      "payload ejecutado en login_form" narrative block is now a real
+      highest-score B9 entry where source == "Hybrid (Static + Dynamic)"
+      (renders nothing if none exists yet, rather than showing fake data).
+      The three stat tiles are now real aggregates — CONFIRMED count /
+      total_correlated, "Static (False Positive)" count, and
+      total_correlated itself replacing the fabricated "55 min" tile (no
+      endpoint anywhere returns timing/duration data, so that stat had no
+      honest real-data substitute and was dropped rather than preserved as
+      fake).
+    - LogsView: renders GET /api/logs's plain string array through
+      classifyLogLine for tone coloring; no time column (backend provides
+      none — not fabricated); auto-scrolls to the bottom as new lines arrive.
+
+2.6 PayloadReviewView.tsx (new) — the B6 approval UI
+    Added as a 4th tab ("Revisión (B6)") in data.ts's tabs array, chosen over
+    a modal/overlay since it composes with the existing controlled Tabs
+    mechanism and survives tab-switching/refresh. SecPipelineApp.tsx
+    auto-switches to it the moment waiting_for_human flips false->true
+    (tracked via a ref so it only fires once per wait-cycle and doesn't fight
+    a user who navigated elsewhere). The view itself handles the real state
+    matrix explicitly, not just the happy path:
+      - no B5 data at all -> "run the pipeline first"
+      - B5 exists, already validated (validated_payloads has data) ->
+        read-only summary of what was approved
+      - B5 exists, not yet at B6 -> "waiting for the pipeline to reach B6"
+      - waiting_for_human == true -> full interactive form: one card per
+        payload group (target, taxonomy tags, rationale, payload chips), a
+        checkbox per index (disabled when that group's payloads array is
+        empty — nothing there to approve), select-all/none, a comment
+        textarea, and a submit button calling POST /api/validate. On success:
+        sonner toast + switch to the Logs tab so the resumed B7->B9 run is
+        immediately visible. On error (409/404 from the backend): toasts the
+        real ApiError.detail text instead of failing silently.
+    Uses shadcn Checkbox/Textarea/Button/Card, all already present in
+    ui/src/components/ui/ and unused elsewhere — no new dependency added.
+    Toaster mounted locally in SecPipelineApp.tsx (page-scoped, not global —
+    __root.tsx wasn't touched).
+
+2.7 data.ts cleanup
+    Removed pipelineSections, correlationSections, logLines, and the old
+    Finding/Section/LogLine types (fully superseded by lib/types.ts +
+    mappers.ts). Kept prerequisites, phases (still legitimate static UI
+    config, not mock data), and tabs/TabId (now 4 entries).
+
+
+3. VERIFICATION
+-----------------
+
+Static checks: `npx tsc --noEmit` and `npx eslint` clean across every file
+created/modified this session. (eslint also flagged ~5000 pre-existing CRLF
+line-ending errors across the whole repo in files this session never
+touched — e.g. vite.config.ts, start.ts, Callout.tsx, Tabs.tsx, TopBar.tsx,
+src/lib/error-capture.ts/error-page.ts/utils.ts — confirmed pre-existing by
+scoping eslint to exactly the touched file list and seeing them disappear;
+left untouched rather than reformatting unrelated files.)
+
+Live smoke test: started the real backend (`uvicorn api:app --port 8000`
+from repo root) and the real frontend (`npm run dev` in ui/, port 5173).
+- GET /api/status returned the expected idle shape.
+- GET /api/results/B9_correlation returned the one real result file on disk,
+  byte-for-byte matching the B9Entry type written in lib/types.ts.
+- GET /api/results/B5_payloads correctly 404'd (no file yet) — confirms
+  getBlockResult()'s null-on-404 path against a real backend response, not
+  just a mocked one.
+- Fetched the SSR'd /app HTML directly: no error/exception/"failed to fetch"
+  text anywhere in the output, and all expected static UI text rendered
+  (tab labels including "Revisión (B6)", the "PRE-REQUISITOS" sidebar
+  heading). The SSR pass itself shows "Cargando..." (loading) states, as
+  expected — React Query's client-side fetches (to localhost:8000) resolve
+  after hydration in the browser, which a plain curl/SSR fetch can't observe.
+
+NOT verified this session (no browser automation tool available): the
+actual post-hydration rendering of live data (e.g. that the one real B9
+entry paints with the correct tone/color once the browser fetches it), and
+the full interactive click-through (triggering a run, watching phases
+progress, approving payloads in the new B6 UI, confirming the resume to
+B7->B9). Both servers were left running (backend :8000, frontend :5173) for
+manual visual/interactive confirmation.
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- No visual/interactive confirmation yet (see above) — the implementation is
+  type-checked, lint-clean, and verified against real (not mocked) backend
+  responses at the network level, but hasn't been watched running in an
+  actual browser by either the assistant or, as of this entry, the user.
+- fresh/restore mode selection is still not exposed anywhere in the UI —
+  unchanged non-goal from prior sessions; POST /api/run still can't trigger
+  fresh_reset().
+- TopBar.tsx is still fully hardcoded (logo, "Mattermost v9.x · Docker ·
+  PostgreSQL" text, a status dot that's always green) — no backend endpoint
+  exists for real environment/target info, left as a deliberate non-goal.
+- B7 finding screenshots (results/dynamic/*.png) are not rendered as images
+  anywhere in the UI — api.py has no static-file-serving endpoint for them.
+  Not added this session to avoid silently expanding scope beyond the
+  approved plan; would need a small new backend endpoint first.
+- GET /api/results (the bulk endpoint returning every results/*.json keyed
+  by filename) has a typed client function in lib/api.ts but isn't wired
+  into any view — the per-block endpoint gives cleaner typed 404-vs-data
+  semantics per query than the bulk dict, which silently omits absent keys
+  instead of representing "not produced yet" uniformly. Deliberate choice,
+  not an oversight.
+
+
+================================================================================
+SESSION 6 — Three real bugs found from user-submitted screenshots
+(2026-08-01)
+================================================================================
+
+Scope: the project had just been moved out of OneDrive to fix a broken venv
+(separate fix, not detailed here). The user then ran the UI end-to-end and
+submitted screenshots pointing out three problems: B3 showing "no findings
+yet", "Reset environment" throwing what looked like an auth error, and the
+sidebar's phase list not reflecting real progress. All three were confirmed
+against source and fixed; none were UI display bugs in the sense the user
+assumed — each had a distinct, concrete root cause.
+
+
+1. BUGS FOUND
+--------------------------------------------------------------
+
+1.1 mattermost-src/mattermost (B3's scan target) was an orphaned,
+    never-initialized git submodule
+    `git ls-tree HEAD mattermost-src/` showed a 160000 gitlink entry, but
+    there was no .gitmodules file anywhere in the repo — so `git submodule
+    update --init` had no URL to resolve and the folder had 0 files on disk.
+    blocks/static_scanner.py's scan_and_save_files() walked an empty
+    directory and returned an empty list every time, so results/B3_static.json
+    genuinely contained {"total_scanned": 0, "findings": []} — B3 "ran
+    successfully" against nothing, with no error surfaced anywhere. The
+    pinned commit (5181f04ffa220880659d27f6a1ff7138a6cbcaa8) turned out to be
+    unrecoverable: confirmed via the GitHub API that it doesn't exist in
+    either mattermost/mattermost or the legacy mattermost/mattermost-server
+    (both returned 422 "No commit found for SHA").
+
+1.2 Moving the project out of OneDrive left the Windows ReadOnly attribute
+    set on almost every folder in the repo
+    Reported by the user as an "auth error" when clicking "Reset environment"
+    in the UI; the actual exception was `PermissionError: [WinError 5]
+    Access is denied: 'results\dynamic'` from clear_results_folder()'s
+    shutil.rmtree() call. Confirmed with `Get-Item ... -Force |
+    Format-List Attributes` that results/dynamic had `ReadOnly, Directory,
+    Archive` set, and a recursive `Get-ChildItem -Attributes ReadOnly
+    -Directory` scan showed the same flag on nearly the entire tree (.git,
+    blocks, ui, mattermost, tests, __pycache__, ...). This is a known
+    side-effect of copying folders out of OneDrive on Windows. rmtree()
+    deletes the folder's contents fine, then fails on the final os.rmdir()
+    of the (now empty but still ReadOnly-flagged) directory — not a
+    transient file handle, so the existing 5-retry/1s-delay loop could never
+    have helped regardless of how long it waited.
+
+1.3 Sidebar.tsx (ui/src/components/secpipeline/Sidebar.tsx) had no concept
+    of "phase already completed"
+    Even after SESSION 5's fix (which made the *active*-phase highlight work
+    at all), the component only ever rendered a phase as highlighted when
+    `ph.id === activePhaseId`, with a plain empty Circle otherwise. api.py
+    resets pipeline_state["current_block"] to null once the pipeline
+    finishes (or errors) — see run_pipeline_from_b7()'s success path and both
+    blocks' except clauses — so a fully completed run and a never-started one
+    rendered identically: 7 empty circles, no indication of what actually
+    ran. This is what the user described as "not intuitive with the states
+    ... a final user might have problems understanding if it's running well".
+
+
+2. FIXES
+-----------------------
+
+2.1 blocks/dynamic_injector.py — guarantee the Playwright browser always
+    closes
+    browser.close() was only called once, at the very end of the payload
+    loop, with no try/finally. Not the root cause of 1.2 this time (no
+    orphaned chromium.exe process was found running), but a real latent bug:
+    since B7 launches headless=False, any exception mid-loop (a selector
+    that never resolves, an unhandled Playwright error, etc.) would leave a
+    visible, un-closed browser window that could hold file handles open on
+    the screenshots it had just written to results/dynamic/ — a second way
+    to reproduce 1.2's symptom later. Wrapped everything from `context =
+    browser.new_context()` through the end of the payload loop in a
+    try/finally that always calls browser.close().
+
+2.2 blocks/environment.py — clear_results_folder() resilience + honest
+    error message
+    Bumped retries 5→10 and retry_delay 1s→1.5s as a wider safety margin for
+    genuinely transient locks (AV/indexer), and — since 1.2 proved the retry
+    loop is not sufficient for a ReadOnly-attribute failure — the final
+    PermissionError now logs a message pointing at the real possible causes
+    (a file open in an image viewer/Explorer preview, a leftover chromium.exe
+    from a previous B7 run) before re-raising, instead of surfacing a bare
+    WinError to the UI with no actionable next step.
+    One-time environment fix (not code): recursively cleared the ReadOnly
+    attribute from every directory under the project root with PowerShell
+    (`Get-ChildItem -Recurse -Force -Directory | ForEach-Object { $_.Attributes
+    = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly) }`).
+    Verified results/ can now be wiped cleanly end-to-end via
+    clear_results_folder() directly.
+
+2.3 ui/src/components/secpipeline/Sidebar.tsx — real done/active/pending
+    phase state
+    Added a phaseState(index) helper: if the pipeline is completed, every
+    phase is "done"; otherwise phases before the active one (by list
+    position, comparing against phases.map(p => p.id).indexOf(activePhaseId))
+    are "done", the matching one is "active", the rest are "pending". Each
+    state now has a distinct icon (Check / spinning Loader2 / empty Circle)
+    instead of only ever showing "active" or "nothing". Typechecked clean
+    with `npx tsc --noEmit`.
+
+2.4 .gitmodules (new) — repoint the submodule at a version that actually
+    exists
+    Since the original pinned commit is unrecoverable (see 1.1) and the user
+    didn't remember the source repo/URL either, repointed the submodule at
+    mattermost/mattermost's `v11.7.0` tag — chosen deliberately to match
+    mattermost/.env's MATTERMOST_IMAGE_TAG=11.7.0, i.e. the exact version
+    running in the project's own Docker container. This is an improvement
+    over the original setup, which had no guarantee B3's scanned source
+    matched the version B4/B7 actually attack. `git submodule update
+    --remote` doesn't work here (it only follows branches, and v11.7.0 is a
+    tag), so it was cloned directly with `git clone --branch v11.7.0 --depth
+    1` and registered via `git add mattermost-src/mattermost`. Confirmed:
+    13,050 files on disk, and blocks/static_scanner.py's
+    scan_and_save_files() now finds 2,057 files under the relevant
+    directories (api/app/handlers/store/services/auth/model/server) —
+    up from 0.
+
+
+3. VERIFICATION DONE THIS SESSION
+-----------------------------------
+
+- `python -m py_compile` on both modified .py files (dynamic_injector.py,
+  environment.py) — syntax-clean.
+- `clear_results_folder()` run directly against the real results/ folder
+  (after the ReadOnly fix) — completed without raising, folder recreated
+  empty.
+- `npx tsc --noEmit -p .` in ui/ — zero errors after the Sidebar.tsx edit.
+- `scan_and_save_files('mattermost-src/mattermost')` run directly — returns
+  2,057 real file paths instead of an empty list.
+- GitHub API checks (no clone needed) confirming the original pinned commit
+  doesn't exist in either candidate upstream repo, and that the v11.7.0 tag
+  does exist, before committing to the re-clone.
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- Not re-run end-to-end in the browser: the fixes are verified at the
+  module/type level (see section 3 above), but nobody has watched a fresh
+  `python main.py --mode fresh` → UI run confirm that B3 now produces real,
+  non-empty findings, or that the Sidebar's done/active/pending states look
+  right live while a run progresses through all 7 phases.
+  results/B3_static.json on disk is still the stale empty-submodule output
+  from before this session's fix — needs a fresh B3 run to regenerate.
+- headless=False (B7) is still not configurable — unchanged, pre-existing
+  debt, see readme.md section 7 point 4. Not touched this session beyond
+  guaranteeing browser.close() always runs.
+- The ReadOnly-attribute cleanup was applied once, by hand, to the current
+  checkout. If the project is copied out of OneDrive again (or into a new
+  machine the same way), the same symptom could reappear — there's no
+  automated check/fix for it in the codebase itself.
+
+
+================================================================================
+SESSION 7 — Landing-page automation, B9 rationale, B6 comment persistence
+(2026-08-06)
+================================================================================
+
+Scope: three items from the user's own backend punch list (observations.txt):
+(1) B4/B7 required manually clicking through Mattermost's "View in Browser"
+interstitial on every run instead of it being automated, (2) B9 already
+computed an LLM-judge rationale for ambiguous matches but discarded it before
+it reached the frontend, with no click-to-expand "why/where" UI for any
+correlated finding, and (3) B6's reviewer comment field was accepted by the
+API and then silently dropped instead of surviving into Past Runs.
+
+
+1. PROBLEMS OBSERVED
+---------------------
+
+1.1 Landing-page interstitial had no automation anywhere
+    grep across the whole codebase for "landing"/"desktop"/"view in browser"
+    found nothing in blocks/dynamic_analysis.py or blocks/dynamic_injector.py
+    (only unrelated "Docker Desktop" hits in environment.py) — neither B4 nor
+    B7 addressed this page at all. Traced the actual mechanism in the
+    mattermost-src/mattermost submodule (webapp/channels/src/components/
+    root/root.tsx): every new browser session gets redirected to /landing
+    (the "View in Browser" vs. "View in Desktop App" prompt) unless
+    localStorage already has BrowserStore.hasSeenLandingPage() (key
+    __landingPageSeen__, constants.tsx) set true. Playwright starts every run
+    with empty localStorage, so this fired on every single B4/B7 run — which
+    is exactly why the user had been clicking it by hand.
+
+1.2 B9's judge rationale was computed then thrown away
+    correlate_results.py's judge() already asked the LLM for a one-sentence
+    rationale on ambiguous (same-OWASP-category, different-CWE) pairs and
+    persisted it in the on-disk `judgments` dict, but find_match() only ever
+    returned the yes/no verdict — the rationale never reached the correlated
+    finding dict, and the other three match tiers (cwe/owasp/text) had no
+    explanation field at all. Confirmed against the real
+    results/B9_correlation.json on disk: DESCARTED (false-positive) entries
+    carried B7's dynamic `evidence` but nothing describing why they were
+    still correlated to a static finding in the first place.
+
+1.3 B6 comment field was write-only
+    POST /api/validate accepted `comment` and stored it in the in-memory
+    pipeline_results["B6"] dict, but api.py's write of
+    results/validated_payloads.json only included {"status", "payloads"} —
+    the comment was never written to disk, so run_history.finish_run()'s
+    glob of results/*.json could never pick it up. It vanished the moment
+    the run ended; nothing downstream (PastRunsView, PayloadReviewView)
+    rendered it either, since the data never survived past the request
+    handler.
+
+
+2. FIXES APPLIED
+-----------------
+
+2.1 blocks/dynamic_analysis.py / blocks/dynamic_injector.py — skip the
+    landing page instead of clicking through it
+    Added context.add_init_script("localStorage.setItem('__landingPageSeen__',
+    'true');") to every browser context created in both files: B4's single
+    context, and B7's login_context plus each per-payload context inside
+    _execute_one(). An init script runs before any page JS on every new
+    document in that context, so root.tsx's showLandingPageIfNecessary()
+    finds hasSeenLandingPage() already true and the redirect never fires.
+    Chose this over scripting a click on the "View in Browser" link
+    (confirmed selector via Mattermost's own e2e page object,
+    e2e-tests/playwright/lib/src/ui/pages/landing_login.ts:
+    page.locator('text=View in Browser')) because it's immune to
+    localization/timing/race issues and mirrors Mattermost's own intended
+    mechanism for skipping the prompt, rather than fighting the UI reactively.
+    Test fix: tests/test_dynamic_injector.py's FakeBrowser stands in for both
+    Playwright's Browser and BrowserContext (new_context() returns self) and
+    had no add_init_script method — added a no-op so the fake matches the
+    real interface.
+
+2.2 blocks/correlate_results.py — match_rationale + matched_static_finding
+    on every entry
+    find_match() now returns (matched_index, match_tier, judge_rationale)
+    instead of just (matched_index, match_tier); the judge rationale is read
+    back out of the `judgments` cache, so it's populated identically whether
+    the verdict was just computed this run or reused from a prior one. New
+    _explain_match(match_tier, b3, b8, judge_rationale, dyn_target) builds a
+    one/two-sentence explanation per tier: "cwe" cites the exact CWE + the
+    static finding's file:line; "judge" cites file:line plus the LLM's real
+    rationale text; "owasp" explains it's a category-only match with no CWE
+    agreement; "text" flags the legacy substring fallback; "none" (no static
+    counterpart) says so plainly. Every correlated entry — both the
+    B8-driven branch and the leftover-static-only branch — now carries
+    match_rationale (string) and matched_static_finding
+    ({file, line, vulnerability} | null). No new LLM calls: the judge tier
+    reuses a rationale that was already being paid for and discarded; the
+    other tiers are template text, not model-generated.
+
+2.3 Frontend — click-to-expand rationale box, no new tab
+    ui/src/lib/types.ts: B9Entry gained match_rationale/matched_static_finding;
+    UIFinding gained an optional `rationale` field.
+    ui/src/components/secpipeline/mappers.ts: mapB9Entry passes
+    e.match_rationale through as UIFinding.rationale.
+    ui/src/components/secpipeline/FindingRow.tsx: rows with a rationale are
+    now clickable (local `expanded` state, chevron affordance); expanding
+    reveals an inline text box directly below the row — no modal, no
+    route/tab change. Rows without a rationale (every non-B9 finding type —
+    B3/B4/B5/B7/B8 mappers don't set it) render exactly as before.
+
+2.4 B6 comment — persisted through to Past Runs
+    api.py's validate_payloads() now writes
+    {"status", "payloads", "comment": body.comment} to
+    results/validated_payloads.json instead of omitting comment. Since
+    run_history.finish_run() already globs every results/*.json file into
+    the run's SQLite snapshot with no per-block special-casing, this alone
+    was enough for the comment to survive into GET /api/runs/{id} as the
+    "validated_payloads" block — no run_history.py changes needed.
+    ui/src/lib/types.ts: ValidatedPayloadsResult gained an optional `comment`
+    field (optional because the console review path, blocks/human_review.py,
+    and pre-existing runs from before this fix never set it).
+    ui/src/components/secpipeline/PayloadReviewView.tsx: the post-submission
+    "Already validated" state now shows the comment under "Reviewer note:"
+    when present.
+    ui/src/components/secpipeline/PastRunsView.tsx: reads the
+    validated_payloads block from a historical run's snapshot and renders it
+    as a "B6 — REVIEWER NOTE" section; also added to the `nothingToShow`
+    check so a run with only a comment and no findings anywhere doesn't get
+    hidden behind the empty-state callout.
+
+
+3. VERIFICATION
+-----------------
+
+Full suite: `python -m unittest discover -s tests` — 112 tests, all passing
+(same count as before this session; test_api.py's
+test_validate_writes_validated_payloads_matching_b7_contract gained a new
+assertion, not a new test method, confirming the comment round-trips to
+results/validated_payloads.json).
+`npx tsc --noEmit` in ui/ — zero errors across every file touched this
+session.
+
+NOT verified live this session: no Docker/Mattermost/browser run to visually
+confirm the landing-page skip actually prevents the redirect in a real
+browser, or that FindingRow's click-to-expand renders/looks right post-
+hydration. The landing-page fix is verified by tracing Mattermost's own
+submodule source (not guessed), and everything else at the unit-test/
+type-check level — same caveat as this project's other backend-only rounds
+(SESSION 3, SESSION 4).
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- The landing-page fix depends on Mattermost's client-side localStorage key
+  (__landingPageSeen__) staying stable across versions — pinned to whatever
+  ships in the v11.7.0 submodule per SESSION 6. A future Mattermost upgrade
+  could rename or restructure this, same category of fragility as the
+  login-selector code documented in prior sessions.
+- match_rationale's "cwe"/"owasp"/"text" tier text is template-generated
+  locally, not LLM-authored — only the "judge" tier includes real
+  model-generated reasoning, since that's the only tier that already spends
+  a token budget deciding the match.
+- B6's comment still isn't captured at all on the console review path
+  (blocks/human_review.py) — its manual input()-based flow has no prompt for
+  it. Only the API/frontend path (the one the actual UI uses) writes one.
+
+
+--------------------------------------------------------------------------------
+SESSION 7 ADDENDUM — B8 "API Error" placeholders crashed the frontend
+(2026-08-06)
+--------------------------------------------------------------------------------
+
+Found live, not by code review: the user reported that opening the
+Correlation tab, or opening a run under Past Runs, showed the app's global
+error page ("This page didn't load"). Reproduced with a throwaway Playwright
+script against the already-running dev server (`ui/`, port 5173) and live
+backend (port 8000) — chose this over guessing from source because
+`npx tsc --noEmit` had already passed clean for this session's changes, so a
+static check wasn't going to explain a runtime crash. `page.on("pageerror")`
+caught the real browser exception directly.
+
+ROOT CAUSE (pre-existing, unrelated to this session's three items above):
+`blocks/analyze_results.py`'s per-finding LLM-call `try` block already
+`setdefault()`s payload_id/target/payload/vulnerability/cwe_id/
+owasp_category/confidence/evidence onto whatever `ask_llm()` returns — but
+never `result`. `main.py`'s `ask_llm()` catches every exception (including
+Groq 429 rate-limit errors) and returns `{"vulnerability": "API Error",
+"evidence": str(e)}` with no `result` key at all. A real run in progress
+during this session hit Groq's 100k-tokens/day cap
+("Used 99471, Requested 643...") on 4 of its 15 B7 findings, so
+results/B8_dynamic.json ended up with 4 entries missing `result` entirely.
+`ui/src/components/secpipeline/mappers.ts`'s `mapB8Finding()` does
+`f.result.toUpperCase()` with no guard — reasonable given `B8Finding.result`
+is typed non-optional in lib/types.ts, but the backend wasn't actually
+honoring that contract on the error path. `blocks/correlate_results.py` (B9)
+was already defensive here (`b8.get("result", b8.get("status", "discarded"))`
+in `_normalize_result_label`'s caller), which is why the crash was specific
+to B8's own section of CorrelationView/PastRunsView and not B9's.
+
+FIX:
+- blocks/analyze_results.py: added `llm_result.setdefault("result",
+  "discarded")` alongside the existing confidence/evidence setdefaults, so
+  every B8 finding written to disk always has a valid result value, matching
+  the type contract instead of relying on downstream consumers to guess.
+  "discarded" chosen deliberately: it's the least consequential bucket (won't
+  inflate a confirmed-findings count), and the "API Error" vulnerability
+  label already marks the entry as not a real classification for every other
+  purpose (`_is_llm_result_usable()` already refuses to reuse it on a re-run,
+  so it'll be retried for real next time B8 runs, not silently accepted).
+- tests/test_analyze_results.py: new
+  test_ask_llm_error_placeholder_still_gets_a_valid_result_field, using a
+  fake ask_llm that returns exactly main.py's real API-Error shape (no
+  result key) and asserting the output result is one of the three valid
+  literals.
+- Data-only, no code: patched the 4 broken entries directly in the live
+  results/B8_dynamic.json (result -> "discarded") so the running UI recovers
+  immediately without needing to burn more Groq tokens re-running B8 while
+  the daily cap is still exhausted. Also patched the one affected historical
+  snapshot in siftpipe_history.db (run_id=4, block_name="B8_dynamic",
+  same 4 entries) — run_history.finish_run() snapshots results/*.json
+  verbatim at run-completion time, so the code fix and the live-file patch
+  alone would NOT have fixed already-persisted Past Runs history; confirmed
+  via direct sqlite3 query that run_id 1-3's B8_dynamic snapshots were
+  unaffected (predate this bug being triggered) and only run_id 4 needed it.
+
+VERIFICATION: `python -m unittest discover -s tests` — 113 tests, all
+passing. Re-ran the Playwright repro after the fix: no console errors,
+Correlation renders its B8/B9 sections (including the "API Error" entry,
+now tagged DISCARDED) instead of the error boundary; Past Runs -> Run #4
+renders its full historical snapshot instead of crashing.
+
+NOT DONE: the underlying Groq 100k-tokens/day cap is still an external
+constraint (unchanged since SESSION 1/4) — this fix stops a capped run's
+error placeholders from crashing the UI, it doesn't avoid hitting the cap
+itself. Any *future* run that hits the same rate limit will still produce
+"API Error" placeholders (by design, for the retry-on-next-run mechanism in
+_is_llm_result_usable()) — they just won't crash the frontend anymore.
+
+
+================================================================================
+SESSION 8 — Multi-target support: NaViQ as a second real target
+(2026-08-08 to 2026-08-10)
+================================================================================
+
+Scope: over three separate days, generalized the pipeline from a single
+hardcoded Mattermost target to also support NaViQ — a second real,
+authorized local instance — via a per-target profile system (Approach A:
+a closed set of 2 known profiles, explicitly NOT a general "any user adds
+any site" product; see MULTI_TARGET_PLAN.md's "Non-goals" section). This
+entry is the condensed technical record in fixes.txt's usual format —
+full task-by-task detail, including every decision and every phase's own
+live-verification writeup, lives in MULTI_TARGET_PLAN.md and is not
+repeated here. Two same-day follow-ups on 2026-08-10 close out the work:
+a real, user-reported UI bug (results/ files colliding across targets)
+and a small UX addition (showing each Past Run's target).
+
+
+1. REAL BUGS FOUND
+-----------------------------------
+
+Each of these was found live — either by running the pipeline against
+NaViQ for real and hitting a concrete failure, or by inspecting actual
+historical run data — not by code review alone.
+
+1.1 B7's selector-building treated NaViQ's "no id" sentinel as a real id
+    blocks/dynamic_analysis.py's extract_forms() uses the literal string
+    "unknown" for any field with no id/name attribute; the old inline
+    selector-building in dynamic_injector.py guarded field_name != "unknown"
+    but not field_id != "unknown", so any id-less field built the
+    unmatchable selector "#unknown". Nearly every NaViQ form field lacks an
+    id — 15/15 payloads timed out in the run that caught this, all against
+    "#unknown". Fixed with a small extracted _build_selector(field_id,
+    field_name) function, both sentinels guarded.
+
+1.2 B5 let hidden CSRF/language-switcher fields crowd out real targets
+    build_dynamic_targets() captured every form field unconditionally,
+    hidden ones included. Barely mattered for Mattermost (no server-
+    rendered hidden inputs on its React SPA), but NaViQ's {% csrf_token %}
+    + i18n language-switcher form appears on literally every page — hidden
+    fields dominated 15/20 targets in the run that caught this, crowding
+    out genuinely interesting ones (the contact form's email/message).
+    Fixed by skipping field.get("type") == "hidden" in build_dynamic_targets().
+
+1.3 NaViQ's contact form has a spam honeypot Playwright's own is_visible()
+    doesn't catch
+    Built while closing a related gap (a required-but-unfilled sibling
+    field getting the whole submission rejected before the payload field
+    was ever processed): _fill_sibling_fields() auto-fills a form's other
+    empty fields with plausible placeholders before submit. NaViQ's contact
+    form has a honeypot (name="website", ordinary type="text") kept
+    off-screen via `position:absolute; left:-9999px` + `aria-hidden="true"`
+    rather than `type="hidden"` — confirmed live that is_visible() returns
+    True for it (it doesn't catch off-screen positioning), so a naive
+    version would have filled it and gotten every submission treated as bot
+    traffic. Fixed by also skipping any field under an
+    `aria-hidden="true"` ancestor.
+
+1.4 XSS_reflected false-positives on non-XSS payloads and JSON responses
+    Found by checking this project's own real historical run data
+    (siftpipe_history.db, runs 6 and 8), not just code review: SQLi/
+    command-injection test payloads ('SELECT * FROM users WHERE id = 1',
+    "ls -l; echo 'Command Injection'") got tagged XSS_reflected purely for
+    being echoed back — Mattermost's own chat API returns your post
+    verbatim in its JSON response, which every payload triggers regardless
+    of shape, and isn't reflected XSS in any meaningful sense. Fixed with
+    two required gates in blocks/dynamic_injector.py:
+    _looks_like_xss_payload() (the payload must contain real HTML/JS
+    syntax — "<", ">", "javascript:", "onerror=", etc.) and
+    _looks_like_html_response() (the response must actually look like
+    HTML, not JSON — _execute_one() now captures Content-Type, falling
+    back to sniffing the body's first character when the header is
+    missing/unhelpful).
+
+1.5 B3 never ran against NaViQ at all — wrong tech-stack assumptions, not
+    just a wrong path
+    Prompted by "why is it not running block 3 on naviq?". static_scanner.py's
+    extensions/directory filter was hardcoded to Mattermost's own Go/
+    TypeScript stack (.go/.ts/.tsx/.js/.jsx, directory names like api/
+    handlers/store) — zero overlap with NaViQ's real Django/Python code.
+    On top of that, results/files_list.txt was a single shared cache with
+    no target in its name, so whichever target ran B3 first won the cache
+    forever. Fixed by giving TargetProfile its own source_dir/
+    source_extensions/source_exclude_dirs/source_relevant_dirs per target,
+    and scoping the cache filename by target.
+
+1.6 A02 hardcoded-secret prompt flagged a correct env-var read as a real
+    secret, and the LLM emitted "not found" placeholder entries
+    OWASP_SCOPE's A02 description didn't distinguish a literal secret value
+    from an env-var read, so `X = os.getenv("X")` (the correct pattern) got
+    flagged "hardcoded, confidence: high". Fixed the prompt; verifying that
+    fix against NaViQ's real run_batch_evaluations.py surfaced a second,
+    independent bug: the LLM returning "not found" placeholder entries
+    ({"vulnerability": "Broken Access Control", "evidence": "No clear
+    authorization checks found...", "line": 0, "confidence": "medium"})
+    instead of an empty array, despite the prompt already forbidding it —
+    3 of 5 were medium-confidence and would have been saved as real
+    findings. Fixed both in the prompt (explicit anti-example) and as a
+    code-level backstop in main.py (reject any finding with no real line
+    number), since prompt compliance alone wasn't reliable enough to trust.
+
+1.7 NaViQ dev-server automation: three bugs found live while building it
+    Prompted by a hard new requirement (a jury operating the pipeline from
+    the frontend only, no terminal access), reversing an earlier deliberate
+    decision that the dev server stays a manual prerequisite — correct for
+    a developer with terminal access, a hard blocker for this one.
+    ensure_naviq_server_running()/stop_naviq_server() (blocks/environment.py)
+    spawn/manage `manage.py runserver` as a background subprocess,
+    idempotent via a real HTTP check, not a flag. (a) the server's own log
+    file lived under results/, colliding with every reset's own results-wipe
+    (WinError 32) — moved to the already-gitignored naviq-src/; (b) a
+    leaked file descriptor, caught by a unit test's own cleanup failing,
+    not by inspection; (c) the significant one — the "Run analysis" button
+    in the UI could enable while the database was still mid-reset, since
+    targetUp alone doesn't mean the reset finished — found via live
+    Playwright testing sampling the button's disabled state across an
+    entire real reset run, not something reading the code would ever catch.
+    Also fixed a related staleness bug found along the way: the "{target}
+    running" indicator could briefly show the *previous* target's cached
+    status right after switching — fixed by only trusting
+    envHealth.target_up when envHealth.target === activeTarget.name.
+
+1.8 results/ per-target file collision (2026-08-10, closing this session)
+    Every block wrote a single fixed results/{block}.json regardless of
+    active target, so running NaViQ then Mattermost back to back (Phase 6's
+    own end-to-end validation runs) silently overwrote NaViQ's
+    results/B7_dynamic_attacks.json with Mattermost's — a live, visible UI
+    bug, not theoretical: confirmed the exact symptom, then fixed it (full
+    detail in section 2.7 below).
+
+1.9 Past Runs' RunSummary silently dropped a field the backend already sent
+    blocks/run_history.py's list_runs() already selected and returned
+    `target` per row — no backend change needed. The gap was purely
+    frontend: ui/src/lib/types.ts's RunSummary type never declared a
+    `target` field, so it was silently dropped on the way into the
+    component instead of rendered.
+
+
+2. FIXES
+-----------------------
+
+2.1 blocks/targets.py — TargetProfile abstraction (new)
+    A single frozen dataclass per target: base URL, login selectors/
+    strategy, credentials (env-var + default), which authenticated-page
+    selector proves a real login, whether B1 can fresh-reset it, B4's
+    extra crawl denylist, and B3's source_dir/extensions/exclude_dirs/
+    relevant_dirs. MATTERMOST and NAVIQ are the only two instances;
+    get_target(name) is the single lookup point, TARGETS the closed set
+    TopBar.tsx's picker and api.py's /api/target both read from.
+
+2.2 blocks/dynamic_analysis.py + blocks/crawler.py — B4 generalized to a
+    real crawl
+    discover_attack_surface(target=None) takes a TargetProfile (defaults
+    to Mattermost for zero behavior change on existing callers — the same
+    convention every generalized function in this session follows).
+    Replaced a hardcoded Mattermost route list with a genuine breadth-first
+    same-origin crawl from the post-login landing page
+    (blocks/crawler.py's select_links_to_visit()/GENERIC_DENYLIST/
+    DEFAULT_MAX_PAGES), combined with each target's own extra_denylist
+    (NaViQ: /webhooks/, /buy/ — real MercadoPago/PayPal payment
+    infrastructure that must stay out of scope even locally).
+    extract_forms() needed no changes — already generic DOM querying.
+
+2.3 blocks/mattermost_auth.py's find_working_selector() reused, B7
+    generalized (blocks/dynamic_injector.py)
+    _login(page, target=None) authenticates via the target's own
+    login_url/selectors/submit strategy instead of Mattermost-only calls.
+    _is_submission_response() replaced the old Mattermost-only URL-suffix
+    check (POST to a URL ending in /api/v4/posts or
+    /api/v4/commands/execute) with a target-agnostic predicate: same-origin,
+    method == POST, not a static-asset path — covers both Mattermost's
+    fetch/XHR chat API and NaViQ's classic Django full-page POST-redirect
+    forms without knowing either target's specific endpoint shapes.
+    _fill_sibling_fields()/_disable_client_validation() (new) close the gap
+    from bug 1.3/1.2 above. _looks_like_xss_payload()/
+    _looks_like_html_response() (new) close bug 1.4.
+
+2.4 blocks/environment.py — B1 target dispatch + NaViQ automation
+    main.py's --mode fresh/restore and api.py's reset endpoint both
+    dispatch on target.name: Mattermost keeps fresh_reset() (Docker)
+    unchanged; NaViQ gets naviq_fresh_reset() (wipe db.sqlite3, migrate,
+    reseed, recreate the test account) plus ensure_naviq_server_running()/
+    stop_naviq_server() (bug 1.7 above).
+
+2.5 blocks/static_scanner.py + main.py — B3 target-aware (bug 1.5/1.6 above)
+    run_static_analysis() now takes a target_profile; both real call
+    sites (main.py's CLI, api.py's run_pipeline_until_b6()) updated.
+    Cache file target-scoped (results/{target}_files_list.txt) — the same
+    naming convention later generalized to every other block's output in
+    2.7 below.
+
+2.6 Frontend — TopBar target picker, target-aware Sidebar copy, Past Runs
+    badge
+    api.py exposes GET/POST /api/target; ACTIVE_TARGET is a runtime-
+    switchable module global (not just env-var-set-once), reassigned by
+    POST /api/target and read at call time by every function below it, so
+    a reassignment is picked up everywhere without a mutable wrapper
+    object. TopBar.tsx got a real 2-way picker — the closed set of 2 known
+    profiles, not a free-text "any site" input (that line is what would
+    make this Approach B). Sidebar.tsx's Fresh/Restore toggle now respects
+    supports_fresh_reset and shows target-specific copy. /api/environment/
+    health generalized (mattermost_up -> target_up, target-aware ping —
+    Mattermost has a real /api/v4/system/ping, NaViQ and any future non-
+    Mattermost target fall back to a plain GET on base_url). Bug 1.9 above:
+    RunSummary gained `target: string | null`; PastRunsView.tsx's RunRow
+    renders it via a small local TARGET_LABELS map (mattermost ->
+    "Mattermost", naviq -> "NaViQ") rather than fetching /api/target's
+    `available` list just for a label.
+
+2.7 results/ per-target separation (bug 1.8 above) — the main fix closing
+    this session
+    New shared helper, result_path(target_name, filename) in
+    blocks/targets.py, generalizing the same {target}_files_list.txt
+    convention (2.5 above) to every block: "results/{target}_{filename}".
+    Threaded a target_profile parameter through every function that
+    previously hardcoded a results/... path — main.py (save_result,
+    run_static_analysis, run_dynamic_discovery, execute_attacks),
+    blocks/generate_payloads.py, blocks/human_review.py,
+    blocks/analyze_results.py, blocks/correlate_results.py, and
+    blocks/dynamic_injector.py — all defaulting to Mattermost when omitted
+    (same convention as every other generalized function this session),
+    but every real call site in main.py's main() and api.py's
+    run_pipeline_until_b6()/run_pipeline_from_b7() now passes the actual
+    active target explicitly. Went further than just the block JSONs:
+    B7's per-payload screenshots/videos (results/dynamic/, results/videos/)
+    were keyed only by payload id ("1_1"), which resets every run and
+    isn't unique across targets — scoped both directories per target
+    (results/dynamic/{target}/, results/videos/{target}/) in
+    dynamic_injector.py's _execute_one()/run_payloads() and
+    dynamic_analysis.py's discover_attack_surface() (B4's own discovery
+    video). No frontend change needed for the media half — ui/src/lib/
+    api.ts's mediaUrl() already strips a generic "results/" prefix and
+    forwards whatever's left to the /media mount.
+    api.py's GET /api/results/GET /api/results/{block_name} now glob/read
+    only ACTIVE_TARGET-scoped files, stripping the prefix back off so the
+    frontend still sees canonical keys ("B3_static", not
+    "naviq_B3_static") — no frontend contract change. POST /api/validate's
+    own file writes updated the same way.
+    blocks/run_history.py's finish_run() needed a real fix, not just a
+    path swap: it used to glob("*.json") unconditionally, snapshotting
+    *every* JSON file in results/ into whichever run just finished —
+    meaning once both targets' files started coexisting on disk (the
+    entire point of this fix), a NaViQ run's snapshot would also silently
+    absorb Mattermost's leftover files. Fixed by looking up the run's own
+    `target` from the runs table (already recorded by start_run()) and
+    filtering the glob to that target's prefix, stripping it back off
+    before storing each row's block_name — so get_run()/list_runs()
+    consumers see the exact same shape as before. A run predating the
+    `target` column (target IS NULL — e.g. this project's own orphaned
+    row id 5) falls back to the old glob-everything behavior, matching its
+    original semantics exactly rather than silently snapshotting nothing.
+
+
+3. VERIFICATION
+-----------------
+
+Test count progression across the session: 158 (baseline before Phase 0/1)
+-> 166 (Phase 5, frontend target-awareness) -> 171 (B7 auto-fill) -> 180
+(XSS fix) -> 186 (B3 target-awareness) -> 188 (B3 prompt precision) -> 195
+(NaViQ server automation) -> 197 (results/ separation + Past Runs badge).
+197/197 green at the close of this session.
+
+Live, not simulated, at every major step — the discipline held throughout:
+Phase 6 ran a real `python main.py --target naviq --mode restore` (B6's
+blocking input() monkeypatched in-process, same fix as an earlier Windows/
+Git-Bash stdin issue) and a real `python main.py --target mattermost
+--mode fresh` (destructive reset, confirmed with the user first since
+Mattermost's Docker container held real unrelated data) — both saved as
+real Past Runs, one finding a genuine real hardcoded secret (a live Giphy
+SDK key in Mattermost's own default_config.ts) correctly kept while
+several "not found" placeholders on the same file were correctly
+suppressed. This session's own closing fix (2.7) was verified the same
+way: cleared the local results/ folder, ran NaViQ then Mattermost back to
+back for real, and confirmed both targets' full output sets (8 JSON files
+each, plus their own dynamic/videos subdirectories) coexisted afterward
+with zero overwrite — naviq_B7_dynamic_attacks.json showed
+total_executed: 15 and mattermost_B7_dynamic_attacks.json showed
+total_executed: 10, each matching its own real run. Started api.py live
+and hit the real endpoints: GET /api/results returned NaViQ's
+total_executed: 15 while NaViQ was active, switched to Mattermost via
+POST /api/target, and the same endpoint immediately returned 10 — the
+literal symptom the user reported, confirmed fixed live. The Past Runs
+badge (2.6) was verified the same way: a headless-Chromium session driven
+through the real running app (landing page -> Past Runs tab) confirmed all
+17 real historical runs show the correct target badge.
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- Rules of engagement for NaViQ (any hours/rate limits the owner wants) —
+  the one open question from this session's very first phase, still
+  genuinely unanswered; needs the owner's input, not resolvable in-session.
+- run_history row id 5 has been stuck at status='running' since a much
+  older, unrelated session — orphaned, noticed but not touched (it
+  predates the `target` column and any of this session's work).
+- Approach B (a general "any user adds any site" product — accounts,
+  credential onboarding, consent/domain-verification gating, a target
+  picker with no closed set) remains deliberately out of scope — two
+  targets is the proof this pattern works, not a general system. See
+  MULTI_TARGET_PLAN.md's "Non-goals" section for the full reasoning.
+- Groq's ~100k-tokens/day quota (unchanged since SESSION 1/4) stayed a
+  real, partially-spent constraint throughout — live-run payload approval
+  counts were kept deliberately small (2-3) rather than approving
+  everything on every verification run.
+
+
+SESSION 9 — Groq → Anthropic migration (Llama 3.3 decommission)
+(2026-08-19)
+================================================================================
+
+Scope: Groq notified the user that `llama-3.3-70b-versatile` — the single
+model every LLM call in the pipeline used (B3, B5, B8, B9) — was being
+decommissioned 2026-08-16. The user got an Anthropic API key with a $5
+prepaid budget and asked for a cost estimate and model recommendation
+before writing any migration code, then validated that recommendation
+empirically in the Anthropic Console Playground against real project data
+before touching the codebase.
+
+
+1. REAL FINDING — Sonnet 5 fully deprecates `temperature`
+-----------------------------------------------------------
+Not a SiftPipe bug, but a real platform-level gotcha hit live during
+Playground testing and worth recording since it would have silently broken
+any future attempt to route a block to Sonnet: setting `temperature` (or
+`top_p`/`top_k`) to any non-default value on `claude-sonnet-5` returns a
+400 error. Confirmed via the Anthropic Console error message itself, then
+verified against Anthropic's own docs (platform.claude.com/docs/en/build-
+with-claude/effort): sampling parameters are removed entirely on this
+model in favor of `output_config.effort` (low/medium/high/xhigh/max,
+defaulting to high), an adaptive-thinking control, not a token-budget cap.
+Doesn't affect the code actually shipped this session (all four blocks use
+Haiku 4.5, which still accepts `temperature=0.0` exactly as the Groq code
+did), but matters if the project ever routes a block to Sonnet later —
+that call site would need `effort=` instead of `temperature=`.
+
+
+2. VALIDATION BEFORE TOUCHING CODE
+-----------------------------------
+Before writing any migration code, tested the two highest-stakes prompts —
+B3 (static analysis) and B8 (dynamic classification) — the ones with real
+judgment involved, as opposed to B5/B9's more formulaic generation/yes-
+no-judge tasks. Assembled real ready-to-paste prompt packages from the
+actual project code (`get_analysis_prompt()` in
+blocks/static_scanner.py, the inline prompt in `analyze_results()`) and
+real project data (a real scanned file, `mattermost-src/mattermost/
+server/path.go`, for B3; the `_b7_finding` test-fixture shape for B8,
+since no real B7_dynamic_attacks.json existed yet — the pipeline was
+already fully stalled at B5 by the Groq decommission, so no real B7 output
+could exist until the migration itself unblocked it).
+
+Ran both prompts on `claude-haiku-4-5-20251001` and `claude-sonnet-5`
+(sequentially — Compare mode wasn't available) in the Playground:
+  - B3 (clean file, no real vulnerability present): both models correctly
+    returned `[]` — no markdown fences, no fabricated "not found"
+    placeholder finding (the exact bug this project had already found and
+    guarded against with Llama — see SESSION 4/8's `"line": 0` fixes).
+    Sonnet: $0.0028, 4 out tokens. Haiku: $0.001, 9 out tokens.
+  - B8 (clear-cut SQLi case, HTTP 500 + "database error" evidence): both
+    models returned identical `result: "confirmed"` / `confidence: "high"`
+    with comparably specific reasoning in `evidence` — Haiku's answer was
+    if anything slightly more detailed. Sonnet: $0.0022, 469 in / 129 out,
+    3.6s. Haiku: $0.00098, 318 in / 133 out, 2.3s — less than half the
+    cost, no visible quality gap on either test.
+
+No quality gap surfaced on either test, so the mixed Haiku/Sonnet split
+originally proposed (Sonnet on B3/B8 for judgment quality, Haiku on B5/B9
+for cost) was dropped in favor of Haiku everywhere — simpler code (one
+model constant, one temperature path, no Sonnet-specific `effort` branch
+needed) at meaningfully lower cost. Caveat carried into section 4: B3's
+test used a clean file, so it validates "doesn't hallucinate a finding,"
+not "catches a real one as well as Sonnet would" — that gap was
+consciously accepted rather than closed, given the $5 budget and the
+tiny cost delta actually observed.
+
+
+3. MIGRATION APPLIED
+-----------------------------------
+- requirements.txt: `groq==1.2.0` -> `anthropic==0.124.0` (installed into
+  the project venv, which didn't have it yet).
+- main.py: `Groq(api_key=os.getenv("GROQ_API_KEY"))` ->
+  `Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))`; added a
+  `CLAUDE_MODEL = "claude-haiku-4-5-20251001"` constant. `ask_llm()`
+  (shared by B3 and B8) now calls `client.messages.create()` instead of
+  `client.chat.completions.create()` — `system` moved from a chat message
+  to its own top-level param, `max_tokens=4096` added (Anthropic's
+  Messages API requires it explicitly; Groq's didn't), `temperature=0.0`
+  kept unchanged, response text read from `response.content[0].text`
+  instead of `response.choices[0].message.content`. The existing
+  markdown-fence-stripping and JSON-parse-fallback logic was left
+  untouched — Playground testing showed clean output, but there was no
+  reason to remove a working safety net that costs nothing to keep.
+- blocks/generate_payloads.py (B5): same client/model/response-shape swap
+  in its own `ask_llm()`, in both places it lazily instantiates a client
+  when none is passed in. `max_tokens=512` kept as-is.
+- B8 (blocks/analyze_results.py) and B9 (blocks/correlate_results.py)
+  needed zero changes — both receive `ask_llm` as a parameter from
+  main.py rather than importing a client directly, so they picked up the
+  new provider automatically.
+- Updated three now-stale "Groq quota"/"Groq" comments to reflect the
+  new provider and constraint (blocks/correlate_results.py's
+  MAX_JUDGE_CALLS comment, blocks/dynamic_injector.py's sibling-field
+  comment, and one comment each in tests/test_api.py, tests/
+  test_analyze_results.py, tests/test_static_analysis_target.py) — none
+  were functional, all referenced the retired provider by name in a way
+  that would have confused a future reader.
+- .env: user already had `ANTHROPIC_API_KEY` set (confirmed present via
+  `.env`'s tracked key names, not its values) before the migration; a
+  static API key was the deliberate choice over Anthropic Console's
+  workload-identity-federation option, since SiftPipe runs as a local
+  script (and, per AWS_HOSTING_TODO.md, later as a short-lived EC2 demo
+  with hand-edited `.env`) — not inside a GCP/AWS/Azure/GitHub Actions
+  identity provider that federation requires. Confirmed `.env` is
+  gitignored and untracked before this was suggested.
+
+
+4. VERIFICATION
+-----------------
+Full test suite run after the migration via `python -m unittest discover
+-s tests`: 197/197 passing, no regressions, no test changes needed — every
+test mocks `ask_llm` rather than hitting a live client, so the swap was
+transparent to them. One of the mocked B3 tests replays the old fake-
+placeholder-finding scenario (`"line": 0`) verbatim; the existing filter
+in main.py's `run_static_analysis()` still caught and skipped it correctly
+post-migration, confirming that guard needed no changes either.
+
+Not yet verified live: no real end-to-end pipeline run (`python main.py
+--target ... --mode ...`) has been made against the live Anthropic API
+since the migration — only Playground testing (section 2, real API calls,
+real spend, just not through this codebase) and the mocked test suite
+(section 3, zero real API calls) have exercised this code so far.
+
+
+5. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+- No live pipeline run yet through the migrated code itself — the two
+  Playground tests validated the prompts and model choice, and the test
+  suite validated the code doesn't regress, but nobody has run `python
+  main.py --target mattermost` (or naviq) against the real Anthropic API
+  end-to-end since the swap. Offered to the user as the natural next step;
+  not done yet by user's choice, still mid-conversation at session close.
+- B3's model choice (Haiku over Sonnet) was validated only against a
+  clean file with nothing to find — it confirms neither model hallucinates
+  a finding, not that Haiku's detection recall matches Sonnet's on a file
+  with a real vulnerability. Consciously accepted, not closed — flagged to
+  the user twice (after the initial test, and again before the final
+  model-assignment decision) and deliberately deferred rather than
+  resolved, given the very small cost delta actually observed on B8.
+  If a real run surfaces missed findings, this is the first thing to
+  revisit.
+- No B7 output existed anywhere in this repo (fresh clone or git history)
+  before this session — the pipeline was fully stalled at B5 by the Groq
+  decommission (B5 calls the LLM; B7 needs B5's payloads as input), so
+  B8's Playground test necessarily used the existing test-fixture shape
+  from tests/test_analyze_results.py rather than real captured evidence.
+  A real end-to-end run (item 1 above) will produce genuine B7/B8 data for
+  the first time.
+- The code carries no Sonnet-specific code path (no `effort=` handling) —
+  a deliberate simplification of going all-Haiku, not an oversight, but it
+  means routing any block to Sonnet later requires actual code, not just a
+  model-string change, since `temperature=0.0` would 400 on that model
+  (see section 1).
+
+
+================================================================================
+SESSION 10 — B10: per-run PDF report, CWE-grounded B9 judge, POSSIBLE-finding
+explanations, and CWE-grouped Recommendations
+(2026-08-19)
+================================================================================
+
+Scope: two rounds the same day. Round 1 shipped B10 from nothing — a
+per-run PDF export — plus grounded B9's existing LLM judge in real MITRE
+CWE text instead of two bare labels. Round 2, done live with the user
+confirming design decisions up front via AskUserQuestion before any code
+was written, closed a real gap in that first version: POSSIBLE findings
+(the majority of what B9 produces on this pipeline's usual runs) were
+dumped into a bare table with no explanation, and there was no way to see
+repeated findings as one root cause with one fix instead of N duplicate
+rows.
+
+
+1. ROUND 1 — B10 base: blocks/report.py, CWE grounding for B9's judge
+--------------------------------------------------------------------------
+
+1.1 blocks/report.py (new, ~700 lines pre-Round-2)
+    build_report_html()/render_report_pdf() render one run_history.get_run()
+    snapshot into a PDF — pure rendering layer over B9's already-computed
+    output, deliberately making zero new LLM calls (a report re-generating
+    or re-judging evidence on every export would be non-reproducible and
+    would burn budget for no analytical value; see readme.md's "Decisiones
+    técnicas" for the same reasoning applied elsewhere in this project).
+    Rendered via Playwright's headless Chromium (page.pdf()), not a
+    Python-side PDF library, specifically to get real per-physical-page
+    numbering (pageNumber/totalPages) from the print engine itself — a
+    footer div baked into the HTML document has no way to know which
+    physical page it lands on once Chromium paginates a long report.
+    Bilingual from the start (lang=en|es): REPORT_STRINGS holds every piece
+    of chrome text hand-translated (not LLM-translated at export time —
+    same non-reproducibility argument as above), and CWE_ES/OWASP_ES
+    translate the CWE/OWASP names shown per finding and in the appendix.
+    Deliberately kept out of blocks/taxonomy.py: that module's CWE_CATALOG
+    grounds B9's LLM judge (see 1.2) and mixing a presentation-only
+    translation concern into it would blur what that data is actually for.
+    Watermark: the real SiftPipe cat mark (ui/src/assets/), loaded once via
+    functools.lru_cache, positioned `position:fixed` so it repeats on every
+    physical PDF page (unlike `position:absolute`, which only appears where
+    it falls in document flow) — sits above the footer template's margin
+    strip, clear of the real page-number text.
+    Findings CONFIRMED or severity HIGH get a full narrative card (title,
+    OWASP/CWE/classification/severity chips, evidence block, screenshot if
+    one still exists on disk, and the match_rationale B9 already computes).
+    Screenshot handling is defensive on purpose: results/dynamic/{target}/
+    is only namespaced by target, not by run, so a historical run's
+    screenshot file may have been overwritten by a later run of the same
+    target — _screenshot_data_uri() returns None on a missing file instead
+    of embedding a broken image or crashing, and the report shows a plain
+    "no longer available" note.
+    Everything else (POSSIBLE and DESCARTED) went into one bare table —
+    the gap Round 2 below closes for POSSIBLE specifically.
+
+1.2 blocks/taxonomy.py — CWE_CATALOG gained a real "description" field
+    Fetched live from cwe.mitre.org (not from model memory — the user's
+    standing instruction from prior sessions, see readme.md's "Live-
+    verification" feedback memory) for all 16 curated CWEs, trimmed to fit
+    a prompt. blocks/correlate_results.py's _judge_prompt() (the tier-2
+    "judge" match in B9, used when both sides share an OWASP category but
+    disagree/are missing a CWE) now calls a new _cwe_line(cwe_id) helper
+    that renders "CWE-89 — <MITRE's real definition>" instead of a bare id
+    — the judge now reasons against real reference text on both the static
+    and dynamic side, not just two free-text vulnerability labels. Same
+    "description" field also feeds the PDF report's appendix (1.1) — one
+    fetch, two consumers, no duplication.
+    Confirmed compatible with the existing OWASP Top 10:2025 categorization
+    already in CWE_CATALOG (added SESSION 4's addendum) — CWE definitions
+    are edition-independent, only the OWASP grouping differs between
+    editions, so no conflict between the two fields.
+
+1.3 api.py / frontend wiring
+    New GET /api/runs/{id}/report?lang=en|es calls report.render_report_pdf()
+    against a stored run_history snapshot and streams the PDF back with
+    Content-Disposition set to report.build_report_filename()'s output —
+    the single source of truth for the filename (Siftpipe_CWE_Report_
+    {target}_{id}_{date}_{EN|ES}.pdf), read back by the frontend instead of
+    duplicating the naming scheme in TypeScript. Required adding
+    expose_headers=["Content-Disposition"] to the CORS config — that header
+    isn't in a browser's default CORS-safelisted set, so without this the
+    frontend's fetch() couldn't read the real filename and would have had
+    to fall back to a generic one.
+    PastRunsView.tsx gained a three-dot menu per run: "Download report" ▸
+    English/Español, plus "View raw JSON". RunRow had to change from a
+    native <button> to a <div role="button"> since a button element can't
+    host the dropdown menu's own nested trigger button — matching keyboard
+    handling (Enter/Space) was added by hand so this didn't regress
+    accessibility. ui/src/lib/api.ts's downloadReport() reads the filename
+    off the response's Content-Disposition header rather than
+    reconstructing it client-side.
+
+1.4 Design decisions made and explicitly declined this round
+    Rejected: a live browser "translate this page" widget for the Spanish
+    version (doesn't fit a server-rendered PDF — no browser tab exists at
+    generation time — and a generic MT engine can't be trusted with
+    classification-label terminology); a full RAG/vector-DB knowledge base
+    for CWE lookups (a static dict matching the existing OWASP_SCOPE
+    pattern is the right scope for ~16 known CWEs, not infrastructure); CVE
+    database integration (category mismatch — SiftPipe detects CWE/OWASP
+    patterns in first-party code, not known CVEs in named third-party
+    dependencies, which would be a separate SCA feature); compare-runs/
+    CSV-export/share-link menu items (deferred as separate features, not
+    natural extensions of this one); an LLM-generated report narrative
+    (the report is a deterministic render of already-validated data, not a
+    fresh generation step — cost, reproducibility, and hallucination-risk
+    reasons, consistent with 1.1's design). Accepted as a known, bounded
+    gap: the B9 judge's rationale text for the "judge" match tier stays in
+    English even in the Spanish report, rather than adding a live
+    translation call for it.
+
+1.5 Run history cleanup (data only, not code)
+    siftpipe_history.db trimmed from 20 historical runs down to the 2
+    post-Anthropic-migration runs (Mattermost, NaViQ) for focused analysis
+    of current pipeline behavior. Full backup preserved as
+    siftpipe_history.db.backup-2026-08-19 in the project root — restorable
+    any time.
+
+
+2. ROUND 2 — POSSIBLE-finding explanations + CWE-grouped Recommendations
+--------------------------------------------------------------------------
+
+Prompted directly by the user pointing at real B9 output
+(results/naviq_B9_correlation.json): 3 separate POSSIBLE CWE-22 findings in
+naviq-src/naviq/batch_jobs/run_batch_evaluations.py (lines 54/73/82) were
+three unexplained table rows with no indication they're one root cause, not
+three independent bugs.
+
+2.1 Two design decisions confirmed with the user up front, before writing
+    any code (via AskUserQuestion, not assumed):
+    - Recommendation grouping key: by cwe_id alone (not (file, cwe_id)) —
+      chosen so the 3 same-file CWE-22 findings collapse into one group AND
+      so cross-file duplicates of the same CWE (e.g. the same insecure-
+      temp-file pattern copy-pasted into two different model_clients/*.py
+      files) also collapse into one group, since the remediation is driven
+      by the CWE class either way.
+    - Uncataloged CWEs seen in real run data (CWE-426, CWE-276, CWE-377 —
+      none of which were in CWE_CATALOG's original 16-entry curated set):
+      extend the remediation catalog to cover them now, rather than leaving
+      them on a generic fallback note, since they're not hypothetical —
+      they're in the actual naviq_B9_correlation.json/mattermost_B9_
+      correlation.json on disk.
+
+2.2 blocks/report.py — POSSIBLE findings get a real explanation
+    _finding_chips() extracted from _finding_card_html() (was inline,
+    duplicated logic) so both the full narrative card and the new compact
+    item share one chip-building function.
+    New _possible_item_html()/_possible_list_html(): every POSSIBLE finding
+    that isn't already promoted to a full card gets a compact item with 1-2
+    sentences built ONLY from fields B9 already computes and the report
+    already had on disk but never rendered for these entries — evidence
+    (code snippet, collapsed to one line and truncated via new
+    _clean_evidence_snippet(), limit=180 chars) and match_rationale
+    (verbatim). No new analysis is generated or inferred — this was a
+    scoping constraint from the user up front, not a judgment call made
+    during implementation.
+    DESCARTED findings are unchanged — still a bare table, since they were
+    actively tested and ruled out with evidence; they don't need the same
+    "is this worth a manual look" framing POSSIBLE findings do (see
+    REPORT_STRINGS' existing how_to_read_body copy, which already draws
+    this same distinction for the reader).
+    _rest_table_html()'s heading/copy renamed to reflect that it now only
+    ever holds DESCARTED entries in practice ("Discarded findings" /
+    "Hallazgos descartados", was "Remaining findings" / "Hallazgos
+    restantes") — full cards already claim every CONFIRMED entry
+    regardless of severity, so nothing else can land in this table now.
+
+2.3 blocks/report.py — new "Recommendations" section
+    New section rendered after Findings, before the CWE appendix.
+    _recommendation_groups() groups CONFIRMED+POSSIBLE findings (DESCARTED
+    excluded — they were ruled out, nothing to fix) by cwe_id, falling back
+    to a normalized vulnerability label for the rare finding with no CWE at
+    all. _recommendation_locations() lists every distinct file/line under
+    a group, preferring matched_static_finding.file:line when a dynamic
+    finding matched one, falling back to the static finding's own target
+    field otherwise.
+    New REMEDIATIONS catalog (en/es), one authored line per CWE — new
+    content, not extracted from B9's output, since nothing in the pipeline
+    computes a suggested fix anywhere (B9's evidence field is the
+    vulnerable code, not a remediation). Every rendered fix is labeled
+    "General guidance for this CWE class:" / "Orientación general para
+    esta clase de CWE:" so it reads as templated guidance, never as a
+    pipeline-verified correction — the explicit flagging the user asked
+    for between inferred vs. quoted content. Covers taxonomy.py's 16
+    curated CWEs plus CWE-426/276/377 (added this round per 2.1's second
+    decision) as _EXTRA_CWE_CATALOG/_EXTRA_CWE_ES (kept local to report.py,
+    same rationale as CWE_ES — presentation-only, not B9's judge-grounding
+    data). _cwe_display() and the appendix's inclusion filter both updated
+    to fall through to this supplemental catalog, so a CWE-426/276/377
+    finding gets a real name/definition in its chip and appendix entry
+    instead of falling back to the bare id. Any CWE outside both catalogs
+    renders reco_fallback ("no curated remediation template... consult the
+    MITRE CWE database") instead of guessing.
+
+2.4 Real bug caught by the test suite, not by inspection
+    reco_fallback's first draft read "...consult MITRE's page for standard
+    mitigations" — html.escape() (via the existing _esc() helper) turns
+    that apostrophe into &#x27;, so the raw string never appears verbatim
+    in the rendered HTML and an assertIn() check against it failed. Fixed
+    by rewording to "...consult the MITRE CWE database..." (no apostrophe)
+    rather than special-casing escaped comparisons in the test — the
+    existing REPORT_STRINGS entries already avoid contractions/possessives
+    for exactly this reason, this one just hadn't been checked before the
+    test caught it.
+
+2.5 tests/test_report.py — 12 new tests (13 -> 25 in this file)
+    TestPossibleFindingExplanations: POSSIBLE findings surface real
+    evidence/rationale text instead of a table row; long multi-line
+    evidence is collapsed and truncated (no unbroken multi-line dump into
+    the explanation paragraph); DESCARTED findings still render as a plain
+    table, not an explained item; the explanation renders correctly in
+    Spanish too.
+    TestRecommendations: three same-file, same-CWE findings collapse into
+    exactly one reco-group with the real curated fix text; DESCARTED
+    findings never produce a Recommendations section on their own; a run
+    with zero CONFIRMED/POSSIBLE findings omits the section entirely rather
+    than rendering an empty heading; a CWE outside the curated catalog (a
+    fabricated CWE-9999) falls back to the generic note instead of
+    fabricating a fix; every REMEDIATIONS['en'] key has a Spanish
+    translation; CWE-426/276/377 specifically are confirmed present in the
+    catalog (guards against the exact gap this round was scoped to close).
+    Test-writing gotcha found while making these pass: three of the new
+    single-finding test fixtures were being silently promoted to full
+    narrative cards instead of exercising the possible-item/table split
+    under test, because of a pre-existing fallback in build_report_html()
+    ("if no CONFIRMED/HIGH finding exists, promote the first two results to
+    full cards anyway, so the Findings section isn't just a bare table").
+    Not a bug — existing, intentional behavior — but it meant those tests
+    needed an anchor CONFIRMED+HIGH finding added to their fixture list so
+    the fallback didn't fire and the finding under test actually landed in
+    the rest/possible split being tested.
+
+
+3. VERIFICATION
+-----------------
+
+Full suite: `python -m unittest discover -s tests` — 222/222 passing (197
+before this session's report.py work + 25 new in tests/test_report.py).
+Rendered the real naviq_B9_correlation.json (not a synthetic fixture)
+through build_report_html() directly and confirmed by parsing the output:
+6 possible-item blocks (7 total findings minus 1 DESCARTED), exactly 3
+reco-groups (CWE-22 — the 3 run_batch_evaluations.py findings collapsed
+into one; CWE-284 — 1 finding; CWE-377 — the 2 separate model_clients/*.py
+findings correctly collapsed into one group despite being in different
+files, confirming the cwe_id-only grouping decision from 2.1 behaves as
+designed on real data, not just the synthetic test fixtures). Also called
+render_report_pdf() against the same real data end to end (actual
+Playwright/Chromium render, not just HTML string assembly) — produced a
+256KB PDF with no errors — and re-ran the same real-data check against the
+Spanish (lang="es") output to confirm both new sections translate
+correctly, not just the English path exercised by most of the new unit
+tests.
+
+
+4. KNOWN LIMITATIONS / NOT DONE
+-----------------------------------
+
+- REMEDIATIONS covers 19 CWEs (the 16 in taxonomy.py's CWE_CATALOG plus
+  CWE-426/276/377 added this round) — not the full CWE catalog. Any CWE
+  the pipeline emits outside that set gets the generic fallback note
+  rather than a fabricated fix; the set grows the same way it always has
+  in this project (add a curated entry when a real run surfaces a new CWE
+  outside it), not proactively.
+- The B9 judge's own rationale text (tier "judge", SESSION 7) is still
+  English-only in the Spanish report — unchanged, pre-existing, bounded gap
+  from Round 1 (see 1.4), not touched this round.
+- Recommendation grouping is per-run, not cross-run — it doesn't yet
+  recognize "this is the same root cause we already flagged in a prior
+  run of this target," since that would need a cross-run diff/dedup layer
+  that doesn't exist anywhere else in the pipeline either (see readme.md
+  section 5's note on run-history trend graphs being a deferred, separate
+  feature).
+
+
+================================================================================
+SESSION 11 — Per-run evidence storage for B7 screenshots/videos
+(2026-08-25)
+================================================================================
+
+Problem: B7's screenshot_path/video_path were namespaced by target only
+(results/dynamic/{target}/, results/videos/{target}/), not by run — a
+second run of the same target overwrote the first run's evidence files on
+disk, even though run_history's JSON snapshot of the finding data itself
+was already immune to this. Worse, both paths lived under results/, which
+clear_results_folder() wipes wholesale on every Fresh Reset — the same
+reason run_history.db already lives outside results/.
+
+Solution: new evidence_dir(target, run_id) helper (blocks/targets.py) ->
+evidence/{target}/{run_id}. run_id is already created before B7 runs
+(run_history.start_run(), called before B3 in both main.py and api.py),
+so this was just threading an existing value through
+_execute_one()/run_payloads() (blocks/dynamic_injector.py) and
+execute_attacks() (main.py, api.py), not new state. api.py gained a
+second StaticFiles mount (/evidence) alongside /media; ui/src/lib/api.ts's
+mediaUrl() routes by path prefix so pre-migration results/... paths
+already stored in old run_history rows still resolve via /media.
+evidence/ added to .gitignore.
+
+Not changed: B4's discovery video
+(results/videos/{target}/b4_discovery.webm) keeps the old
+overwrite-on-rerun behavior on purpose — its path isn't referenced from
+anywhere persistent (no B4_dynamic.json field, no Past Runs/report usage),
+so it's a live debug artifact, not evidence tied to a historical finding;
+the run_id treatment doesn't apply.
+
+Verification: 222/222 tests passing (one path assertion updated in
+test_dynamic_injector.py); ui `tsc --noEmit` clean.
+
+
+================================================================================
+SESSION 12 — B7: unauthenticated-access probe (broken access control)
+(2026-08-25)
+================================================================================
+
+Problem: B7's only access-control-adjacent rule flagged the *presence* of a
+401/403 response — the opposite of real broken access control (a request
+that should have been rejected but wasn't). B7 only ever ran payloads
+through one authenticated session, so there was no signal at all for "this
+endpoint accepts a real submission with zero auth."
+
+Solution: run_payloads() (blocks/dynamic_injector.py) now issues one extra
+call per field, before that field's own payloads — _execute_one() reused
+as-is with storage_state=None, so browser.new_context() gets neither
+cookies nor localStorage (covers JWT-in-localStorage targets, not just
+cookie sessions). Uses a benign probe value ("siftpipe_probe"), not a real
+payload, so it can't also trip the SQLi/XSS rules. A 2xx response ->
+Broken_Access_Control finding (CWE-284/A01, already in taxonomy.py and
+report.py's REMEDIATIONS catalog — no changes needed there). Deliberately
+not pre-filtered against "is this endpoint supposed to be public" (B4
+already discovers legitimately public forms it crawls past, e.g. NaViQ's
+contact form) — left for B8's LLM judgment, same as every other rule-based
+B7 signal.
+
+Test fallout: every existing FakePage `responses` fixture in
+tests/test_dynamic_injector.py needed a leading entry for the new
+per-field probe call — 4 existing tests updated (one was a silent false
+pass: the probe consumed the fixture's only queued 2xx response, so
+`findings[0]` was quietly the probe instead of the XSS case under test,
+and the assertion still passed by accident). 2 new tests added for the
+detector itself (fires on 2xx, doesn't on 401).
+
+Verification: 224/224 tests passing.
+
+
+================================================================================
+SESSION 13 — B4/B7: bare GET action-link probe (broken access control)
+(2026-08-25)
+================================================================================
+
+Problem: SESSION 12's auth-probe only covers form fields. A real bug found
+reading lutto_website's Routes.php (a candidate third target) has no form
+at all: GET consultas/leido/(:num) and consultas/noleido/(:num) have no
+auth filter while every sibling admin route in the same file does. B4 only
+discovers forms/inputs; B7's execution model drives form-fill-and-submit.
+Neither had any way to notice a bare link like that exists, let alone test
+it.
+
+Solution: blocks/crawler.py gained looks_like_action_link() (true if the
+URL path has a purely-numeric segment, e.g. /consultas/leido/5 - the shape
+of a REST-ish "act on this id" route) and select_action_links(), the same
+same-origin/denylist filtering select_links_to_visit() already does minus
+the visited/budget crawl-queue bookkeeping (a link is worth auth-probing
+even if already visited). Deliberately path-only, not query-string aware
+(?id=5 would fire on nearly every ordinary filter/search link instead of
+the specific action-route shape this targets). blocks/dynamic_analysis.py
+records these into a new attack_surface["action_links"] set during the
+existing crawl loop, alongside the existing endpoints set (same
+set->sorted-list conversion at the end). main.py's B4 summary gained
+action_links_found for visibility parity with forms/inputs/endpoints.
+
+blocks/dynamic_injector.py gained _check_action_link() - anonymous GET via
+page.goto() (no form field involved, so it doesn't reuse _execute_one; the
+navigation's own response status is the whole signal), called once per
+discovered action_link at the end of run_payloads(), reading
+attack_surface.json directly rather than going through B5/B6 (this isn't a
+generated payload for a human to review, it's a structural check, same
+reasoning as SESSION 12's per-field probe). Same CWE-284/A01 tagging, same
+"no pre-filtering against legitimately public GETs, let B8 judge" design
+as SESSION 12.
+
+Tests: 8 new pure-logic tests in test_crawler.py
+(looks_like_action_link/select_action_links). test_dynamic_injector.py's
+FakePage gained goto_statuses (url -> status), separate from the existing
+expect_response() queue, since _check_action_link reads goto()'s own
+response rather than a submit's. 3 new integration tests (fires on 2xx,
+not on a redirect, no-op when no attack_surface.json exists - the common
+case for every pre-existing test in the file).
+
+Verification: 235/235 tests passing. ui `tsc --noEmit` clean.
+
+Not yet done: this closes the discovery+detection gap, not the specific
+lutto_website finding itself - no live run against a real instance of it
+yet, so "does this actually fire against the real bug" is still unverified
+in practice, only by construction.
+
+
+================================================================================
+SESSION 14 — B3: numbered source lines so the LLM cites the right one
+(2026-09-20)
+================================================================================
+
+Problem: B3's reported "line" numbers were unreliable - some off by 20+
+against real NaViQ code. B3 sent the raw file text and asked the model to
+report the line of each finding, which forces it to count newlines
+implicitly. LLMs read tokens, not lines, so the error grows with distance
+from the top of the file. Every downstream consumer of "line" (the
+correlation step's matched_b3 location, the PDF report's file:line) inherited
+the wrong number. An earlier decision had accepted this as a known limit
+("no line-number correction"); this fix addresses it at the source instead
+of correcting after the fact.
+
+Solution: blocks/static_scanner.py gained number_lines(), which prefixes
+every line with its 1-based number ("  12| code", right-aligned).
+run_static_analysis() now passes get_analysis_prompt(number_lines(content));
+the 15,000-char truncation still happens first, so numbers always match the
+real file. Splits on "\n" only, not str.splitlines(), so form feed / U+2028
+(not line breaks in an editor) cannot shift the numbering. The prompt gained
+instruction 6: lines are prefixed "N|", copy that number into "line", do not
+count, and do not include the prefix in "evidence".
+
+Tests: 7 new in test_static_scanner.py (numbering, right-alignment, trailing
+newline, blank lines, empty input, form-feed, prompt wording).
+
+Verification: 411/411 tests passing, ruff clean. Live check against real
+NaViQ files with claude-haiku-4-5, same prompt with and without numbering,
+metric = does the cited line contain the quoted evidence (independent of
+whether the finding is a real vulnerability):
+  without numbering: 0 of 5 cited lines matched (off by 8 to 30 lines)
+  with numbering:    3 of 3 matched exactly (downloads/views.py x2,
+                     evaluation/management/commands/batch_evaluate.py x1)
+No "N| " prefix leaked into any evidence snippet.
+
+Not yet done / caveats: small sample (3 files with findings, 1 run each).
+On downloads/webhooks.py the numbered prompt returned no findings where the
+old one returned two (both IDOR claims, likely false positives) - one
+sample, so not known whether numbering changes detection rate.
+evaluation/admin.py returned no findings in either variant, so it was not
+informative. A wider run is still needed to quantify the effect.

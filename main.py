@@ -1,168 +1,69 @@
-import json
-import os
+#Ajustar los indicadores y palabras clave a las respuestas reales de Mattermost si observas falsos positivos/negativos.
+
 import argparse
-import anthropic
 
-# Repositorio central de resultados
-pipeline_results = {}
-
-def save_result(block_name, data):
-    """Guarda el resultado de un bloque en el diccionario central y en disco."""
-    pipeline_results[block_name] = data
-    if not os.path.exists("results"):
-        os.makedirs("results")
-    with open(f"results/{block_name}.json", "w") as f:
-        json.dump(data, f, indent=4)
-    print(f"-> {block_name} completado y guardado.")
-
-# --- Bloques Funcionales (Stubs) ---
-
-# BLOQUE 3> Análisis estático con LLM
-from blocks.static_scanner import scan_and_save_files, load_files_list, get_analysis_prompt
-from blocks.dynamic_analysis import discover_attack_surface
+from blocks import run_history
+from blocks.analyze_results import analyze_results
+from blocks.correlate_results import correlate_results
+from blocks.environment import dispatch_fresh_reset, ensure_naviq_server_running
 from blocks.generate_payloads import generate_payloads
-
-# Inicializa cliente (Asegúrate de tener la variable de entorno ANTHROPIC_API_KEY seteada)
-client = anthropic.Anthropic()
-
-def ask_llm(prompt):
-    """Llama a la API y fuerza un parseo JSON de la respuesta."""
-    try:
-        response = client.messages.create(
-            model="claude-3-haiku-20240307", # Modelo rápido y económico ideal para B3
-            max_tokens=1000,
-            temperature=0.1, # Muy bajo para evitar alucinaciones y mantener formato JSON
-            messages=[{"role": "user", "content": prompt}]
-        )
-        # Extraer solo texto y convertir a diccionario
-        return json.loads(response.content[0].text)
-    except json.JSONDecodeError:
-        return {"vulnerability": "Error de Parseo JSON", "evidence": "El LLM no devolvió un JSON válido"}
-    except Exception as e:
-        return {"vulnerability": "API Error", "evidence": str(e)}
-
-def run_static_analysis(pipeline_results):
-    print("\nEjecutando B3: Análisis estático...")
-    
-    files = load_files_list("results/files_list.txt") or scan_and_save_files("mattermost-src/mattermost")
-    print(f"Archivos totales listados: {len(files)}")
-    
-    results = []
-    
-    # ⚠️ LIMITADO A 5 ARCHIVOS PARA PRUEBAS (quitar el slicing `[:5]` para corrida real)
-    files_to_scan = files[:5]
-    total_files = len(files_to_scan)
-    for index, file_path in enumerate(files_to_scan, start=1):
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()[:15000] # Truncamiento de seguridad
-            
-            print(f"Analizando ({index}/{total_files}): {os.path.basename(file_path)}...")
-            prompt = get_analysis_prompt(content)
-            llm_response = ask_llm(prompt)
-            
-            # Filtro 1: Que haya detectado una vulnerabilidad válida
-            if llm_response.get("vulnerability") not in ["None", "None/Detected", None]:
-                
-                # Filtro 2: Solo guardar confidence 'high' o 'medium'
-                confianza = llm_response.get("confidence", "").lower()
-                if confianza in ["high", "medium"]:
-                    llm_response["file"] = file_path 
-                    results.append(llm_response)
-                    print(f"[+] Guardado: {llm_response.get('vulnerability')} ({confianza})")
-                else:
-                    print(f"[-] Descartado: Confianza demasiado baja ({confianza})")
-                
-        except Exception as e:
-            print(f"Error procesando {file_path}: {e}")
-
-    # Guardar en diccionario central
-    pipeline_results["B3"] = {
-        "status": "complete",
-        "total_scanned": len(files[:5]), # Ajustar en prod
-        "findings": results
-    }
-    
-    # Persistir output JSON en /results para la UI (Streamlit)
-    os.makedirs("results", exist_ok=True)
-    with open("results/B3_static.json", "w", encoding="utf-8") as f:
-        json.dump(pipeline_results["B3"], f, indent=4)
-        
-    print(f"B3 finalizado. Hallazgos detectados: {len(results)}\n")
-
-
-
-#block 4 dynamic discovery
-def run_dynamic_discovery(pipeline_results):
-    print("Ejecutando B4: Descubrimiento dinámico...")
-
-    attack_surface = discover_attack_surface()
-    summary = {
-        "status": "complete",
-        "forms_found": len(attack_surface.get("forms", [])),
-        "inputs_found": len(attack_surface.get("inputs", [])),
-        "endpoints_found": len(attack_surface.get("endpoints", []))
-    }
-
-    save_result("B4_dynamic", summary)
-
-    os.makedirs("results", exist_ok=True)
-    with open("results/attack_surface.json", "w", encoding="utf-8") as f:
-        json.dump(attack_surface, f, indent=4)
-
-    print("B4 dinámico completado y guardado en results/attack_surface.json")
-
-
-def run_human_review():
-    print("Ejecutando B6: Revisión humana...")
-    save_result("B6_human", {"approved": 10, "status": "done"})
-
-def execute_attacks():
-    print("Ejecutando B7: Ejecución de ataques...")
-    save_result("B7_attacks", {"success_rate": "80%", "status": "done"})
-
-def analyze_results():
-    print("Ejecutando B8: Análisis inteligente...")
-    save_result("B8_analysis", {"findings": ["SQLi", "XSS"], "status": "done"})
-
-def correlate_results():
-    print("Ejecutando B9: Correlación...")
-    # Aquí accedes a la data centralizada
-    correlation = {"confirmed": 2, "possible": 1, "method": "hybrid"}
-    save_result("B9_correlation", correlation)
-
-
-
-
-
-
-
+from blocks.human_review import run_human_review
+from blocks.pipeline import (
+    MissingConfigError,
+    ask_llm,
+    client,
+    execute_attacks,
+    logger,
+    pipeline_results,
+    run_dynamic_discovery,
+    run_static_analysis,
+    validate_required_env_vars,
+)
+from blocks.targets import get_target
 
 # --- Orquestador Principal ---
 
 def main():
+    try:
+        validate_required_env_vars()
+    except MissingConfigError as e:
+        raise SystemExit(f"[main] {e}")
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["fresh", "restore"], default="fresh")
+    parser.add_argument("--mode", choices=["fresh", "restore"], default="restore")
+    parser.add_argument("--target", default="mattermost", help="Target profile to use (see blocks/targets.py)")
     args = parser.parse_args()
 
-    print(f"Iniciando Pipeline en modo: {args.mode.upper()}")
-    
+    target = get_target(args.target)
+    logger.info(f"Initiating pipeline in mode: {args.mode.upper()} | target: {target.name} ({target.base_url})")
+
     # Lógica de Inicialización
     if args.mode == "fresh":
-        print("Ejecutando reset reglamentario...")
-        # Aquí llamarías a: subprocess.run(["docker", "compose", "down", "-v"])
-        # Y luego: subprocess.run(["python", "seed.py"])
-    
+        try:
+            dispatch_fresh_reset(target)
+        except ValueError as e:
+            raise SystemExit(f"[main] {e}")
+    else:
+        logger.info(f"Restore mode: assuming target={target.name!r} is already up and reachable.")
+        if target.name == "naviq":
+            ensure_naviq_server_running()
+
     # Ejecución de bloques
-    run_static_analysis(pipeline_results)
-    run_dynamic_discovery(pipeline_results)
-    generate_payloads(client=client)
-    run_human_review()
-    execute_attacks()
-    analyze_results()
-    correlate_results()
-    
-    print("\nPipeline completado. Resultados disponibles en /results.")
+    run_id = run_history.start_run(mode=args.mode, target=target.name)
+    try:
+        run_static_analysis(pipeline_results, target)
+        run_dynamic_discovery(pipeline_results, target, run_id)
+        generate_payloads(client=client, target_profile=target)
+        run_human_review(pipeline_results, target)
+        execute_attacks(target, run_id)
+        analyze_results(pipeline_results, ask_llm, target)
+        correlate_results(pipeline_results, ask_llm, target)
+    except Exception:
+        run_history.finish_run(run_id, "error")
+        raise
+
+    run_history.finish_run(run_id, "completed")
+    logger.info("Pipeline completed. Results available in /results.")
 
 if __name__ == "__main__":
     main()

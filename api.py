@@ -1,36 +1,159 @@
 import json
+import os
 import threading
 from pathlib import Path
-from typing import List
+from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+import requests
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
-from main import (
-    analyze_results,
-    correlate_results,
+from blocks import auth, report, run_history
+from blocks.analyze_results import analyze_results
+from blocks.correlate_results import correlate_results
+from blocks.environment import MM_PING_URL, dispatch_fresh_reset, ensure_naviq_server_running, stop_naviq_server
+from blocks.generate_payloads import generate_payloads
+from blocks.human_review import save_validated_payloads
+from blocks.pipeline import (
+    ask_llm,
+    client,
     execute_attacks,
-    generate_payloads,
     pipeline_results,
     run_dynamic_discovery,
     run_static_analysis,
+    validate_required_env_vars,
 )
+from blocks.targets import TARGETS, get_target, result_path
 
 app = FastAPI(title="SiftPipe API")
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-# Agregá tu URL de AWS acá cuando hagas el deploy
+# Set FRONTEND_ORIGIN in .env once the frontend is deployed (e.g. a Cloudflare
+# Pages URL) — comma-separated if there's more than one (a pages.dev URL and a
+# custom domain, for instance). Local dev origins always stay allowed.
+_extra_origins = [o.strip() for o in os.getenv("FRONTEND_ORIGIN", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:8080",
         "http://localhost:5173",
         "http://localhost:3000",
+        *_extra_origins,
     ],
     allow_methods=["*"],
     allow_headers=["*"],
+    # Required for the session cookie (below) to survive a cross-origin
+    # request at all — without this, the browser silently refuses to send
+    # or receive it, and login would return 200 while nothing actually
+    # persists. allow_origins can't be "*" together with this (it already
+    # isn't, see the explicit list above).
+    allow_credentials=True,
+    # Cross-origin fetch() hides all response headers except a small
+    # CORS-safelisted set by default — Content-Disposition isn't in it, so
+    # without this the frontend can't read the filename get_run_report()
+    # sets and would have to hardcode its own copy of that naming logic.
+    expose_headers=["Content-Disposition"],
 )
+
+# ── Session cookie (login gate) ─────────────────────────────────────────────
+# same_site="lax" works for today's same-site-different-port local dev
+# (localhost:5173 <-> localhost:8000) but silently stops the cookie being
+# sent at all once frontend/backend split across genuinely different
+# registrable domains (Cloudflare Pages <-> an EC2 host) — same signal
+# FRONTEND_ORIGIN already uses elsewhere in this file for "are we deployed",
+# reused here rather than inventing a second one. Gated on scheme, not just
+# "is FRONTEND_ORIGIN set", because that used to force Secure+SameSite=None
+# unconditionally — right for the real HTTPS deployment, but wrong for
+# same-LAN HTTP testing (e.g. a phone on the same WiFi hitting
+# http://<lan-ip>:5173): browsers silently drop Secure cookies entirely over
+# plain HTTP, so login would return 200 with no usable session.
+_frontend_is_https = any(o.startswith("https://") for o in _extra_origins)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SIFTPIPE_SESSION_SECRET", ""),
+    same_site="none" if _frontend_is_https else "lax",
+    https_only=_frontend_is_https,
+)
+
+
+@app.on_event("startup")
+def _on_startup():
+    """Fail fast on a missing required env var (e.g. ANTHROPIC_API_KEY,
+    SIFTPIPE_ADMIN_PASSWORD) at server boot, before any request - including
+    /api/run or /api/login - can be accepted, instead of only surfacing it
+    as a crash on the first LLM call or login attempt."""
+    validate_required_env_vars()
+    auth.validate_required_env_vars()
+
+
+@app.on_event("shutdown")
+def _on_shutdown():
+    """Best-effort: don't leave a NaViQ dev server this process spawned
+    (ensure_naviq_server_running) orphaned after a clean API shutdown."""
+    stop_naviq_server()
+
+# ── Auth: session-cookie login gate ─────────────────────────────────────────
+# Replaces the old require_api_key()/SIFTPIPE_API_KEY stopgap (a key baked
+# into the public frontend bundle, readable in devtools - never real access
+# control). Every route gated by construction: `protected` below carries
+# require_session as a router-level dependency, so a route only avoids the
+# gate by being declared directly on `app` instead (health/login/session/
+# logout, the four that must stay reachable without already being logged
+# in).
+def _client_ip(request: Request) -> str:
+    """request.client.host is the direct TCP peer - correct for local dev,
+    but once nginx sits in front of this in production every visitor would
+    otherwise share nginx's own address, collapsing the rate limiter below
+    into one shared bucket instead of one per real visitor. FRONTEND_ORIGIN
+    being set is the same "we're actually deployed" signal used for the
+    cookie's SameSite/Secure settings above - trust X-Forwarded-For only
+    then, since only a trusted proxy should be setting it."""
+    if _extra_origins:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def require_session(request: Request) -> None:
+    if not request.session.get("authenticated"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+def require_csrf_header(request: Request) -> None:
+    """CSRF defense, needed specifically because of the SameSite/Secure
+    setup above: same_site="none" (the deployed, cross-domain case)
+    deliberately lets the session cookie ride along on cross-site requests
+    too - otherwise cross-domain login wouldn't work at all - but that's
+    also exactly what a CSRF attack depends on. A plain HTML <form
+    method="post"> on an attacker's page (or an <img>/<script> for a GET)
+    reaches this API with the victim's real session cookie attached, no
+    JavaScript required, completely outside CORS's reach (CORS only
+    governs script-initiated fetch/XHR, never a native form submission or
+    resource load). Requiring a custom header closes it: a plain form
+    can't set one, and a script that does triggers a CORS preflight the
+    origin allowlist above would reject for anywhere not on it. Checked
+    after require_session (see `protected`'s dependency order) so a
+    request missing both reports the more useful 401, not this 403."""
+    if request.headers.get("x-requested-with") != "XMLHttpRequest":
+        raise HTTPException(status_code=403, detail="Missing required CSRF header")
+
+
+protected = APIRouter(dependencies=[Depends(require_session), Depends(require_csrf_header)])
+
+# ── Active target profile (MULTI_TARGET_PLAN.md Phase 1/5) ─────────────────
+# SIFTPIPE_TARGET only picks the *initial* value now — resolved eagerly so a
+# typo'd env var fails fast at startup instead of surfacing later as a
+# confusing 500. From here on ACTIVE_TARGET is a plain module global that
+# POST /api/target reassigns at runtime (Phase 5 Task 5.3): every function
+# below reads the name `ACTIVE_TARGET` from this module's namespace at call
+# time, not at def time, so a reassignment is picked up by all of them
+# without needing a mutable wrapper object.
+ACTIVE_TARGET = get_target(os.getenv("SIFTPIPE_TARGET", "mattermost"))
 
 # ── Estado global del pipeline ─────────────────────────────────────────────────
 pipeline_state = {
@@ -40,9 +163,96 @@ pipeline_state = {
     "completed": False,
     "error": None,
     "logs": [],
+    "run_id": None,          # blocks/run_history.py row for the current/last run
+    "stop_requested": False, # set by POST /api/run/stop, read by _run_pipeline_from's loop
+    "discard_requested": False, # set by POST /api/run/discard, read by _run_pipeline_from's loop
 }
 
+# Estado del reset de entorno (Docker/Mattermost) — separado de pipeline_state
+# porque es un ciclo de vida distinto (se corre una vez antes del pipeline,
+# no en cada corrida de B3-B9).
+env_state = {
+    "running": False,
+    "completed": False,
+    "error": None,
+    "logs": [],
+}
+
+# pipeline_results (blocks/pipeline.py) is a plain module-scope dict, mutated
+# directly by every block function and shared into the two background
+# threading.Threads below with no locking of its own. In practice the two
+# threads never run concurrently — pipeline_state["running"]/
+# ["waiting_for_human"] already serialize them (_run_pipeline_from always
+# finishes, setting waiting_for_human=True, before /api/validate is allowed
+# to start _run_from_b7) — but that safety currently depends on
+# those flag checks staying correct forever. This lock makes the
+# no-concurrent-access invariant self-enforcing instead: both background
+# entry points hold it for their full run, and the one synchronous request-
+# thread write (validate_payloads' pipeline_results["B6"] = ...) takes it
+# too, so a future bug in the state-guard logic can no longer race the
+# dict itself.
+pipeline_results_lock = threading.Lock()
+
 RESULTS_DIR = Path("results")
+EVIDENCE_DIR = Path("evidence")
+
+# ── Static evidence files (B7 screenshots + per-payload videos) ───────────────
+# Create both directories up front instead of waiting for a pipeline run —
+# /media and /evidence below need them to exist by the time a request can
+# arrive. Subdirectories are created on demand by the blocks that write into
+# them and don't need to exist yet.
+# Two directories, not one: current results/*.json still lives under
+# RESULTS_DIR, but B7's screenshots/videos now live under EVIDENCE_DIR
+# (blocks/targets.py's evidence_dir()), deliberately outside results/ so a
+# Fresh Reset's wipe of results/ doesn't also destroy every past run's
+# evidence — see evidence_dir()'s docstring. /media stays scoped to
+# RESULTS_DIR for backward compatibility with screenshot_path/video_path
+# values already stored in older run_history rows.
+RESULTS_DIR.mkdir(exist_ok=True)
+EVIDENCE_DIR.mkdir(exist_ok=True)
+
+
+def _safe_file_path(base_dir: Path, file_path: str) -> Optional[Path]:
+    """
+    Resolves `file_path` against `base_dir` and returns the real file's
+    absolute path, or None if it doesn't exist, isn't a file, or (via a
+    "../" segment) resolves outside base_dir entirely. Needed because
+    StaticFiles can't take a Depends() — see the routes below — so this is
+    hand-rolled instead of getting path traversal protection for free the
+    way StaticFiles itself already had it.
+    """
+    candidate = (base_dir / file_path).resolve()
+    if not candidate.is_relative_to(base_dir.resolve()):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+# Replaces the old app.mount("/media", StaticFiles(...)) /
+# app.mount("/evidence", StaticFiles(...)) — a real bug: FastAPI dependencies
+# attach to router *routes*, never to app.mount(), so both mounts served
+# every screenshot/video/result file with zero login check regardless of
+# require_session below. Declared on `app` (not `protected`) and gated by
+# require_session alone, not require_csrf_header too: every URL these serve
+# gets rendered as a plain <img src>/<video src> (see ui/src/lib/api.ts's
+# mediaUrl()), which can't attach a custom header — and a read-only GET that
+# only displays a screenshot isn't the class of request CSRF protection
+# exists for in the first place (no state change).
+@app.get("/media/{file_path:path}")
+def get_media_file(file_path: str, _=Depends(require_session)):
+    resolved = _safe_file_path(RESULTS_DIR, file_path)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(resolved)
+
+
+@app.get("/evidence/{file_path:path}")
+def get_evidence_file(file_path: str, _=Depends(require_session)):
+    resolved = _safe_file_path(EVIDENCE_DIR, file_path)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(resolved)
 
 
 def log(message: str):
@@ -51,75 +261,226 @@ def log(message: str):
     pipeline_state["logs"].append(message)
 
 
-def run_pipeline_until_b6():
-    """Corre B3 → B5 y pausa esperando revisión humana."""
+def env_log(message: str):
+    """Agrega una línea al log en memoria del reset de entorno."""
+    print(message)
+    env_state["logs"].append(message)
+
+
+def run_environment_reset():
+    """Corre el fresh reset del target activo en background. La rama
+    Mattermost es no interactiva: si la creación automática del admin
+    falla, levanta un error en vez de bloquear el thread esperando un
+    input() que nunca va a llegar desde la API. La rama NaViQ nunca
+    necesitó ese fallback — su creación de cuenta ya es 100% scripted."""
+    env_state["running"] = True
+    env_state["completed"] = False
+    env_state["error"] = None
+    env_state["logs"] = []
+
+    try:
+        dispatch_fresh_reset(ACTIVE_TARGET, log_fn=env_log, interactive=False)
+        run_history.dismiss_resume(ACTIVE_TARGET.name)
+        env_state["completed"] = True
+    except Exception as e:
+        env_state["error"] = str(e)
+        env_log(f"ERROR in environment reset: {e}")
+    finally:
+        env_state["running"] = False
+
+
+def _fail_pipeline(e):
+    """Shared except-block bookending for _run_fresh_pipeline and
+    _run_from_b7 - previously each wrote out the same
+    pipeline_state update + log + run_history.finish_run(..., "error") in
+    full a second time. Each function still needs its own try/except (a
+    human-review pause between B6 and B7 splits the run across two separate
+    background threads), only the failure handling itself is shared."""
+    pipeline_state["error"] = str(e)
+    pipeline_state["running"] = False
+    pipeline_state["current_block"] = None
+    pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
+    log(f"ERROR in pipeline: {e}")
+    run_history.finish_run(pipeline_state["run_id"], "error")
+
+
+# (bare id for pipeline_state/current_block, on-disk result name for
+# run_history snapshotting, the actual block call, a descriptive start
+# message for the live Logs tab). Order matters — this is the one place
+# the B3-B9 sequence is defined; PIPELINE_STEPS[i] runs before
+# PIPELINE_STEPS[i+1] and nothing else decides that anymore.
+PIPELINE_STEPS = [
+    ("B3", "B3_static", lambda: run_static_analysis(pipeline_results, ACTIVE_TARGET), "B3 - Static analysis started"),
+    ("B4", "B4_dynamic", lambda: run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"]), "B4 - Dynamic discovery started"),
+    ("B5", "B5_payloads", lambda: generate_payloads(client=client, target_profile=ACTIVE_TARGET), "B5 - Payload generation"),
+    ("B7", "B7_dynamic_attacks", lambda: execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"]), "B7 - Attack execution"),
+    ("B8", "B8_dynamic", lambda: analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET), "B8 - Intelligent results analysis"),
+    ("B9", "B9_correlation", lambda: correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET), "B9 - Static + dynamic correlation"),
+]
+
+
+def _run_pipeline_from(start_index):
+    """
+    Runs PIPELINE_STEPS[start_index:], pausing for B6 human review right
+    after B5 (index 2) exactly like run_pipeline_until_b6 used to, and
+    finishing the run after B9 (index 5) exactly like run_pipeline_from_b7
+    used to. The B6 pause is purely positional — "what happens right after
+    B5, before B7" — so it fires identically whether start_index is 0 (a
+    fresh run) or 3 (resuming straight into B7, which only ever happens
+    after B6 was already approved once for this run_id).
+
+    Caller is responsible for pipeline_state["running"]/["run_id"] already
+    being set before this is called — see _run_fresh_pipeline, _run_from_b7,
+    and _run_resumed_pipeline (Task 4) for the three ways that happens.
+    """
+    try:
+        with pipeline_results_lock:
+            for state_id, stored_name, step, start_message in PIPELINE_STEPS[start_index:]:
+                pipeline_state["current_block"] = state_id
+                log(f">> {start_message}")
+                step()
+                run_history._snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
+                log(f"OK {state_id} completed")
+
+                # The B5->B6 human-review pause and the final B9->completed
+                # transition both must always win over a pending stop
+                # request - stopping mid-B5 must not let resume silently
+                # skip the B6 gate (a human never reviewed the payloads B5
+                # just generated), and stopping on the very last step must
+                # not downgrade an otherwise fully-completed run to
+                # "stopped" (see docs/superpowers/specs/2026-09-09-pipeline-
+                # stop-design.md). In both cases the pending stop is simply
+                # absorbed by the pause/completion that was already about to
+                # happen: _run_from_b7 and the "completed" branch below both
+                # reset stop_requested = False, so nothing is left over.
+                is_last_step = state_id == PIPELINE_STEPS[-1][0]
+
+                # Discard is the more final of the two possible user
+                # actions, so it's checked first and wins any race with a
+                # pending stop_requested (both buttons are independently
+                # clickable). Unlike Stop, Discard doesn't need to protect
+                # the B5->B6 pause below: a discarded run is never
+                # resumable — "discarded" falls outside _find_resume_point's
+                # ("error", "stopped") check by construction — so there is
+                # no resume-into-B7 path to guard against, and discarding
+                # during B5 can finalize the instant B5 finishes, skipping
+                # the pause entirely. The last-step exemption still applies
+                # for the same reason it does for Stop below: nothing is
+                # left to abandon once B9 has actually finished.
+                if not is_last_step and pipeline_state["discard_requested"]:
+                    pipeline_state["current_block"] = None
+                    pipeline_state["running"] = False
+                    pipeline_state["stop_requested"] = False
+                    pipeline_state["discard_requested"] = False
+                    log(f"== Pipeline discarded after {state_id} (user request) ==")
+                    run_history.finish_run(pipeline_state["run_id"], "discarded")
+                    return
+
+                if not is_last_step and state_id != "B5" and pipeline_state["stop_requested"]:
+                    pipeline_state["current_block"] = None
+                    pipeline_state["running"] = False
+                    pipeline_state["stop_requested"] = False
+                    log(f"== Pipeline stopped after {state_id} (user request) ==")
+                    run_history.finish_run(pipeline_state["run_id"], "stopped")
+                    return
+
+                if state_id == "B5":
+                    # Pauses here — the UI shows the payloads for human review
+                    pipeline_state["current_block"] = "B6"
+                    pipeline_state["waiting_for_human"] = True
+                    pipeline_state["running"] = False
+                    log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
+                    return
+
+            pipeline_state["current_block"] = None
+            pipeline_state["running"] = False
+            pipeline_state["completed"] = True
+            pipeline_state["stop_requested"] = False
+            pipeline_state["discard_requested"] = False
+            log("OK Pipeline completed. Results available.")
+            run_history.finish_run(pipeline_state["run_id"], "completed")
+
+    except Exception as e:
+        _fail_pipeline(e)
+
+
+def _run_fresh_pipeline(mode="unknown"):
+    """Thread target for POST /api/run — starts a brand-new run at B3."""
     pipeline_state["running"] = True
     pipeline_state["completed"] = False
     pipeline_state["error"] = None
     pipeline_state["logs"] = []
     pipeline_state["waiting_for_human"] = False
+    pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
+    pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
 
+    # Safety net, not the primary path (that's naviq_fresh_reset() via
+    # "Prepare environment") — covers restore mode, or any run started
+    # without clicking Prepare environment first. A no-op if already up.
+    # Wrapped in its own try/except: ensure_naviq_server_running genuinely
+    # raises in real scenarios (RuntimeError if the dev-server process exits
+    # immediately, TimeoutError if it never becomes reachable, FileNotFoundError
+    # if the venv python is missing). Before this fix that exception escaped
+    # this background thread entirely — pipeline_state["running"] stayed True
+    # forever and every recovery endpoint (/api/run, /api/run/resume,
+    # /api/reset) 409'd with no in-app way out. Routing it through the same
+    # _fail_pipeline() helper _run_pipeline_from uses keeps the failure
+    # contract identical regardless of which stage raised.
     try:
-        pipeline_state["current_block"] = "B3"
-        log("▶ B3 — Análisis estático iniciado")
-        run_static_analysis(pipeline_results)
-        log("✓ B3 completado")
-
-        pipeline_state["current_block"] = "B4"
-        log("▶ B4 — Discovery dinámico iniciado")
-        run_dynamic_discovery(pipeline_results)
-        log("✓ B4 completado")
-
-        pipeline_state["current_block"] = "B5"
-        log("▶ B5 — Generación de payloads")
-        generate_payloads(client=client)
-        log("✓ B5 completado")
-
-        # Pausa aquí — la UI muestra los payloads para revisión humana
-        pipeline_state["current_block"] = "B6"
-        pipeline_state["waiting_for_human"] = True
-        pipeline_state["running"] = False
-        log("━━ [B6] REVISIÓN HUMANA — esperando validación en la UI ━━")
-
+        if ACTIVE_TARGET.name == "naviq":
+            ensure_naviq_server_running(log_fn=log)
     except Exception as e:
-        pipeline_state["error"] = str(e)
-        pipeline_state["running"] = False
-        pipeline_state["current_block"] = None
-        log(f"✗ Error en pipeline: {e}")
+        _fail_pipeline(e)
+        return
+
+    _run_pipeline_from(0)
 
 
-def run_pipeline_from_b7():
-    """Corre B7 → B9 después de que el humano validó los payloads."""
+def _run_from_b7():
+    """Thread target for POST /api/validate — continues into B7 after B6
+    approval. Index 3 is "B7" in PIPELINE_STEPS."""
     pipeline_state["running"] = True
     pipeline_state["waiting_for_human"] = False
     pipeline_state["error"] = None
+    pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
+    _run_pipeline_from(3)
 
-    try:
-        pipeline_state["current_block"] = "B7"
-        log("▶ B7 — Ejecución de ataques")
-        execute_attacks()
-        log("✓ B7 completado")
 
-        pipeline_state["current_block"] = "B8"
-        log("▶ B8 — Análisis inteligente de resultados")
-        analyze_results()
-        log("✓ B8 completado")
+def _find_resume_point(target_name):
+    """
+    Returns (run_id, start_index, state_id) for the first PIPELINE_STEPS
+    entry not yet snapshotted for the most recent errored-or-stopped, still-
+    resumable run of `target_name` — or None if there's nothing to resume
+    (no runs, the latest one is neither errored nor stopped, or Fresh Reset
+    already dismissed it via dismiss_resume()). A user-stopped run is
+    exactly as resumable as a crashed one — see
+    docs/superpowers/specs/2026-09-09-pipeline-stop-design.md.
+    """
+    latest = run_history.get_latest_run(target_name)
+    if latest is None or latest["status"] not in ("error", "stopped") or not latest["resumable"]:
+        return None
 
-        pipeline_state["current_block"] = "B9"
-        log("▶ B9 — Correlación estático + dinámico")
-        correlate_results()
-        log("✓ B9 completado")
+    run_detail = run_history.get_run(latest["id"])
+    done = set(run_detail["blocks"].keys())
+    for index, (state_id, stored_name, _step, _start_message) in enumerate(PIPELINE_STEPS):
+        if stored_name not in done:
+            return latest["id"], index, state_id
+    return None  # every block already snapshotted - nothing left to resume
 
-        pipeline_state["current_block"] = None
-        pipeline_state["running"] = False
-        pipeline_state["completed"] = True
-        log("✓ Pipeline completado. Resultados disponibles.")
 
-    except Exception as e:
-        pipeline_state["error"] = str(e)
-        pipeline_state["running"] = False
-        pipeline_state["current_block"] = None
-        log(f"✗ Error en pipeline: {e}")
+def _run_resumed_pipeline(run_id, start_index):
+    """Thread target for POST /api/run/resume."""
+    pipeline_state["running"] = True
+    pipeline_state["completed"] = False
+    pipeline_state["error"] = None
+    pipeline_state["waiting_for_human"] = False
+    pipeline_state["stop_requested"] = False
+    pipeline_state["discard_requested"] = False
+    pipeline_state["run_id"] = run_id
+    _run_pipeline_from(start_index)
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
@@ -128,114 +489,94 @@ class ValidatePayloadsRequest(BaseModel):
     comment: str = ""
 
 
+class SetTargetRequest(BaseModel):
+    name: str   # must match a key in blocks.targets.TARGETS ("mattermost" | "naviq")
+
+
+class RunPipelineRequest(BaseModel):
+    mode: str = "unknown"   # "fresh" | "restore", whichever the sidebar toggle had selected
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+# Four routes live directly on `app` rather than `protected`, deliberately:
+# a visitor who isn't logged in yet still needs to reach /api/login itself,
+# /api/session (the frontend route guard's "am I logged in" check), and
+# /api/health (infra/uptime checks). /api/logout stays reachable the same
+# way so a client with an already-expired/invalid session can still clear
+# it without first needing a valid one.
 
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
 
 
-@app.post("/api/run")
-def run_pipeline():
-    """Arranca el pipeline desde B3. Rechaza si ya está corriendo."""
-    if pipeline_state["running"]:
-        raise HTTPException(status_code=409, detail="Pipeline ya está corriendo")
-    if pipeline_state["waiting_for_human"]:
-        raise HTTPException(status_code=409, detail="Esperando revisión humana en B6")
+@app.post("/api/login")
+def login(body: LoginRequest, request: Request):
+    ip = _client_ip(request)
+    if not auth.check_rate_limit(ip):
+        raise HTTPException(status_code=429, detail="Too many attempts, try again later")
 
-    thread = threading.Thread(target=run_pipeline_until_b6, daemon=True)
-    thread.start()
-    return {"message": "Pipeline iniciado"}
+    if not auth.verify_password(body.password):
+        auth.record_failed_attempt(ip)
+        raise HTTPException(status_code=401, detail="Incorrect password")
+
+    auth.reset_attempts(ip)
+    request.session["authenticated"] = True
+    return {"authenticated": True}
 
 
-@app.get("/api/status")
-def get_status():
-    """Estado actual del pipeline — React hace polling cada 2s a este endpoint."""
+@app.get("/api/session")
+def session_status(request: Request):
+    return {"authenticated": bool(request.session.get("authenticated"))}
+
+
+@app.post("/api/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"authenticated": False}
+
+
+@protected.get("/api/target")
+def get_active_target():
+    """Active target + the closed set the picker in TopBar.tsx can switch
+    between (MULTI_TARGET_PLAN.md Phase 5 Task 5.3) — not a generic
+    "add any site" list, just the two profiles blocks/targets.py defines."""
     return {
-        "running": pipeline_state["running"],
-        "current_block": pipeline_state["current_block"],
-        "waiting_for_human": pipeline_state["waiting_for_human"],
-        "completed": pipeline_state["completed"],
-        "error": pipeline_state["error"],
+        "name": ACTIVE_TARGET.name,
+        "display_name": ACTIVE_TARGET.display_name,
+        "stack_label": ACTIVE_TARGET.stack_label,
+        "supports_fresh_reset": ACTIVE_TARGET.supports_fresh_reset,
+        "available": [
+            {"name": t.name, "display_name": t.display_name}
+            for t in TARGETS.values()
+        ],
     }
 
 
-@app.get("/api/logs")
-def get_logs():
-    """Devuelve todos los logs acumulados en memoria."""
-    return {"logs": pipeline_state["logs"]}
+@protected.post("/api/target")
+def set_active_target(body: SetTargetRequest):
+    """Switches the active target at runtime. Blocked while a run or an
+    environment reset is in flight — ACTIVE_TARGET is a single process-wide
+    global (see the comment above its declaration), so swapping it mid-run
+    would attribute B3-B9 output for one target to whichever was active when
+    each block started. pipeline_state/env_state are cleared on a successful
+    switch so the UI doesn't show a stale "completed"/"error" banner left
+    over from the target that was active before."""
+    global ACTIVE_TARGET
 
+    if pipeline_state["running"] or pipeline_state["waiting_for_human"]:
+        raise HTTPException(status_code=409, detail="Cannot switch target while the pipeline is running")
+    if env_state["running"]:
+        raise HTTPException(status_code=409, detail="Cannot switch target while the environment is being prepared")
 
-@app.get("/api/results")
-def get_results():
-    """Lee todos los JSONs de /results/ y los devuelve juntos."""
-    if not RESULTS_DIR.exists():
-        return {}
-
-    data = {}
-    for file in RESULTS_DIR.glob("*.json"):
-        try:
-            with open(file) as f:
-                data[file.stem] = json.load(f)
-        except Exception:
-            data[file.stem] = None
-
-    return data
-
-
-@app.get("/api/results/{block_name}")
-def get_block_result(block_name: str):
-    """Devuelve el resultado de un bloque específico. Ej: /api/results/B3_static"""
-    file = RESULTS_DIR / f"{block_name}.json"
-    if not file.exists():
-        raise HTTPException(status_code=404, detail=f"{block_name} no tiene resultados todavía")
-    with open(file) as f:
-        return json.load(f)
-
-
-@app.post("/api/validate")
-def validate_payloads(body: ValidatePayloadsRequest):
-    """
-    B6 — recibe los payloads aprobados por la investigadora.
-    Guarda validated_payloads.json y dispara B7 → B9 en background.
-    """
-    if not pipeline_state["waiting_for_human"]:
-        raise HTTPException(status_code=409, detail="El pipeline no está esperando revisión")
-
-    # Leer payloads generados por B5
-    payloads_file = RESULTS_DIR / "B5_payloads.json"
-    if not payloads_file.exists():
-        raise HTTPException(status_code=404, detail="B5_payloads.json no encontrado")
-
-    with open(payloads_file) as f:
-        all_payloads = json.load(f)
-
-    # Guardar solo los aprobados
-    validated = {
-        "approved_indices": body.approved_indices,
-        "comment": body.comment,
-        "source": all_payloads,
-        "status": "validated",
-    }
-
-    RESULTS_DIR.mkdir(exist_ok=True)
-    with open(RESULTS_DIR / "B6_validated.json", "w") as f:
-        json.dump(validated, f, indent=4)
-
-    log(f"✓ B6 — {len(body.approved_indices)} payloads validados por la investigadora")
-
-    # Disparar B7 → B9 en background
-    thread = threading.Thread(target=run_pipeline_from_b7, daemon=True)
-    thread.start()
-
-    return {"message": "Validación recibida. Continuando con B7 → B9."}
-
-
-@app.post("/api/reset")
-def reset_pipeline():
-    """Limpia el estado para poder correr el pipeline de nuevo."""
-    if pipeline_state["running"]:
-        raise HTTPException(status_code=409, detail="No se puede resetear mientras corre")
+    try:
+        ACTIVE_TARGET = get_target(body.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     pipeline_state.update({
         "running": False,
@@ -244,5 +585,357 @@ def reset_pipeline():
         "completed": False,
         "error": None,
         "logs": [],
+        "run_id": None,
     })
-    return {"message": "Estado reseteado"}
+    env_state.update({"running": False, "completed": False, "error": None, "logs": []})
+
+    return {
+        "name": ACTIVE_TARGET.name,
+        "display_name": ACTIVE_TARGET.display_name,
+        "stack_label": ACTIVE_TARGET.stack_label,
+        "supports_fresh_reset": ACTIVE_TARGET.supports_fresh_reset,
+    }
+
+
+@protected.get("/api/environment/health")
+def environment_health():
+    """Chequeo rápido y no bloqueante: ¿el target activo ya está arriba y
+    respondiendo? Permite que la UI decida si hace falta un fresh reset antes
+    de correr B3-B9. Mattermost has a real ping endpoint (/api/v4/system/ping);
+    NaViQ (and any future non-Mattermost target) doesn't, so a plain GET on
+    its base_url is the generic equivalent — a dev server that's down refuses
+    the connection, one that's up returns 200 for its login page."""
+    ping_url = MM_PING_URL if ACTIVE_TARGET.name == "mattermost" else ACTIVE_TARGET.base_url
+    try:
+        resp = requests.get(ping_url, timeout=3)
+        target_up = resp.status_code == 200
+    except requests.exceptions.RequestException:
+        target_up = False
+    return {"target_up": target_up, "target": ACTIVE_TARGET.name}
+
+
+@protected.post("/api/environment/reset")
+def reset_environment():
+    """Corre el fresh reset del target activo en background — Mattermost
+    (Docker down, wipe de volúmenes, up, seed) o NaViQ (borra db.sqlite3,
+    migrate, seed, recrea la cuenta de test). Reemplaza a
+    `python main.py --mode fresh` para quien solo usa la UI."""
+    if ACTIVE_TARGET.name not in ("mattermost", "naviq"):
+        raise HTTPException(
+            status_code=501,
+            detail=f"No fresh-reset implementation for target={ACTIVE_TARGET.name!r}.",
+        )
+    if env_state["running"]:
+        raise HTTPException(status_code=409, detail="The environment is already being prepared")
+    if pipeline_state["running"] or pipeline_state["waiting_for_human"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot reset the environment while the pipeline is running",
+        )
+
+    thread = threading.Thread(target=run_environment_reset, daemon=True)
+    thread.start()
+    return {"message": "Environment reset started"}
+
+
+@protected.get("/api/environment/status")
+def environment_status():
+    """Estado del reset de entorno — se puede pollear igual que /api/status."""
+    return {
+        "running": env_state["running"],
+        "completed": env_state["completed"],
+        "error": env_state["error"],
+    }
+
+
+@protected.get("/api/environment/logs")
+def environment_logs():
+    return {"logs": env_state["logs"]}
+
+
+@protected.post("/api/run")
+def run_pipeline(body: RunPipelineRequest = RunPipelineRequest()):
+    """Arranca el pipeline desde B3. Rechaza si ya está corriendo."""
+    if pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is already running")
+    if pipeline_state["waiting_for_human"]:
+        raise HTTPException(status_code=409, detail="Waiting for human review in B6")
+
+    thread = threading.Thread(target=_run_fresh_pipeline, args=(body.mode,), daemon=True)
+    thread.start()
+    return {"message": "Pipeline started"}
+
+
+@protected.post("/api/run/resume")
+def resume_pipeline():
+    """Resumes the active target's most recent errored run from the first
+    block that never completed. Rejects if the pipeline is currently
+    running/waiting, or if there's nothing resumable (see _find_resume_point)."""
+    if pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is already running")
+    if pipeline_state["waiting_for_human"]:
+        raise HTTPException(status_code=409, detail="Waiting for human review in B6")
+
+    resume_point = _find_resume_point(ACTIVE_TARGET.name)
+    if resume_point is None:
+        raise HTTPException(status_code=409, detail="Nothing to resume for this target")
+
+    run_id, start_index, state_id = resume_point
+    thread = threading.Thread(target=_run_resumed_pipeline, args=(run_id, start_index), daemon=True)
+    thread.start()
+    return {"resuming_from": state_id}
+
+
+@protected.post("/api/run/stop")
+def stop_pipeline():
+    """Requests a stop after the block currently running finishes — see
+    docs/superpowers/specs/2026-09-09-pipeline-stop-design.md for why this
+    can't interrupt a block mid-way. Rejects if nothing is actually running
+    (a paused-at-B6 run has nothing in-flight to stop)."""
+    if not pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is not running")
+
+    pipeline_state["stop_requested"] = True
+    return {"stopping_after": pipeline_state["current_block"]}
+
+
+@protected.post("/api/run/discard")
+def discard_pipeline():
+    """Requests that the currently running pipeline be abandoned once its
+    current block finishes — same block-boundary reasoning as Stop (a block
+    already in flight, e.g. a live Playwright session or an in-flight LLM
+    call, must be allowed to finish rather than interrupted mid-way, for
+    data integrity). Unlike Stop, the resulting run is never offered for
+    resume — status "discarded" falls outside _find_resume_point's
+    ("error", "stopped") check by construction. Rejects if nothing is
+    actually running, same as Stop."""
+    if not pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is not running")
+
+    pipeline_state["discard_requested"] = True
+    return {"discarding_after": pipeline_state["current_block"]}
+
+
+@protected.get("/api/status")
+def get_status():
+    """Estado actual del pipeline — React hace polling cada 2s a este endpoint."""
+    # _run_resumed_pipeline deliberately never calls run_history.start_run()
+    # for a resumed run (it keeps the original run_id), so the DB row stays
+    # status="error"/resumable=True for that run's entire duration - nothing
+    # ever writes it back to "running". Without this guard, _find_resume_point
+    # would happily report a resumable_from for a run that's actively
+    # executing right now, contradicting "running": true in the same
+    # response. Skipping the DB lookup entirely while running/waiting also
+    # avoids two pointless SQLite queries on every 2s poll during that time.
+    resume_point = (
+        None
+        if pipeline_state["running"] or pipeline_state["waiting_for_human"]
+        else _find_resume_point(ACTIVE_TARGET.name)
+    )
+    return {
+        "running": pipeline_state["running"],
+        "current_block": pipeline_state["current_block"],
+        "waiting_for_human": pipeline_state["waiting_for_human"],
+        "completed": pipeline_state["completed"],
+        "error": pipeline_state["error"],
+        "resumable_from": resume_point[2] if resume_point is not None else None,
+        "stop_requested": pipeline_state["stop_requested"],
+        "discard_requested": pipeline_state["discard_requested"],
+    }
+
+
+@protected.get("/api/logs")
+def get_logs():
+    """Devuelve todos los logs acumulados en memoria."""
+    return {"logs": pipeline_state["logs"]}
+
+
+@protected.get("/api/results")
+def get_results():
+    """Lee los JSONs de /results/ que pertenecen al target activo y los
+    devuelve juntos, bajo su block_name canónico (sin el prefijo de target
+    en disco — ver result_path() en blocks/targets.py). Real bug fixed
+    2026-08-10: this used to glob *every* JSON in results/ regardless of
+    which target wrote it, so running NaViQ then Mattermost back to back
+    made this endpoint (and the "Hybrid pipeline" tabs it feeds) silently
+    show whichever target ran most recently, not the one currently active."""
+    if not RESULTS_DIR.exists():
+        return {}
+
+    prefix = f"{ACTIVE_TARGET.name}_"
+    data = {}
+    for file in RESULTS_DIR.glob(f"{prefix}*.json"):
+        block_name = file.stem[len(prefix):]
+        try:
+            with open(file) as f:
+                data[block_name] = json.load(f)
+        except Exception:
+            data[block_name] = None
+
+    return data
+
+
+@protected.get("/api/results/{block_name}")
+def get_block_result(block_name: str):
+    """Devuelve el resultado de un bloque específico del target activo. Ej:
+    /api/results/B3_static -> results/{ACTIVE_TARGET.name}_B3_static.json"""
+    file = _safe_file_path(RESULTS_DIR, f"{ACTIVE_TARGET.name}_{block_name}.json")
+    if file is None:
+        raise HTTPException(status_code=404, detail=f"{block_name} has no results yet")
+    with open(file) as f:
+        return json.load(f)
+
+
+@protected.get("/api/runs")
+def get_runs():
+    """Newest-first list of past pipeline runs (see blocks/run_history.py)."""
+    return {"runs": run_history.list_runs()}
+
+
+SAFE_TO_NAVIGATE = APIRouter(dependencies=[Depends(require_session)])
+
+
+# On `app`/SAFE_TO_NAVIGATE (require_session only), not `protected`, for the
+# same reason get_media_file()/get_evidence_file() above are: the Past Runs
+# view's "View raw JSON" action (ui/src/components/secpipeline/
+# PastRunsView.tsx) opens this URL with a plain window.open(url, "_blank") -
+# a real top-level navigation can't attach a custom header, so it 403'd on
+# "Missing required CSRF header" every single time (bug found live
+# 2026-09-05). This is also a pure read with no state change - not the
+# class of request CSRF protection exists for - so exempting it here rather
+# than reworking the frontend into a fetch()+blob-URL download (like
+# downloadReport() in ui/src/lib/api.ts does for the PDF report) keeps the
+# simpler "just open it in a tab" UX intact.
+@SAFE_TO_NAVIGATE.get("/api/runs/{run_id}")
+def get_run(run_id: int):
+    """Full snapshot of one past run — same {block_name: json} shape as
+    GET /api/results, so the frontend can reuse the same rendering logic."""
+    run = run_history.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return run
+
+
+@protected.post("/api/runs/{run_id}/archive")
+def archive_run(run_id: int):
+    """Marks a past run archived — kept in history, just visually set aside
+    in the Past Runs list. Reversible via unarchive_run below."""
+    if not run_history.set_archived(run_id, True):
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return {"id": run_id, "archived": True}
+
+
+@protected.post("/api/runs/{run_id}/unarchive")
+def unarchive_run(run_id: int):
+    """Reverses archive_run above — no expiry, so this always works as long
+    as the run itself still exists."""
+    if not run_history.set_archived(run_id, False):
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return {"id": run_id, "archived": False}
+
+
+@protected.delete("/api/runs/{run_id}")
+def delete_run(run_id: int):
+    """Permanently deletes a run and its snapshotted block data. Only
+    archived runs can be deleted — archiving first is the deliberate,
+    reversible step before this irreversible one."""
+    run = run_history.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    if not run["archived"]:
+        raise HTTPException(status_code=409, detail="Only archived runs can be deleted")
+    run_history.delete_run(run_id)
+    return {"id": run_id, "deleted": True}
+
+
+@protected.get("/api/runs/{run_id}/compare")
+def get_run_comparison(run_id: int):
+    """New vs. recurring vs. resolved findings, and the severity-count
+    delta, against the previous completed run of the same target (see
+    blocks/run_history.py's compare_with_previous())."""
+    comparison = run_history.compare_with_previous(run_id)
+    if comparison is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return comparison
+
+
+@protected.get("/api/runs/{run_id}/report")
+def get_run_report(run_id: int, lang: str = "en"):
+    """PDF export of one past run — blocks/report.py renders a deterministic
+    HTML document from the same snapshot GET /api/runs/{run_id} returns
+    (no new LLM calls), then Playwright prints it to PDF."""
+    if lang not in ("en", "es"):
+        raise HTTPException(status_code=400, detail="lang must be 'en' or 'es'")
+    run = run_history.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    pdf_bytes = report.render_report_pdf(run, lang)
+    filename = report.build_report_filename(run, lang)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@protected.post("/api/validate")
+def validate_payloads(body: ValidatePayloadsRequest):
+    """
+    B6 — recibe los payloads aprobados por la investigadora.
+    Guarda validated_payloads.json y dispara B7 → B9 en background.
+    """
+    if not pipeline_state["waiting_for_human"]:
+        raise HTTPException(status_code=409, detail="The pipeline is not waiting for review")
+
+    # Leer payloads generados por B5
+    payloads_file = Path(result_path(ACTIVE_TARGET.name, "B5_payloads.json"))
+    if not payloads_file.exists():
+        raise HTTPException(status_code=404, detail="B5_payloads.json not found")
+
+    with open(payloads_file) as f:
+        all_payloads = json.load(f)
+
+    candidates = all_payloads.get("payloads", [])
+    approved = [candidates[i] for i in body.approved_indices if 0 <= i < len(candidates)]
+
+    # save_validated_payloads() (blocks/human_review.py) writes the exact
+    # file/shape B7 (execute_attacks -> dynamic_injector.run_payloads)
+    # reads — the same contract the console path (run_human_review) relies
+    # on a human to have produced by hand.
+    with pipeline_results_lock:
+        pipeline_results["B6"] = save_validated_payloads(ACTIVE_TARGET, approved, body.comment)
+
+    log(f"OK B6 - {len(approved)} payloads validated by the researcher")
+
+    # Disparar B7 → B9 en background
+    thread = threading.Thread(target=_run_from_b7, daemon=True)
+    thread.start()
+
+    return {"message": "Validation received. Continuing with B7 → B9."}
+
+
+@protected.post("/api/reset")
+def reset_pipeline():
+    """Limpia el estado para poder correr el pipeline de nuevo."""
+    if pipeline_state["running"]:
+        raise HTTPException(status_code=409, detail="Cannot reset while running")
+
+    pipeline_state.update({
+        "running": False,
+        "current_block": None,
+        "waiting_for_human": False,
+        "completed": False,
+        "error": None,
+        "logs": [],
+        "stop_requested": False,
+        "discard_requested": False,
+    })
+    return {"message": "State reset"}
+
+
+# All routes above that used `protected` instead of `app` only actually take
+# effect once mounted here - FastAPI resolves routes from the app instance a
+# server was actually started with, so this must run after every route
+# decorator above it, not just after the router is created.
+app.include_router(protected)
+app.include_router(SAFE_TO_NAVIGATE)

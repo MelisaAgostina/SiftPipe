@@ -2,11 +2,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import logo from "@/assets/siftpipe-logo.png";
 import pic from "@/assets/Sift pipe-Photoroom.png";
+import { useLang } from "@/hooks/use-lang";
+import { useSessionAuthenticated } from "@/hooks/use-session-authenticated";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "SiftPipe — Hybrid security pipeline" },
+      { title: "SiftPipe" },
       {
         name: "description",
         content:
@@ -26,8 +28,10 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
+  const { t } = useLang();
+  const authenticated = useSessionAuthenticated();
   return (
-    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-linear-to-br from-white via-blue-200 to-slate-100 px-6 text-foreground">
+    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-linear-to-br from-background via-background to-card px-6 text-foreground">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 opacity-[0.04]"
@@ -46,33 +50,31 @@ function Index() {
         <img
           src={logo}
           alt="SiftPipe logo"
-          className="mb-0 mt-16 block w-lg h-auto object-contain select-none"
+          className="mb-0 mt-8 block w-80 h-auto object-contain select-none invert"
           draggable={false}
         />
 
-        <h1 className="mt-2 text-black  uppercase tracking-[0.3em]">Hybrid security pipeline</h1>
+        <h1 className="font-title mt-2 text-5xl sm:text-5xl text-foreground uppercase tracking-[0.15em] sm:tracking-[0.2em]">
+          {t.landing.heading}
+        </h1>
 
-        <p className="mt-8 text-gray-700 max-w-xl text-balance text-base leading-relaxed sm:text-lg">
-          SiftPipe combines AI-driven static analysis, dynamic discovery with Playwright, and
-          contextual payload generation — then waits for a human to validate before attacking. Every
-          finding is correlated, confirmed, and free of noise.
+        <p className=" mt-8 text-muted-foreground max-w-xl text-balance text-base leading-relaxed sm:text-lg">
+          {t.landing.description}
         </p>
 
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
           <Link
-            to="/app"
-            className="group inline-flex items-center gap-2 rounded-md bg-blue-600 px-5 py-3 text-sm text-white font-semibold transition-colors hover:bg-blue-400"
+            to={authenticated ? "/app" : "/login"}
+            className="font-button group inline-flex items-center gap-3 rounded-full bg-primary px-8 py-4 text-base text-primary-foreground transition-colors hover:bg-primary/90 [-webkit-text-stroke:0.6px_currentColor]"
           >
-            Open the pipeline
-            <span aria-hidden className="transition-transform group-hover:translate-x-0.5">
-              →
-            </span>
+            {authenticated ? t.landing.openPipeline : t.landing.logIn}
+            <span aria-hidden className="transition-transform group-hover:translate-x-0.5"></span>
           </Link>
         </div>
       </section>
 
-      <footer className="relative z-10 mt-16 mb-16 text-xs text-gray-700">
-        Running live on Mattermost · hybrid AI + human review
+      <footer className=" italic relative z-10 mt-8 mb-8 text-xs text-muted-foreground">
+        {t.landing.footerTagline}
       </footer>
     </main>
   );

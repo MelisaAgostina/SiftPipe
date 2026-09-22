@@ -1,0 +1,233 @@
+import json
+import os
+
+from blocks.llm import strip_json_fence
+from blocks.targets import MATTERMOST, result_path
+
+
+def _load_previous_analysis(path):
+    """Index a prior B8_dynamic.json by payload_id so a re-run can skip
+    payloads that were already classified, instead of re-spending tokens."""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    previous = {}
+    for entry in data.get("findings", []):
+        pid = entry.get("payload_id")
+        if pid is not None:
+            previous[pid] = entry
+    return previous
+
+
+def _is_llm_result_usable(entry, target, payload):
+    """A previous entry is reusable only if it's a real classification (not a
+    placeholder left behind by a failed/rate-limited ask_llm() call) AND it
+    actually classified the same target+payload this payload_id now points
+    to. payload_id is only positional within one run's own target list
+    (e.g. "1_1" = target #1, payload #1) — in restore mode the on-disk cache
+    from an older run survives (clear_results_folder() only runs on a fresh
+    reset), so the same id can land on a completely different field once the
+    crawl order or the human-approved target subset shifts between runs.
+    Without this check a stale entry for an unrelated page/field would get
+    silently reused under the new id, real bug found live 2026-09-06 against
+    NaViQ (payload_id "1_1" resolved to a run-#4 create-evaluation entry
+    instead of run #8's own navitools/history one)."""
+    if not entry:
+        return False
+    if entry.get("vulnerability") in ("API Error", "Error de Parseo JSON"):
+        return False
+    if entry.get("target") != target or entry.get("payload") != payload:
+        return False
+    return entry.get("result") in ("confirmed", "possible", "discarded")
+
+
+def analyze_results(pipeline_results, ask_llm, target_profile=None):
+    target_profile = target_profile or MATTERMOST
+    print("\nExecuting block B8: Intelligent analysis of dynamic results...")
+
+    # Load B7 results — handle both in-memory and file fallback
+    b7_results = pipeline_results.get("B7", {})
+
+    # Fall back to disk if B7 wasn't run this session or returned an error
+    if not b7_results or b7_results.get("status") == "error":
+        b7_path = result_path(target_profile.name, "B7_dynamic_attacks.json")
+        if os.path.exists(b7_path):
+            print(f"[B8] Cargando B7 desde disco: {b7_path}")
+            with open(b7_path, "r", encoding="utf-8") as f:
+                b7_results = json.load(f)
+        else:
+            print("[-] Error: could not find the dynamic output from B7.")
+            return pipeline_results
+
+    findings = b7_results.get("findings", [])
+    if not findings:
+        print("[-] B8: B7 no tiene findings. Verifica que B7 se ejecutó correctamente.")
+        pipeline_results["B8"] = {"status": "complete", "total_analyzed": 0, "findings": []}
+        return pipeline_results
+
+    b8_output_path = result_path(target_profile.name, "B8_dynamic.json")
+    previous = _load_previous_analysis(b8_output_path)
+
+    analyzed = []
+    reused = 0
+    skipped_no_anomaly = 0
+    skipped_inconclusive = 0
+    llm_calls = 0
+
+    for item in findings:
+        target       = item.get("endpoint") or item.get("target") or "unknown"
+        payload      = item.get("payload", "")
+        vuln         = item.get("vulnerability", "Unknown")
+        evidence     = item.get("evidence", "")
+        status       = item.get("status_code")
+        anomaly      = item.get("anomaly_detected", False)
+        inconclusive = item.get("inconclusive", False)
+        detects      = item.get("detections", [])
+        pid          = item.get("payload_id", "?")
+        shot         = item.get("screenshot_path", "")
+        video        = item.get("video_path", "")
+        cwe_id       = item.get("cwe_id")
+        owasp_cat    = item.get("owasp_category")
+
+        # ── Resume support: reuse a prior successful classification instead
+        # of spending tokens on it again ──
+        prev_entry = previous.get(pid)
+        if _is_llm_result_usable(prev_entry, target, payload):
+            analyzed.append(prev_entry)
+            reused += 1
+            print(f"[B8] [{pid}] {target} -> reused from previous run ({prev_entry.get('result', '?').upper()})")
+            continue
+
+        # ── B7 never got a real response to judge (goto()/expect_response()
+        # timeout, etc. — see blocks/dynamic_injector.py's `inconclusive`).
+        # Must not collapse into "discarded": that would report "no
+        # vulnerability" for a payload that was never actually tested — the
+        # exact shape of a real bug (2026-09-16) where a resource-starved
+        # run silently reported "0 anomalies" instead of "N attempts never
+        # reached the target" ──
+        if inconclusive:
+            llm_result = {
+                "payload_id": pid,
+                "target": target,
+                "payload": payload,
+                "result": "error",
+                "vulnerability": vuln,
+                "cwe_id": cwe_id,
+                "owasp_category": owasp_cat,
+                "confidence": "low",
+                "evidence": (
+                    f"B7 never obtained a response for this payload — not evidence "
+                    f"of a clean result, retest before trusting it: {item.get('error') or 'unknown error'}"
+                ),
+                "screenshot_path": shot,
+                "video_path": video,
+            }
+            analyzed.append(llm_result)
+            skipped_inconclusive += 1
+            print(f"[B8] [{pid}] {target} -> ERROR (B7 never reached target, no LLM call)")
+            continue
+
+        # ── Skip the LLM call entirely when B7's own heuristics found
+        # nothing worth judging — it would come back "discarded" anyway ──
+        if not anomaly:
+            llm_result = {
+                "payload_id": pid,
+                "target": target,
+                "payload": payload,
+                "result": "discarded",
+                "vulnerability": vuln,
+                "cwe_id": cwe_id,
+                "owasp_category": owasp_cat,
+                "confidence": "low",
+                "evidence": "No rule-based anomaly detected by B7; LLM call skipped.",
+                "screenshot_path": shot,
+                "video_path": video,
+            }
+            analyzed.append(llm_result)
+            skipped_no_anomaly += 1
+            print(f"[B8] [{pid}] {target} -> DISCARDED (no B7 anomaly, no LLM call)")
+            continue
+
+        prompt = f"""You are an expert DAST (Dynamic Application Security Testing) analyst.
+Evaluate the following exploitation attempt and classify it strictly.
+
+Target:              {target}
+Payload ID:          {pid}
+Tested Vulnerability:{vuln}
+Injected Payload:    {payload}
+HTTP Status Code:    {status}
+Rule-based detections:{detects}
+HTTP/HTML Response snippet:
+{evidence}
+Screenshot saved at: {shot}
+
+Classify the outcome as exactly one of: confirmed, possible, discarded.
+- confirmed: clear evidence the server was affected (error leakage, reflection, status 500, etc.)
+- possible: ambiguous response, might indicate vulnerability but not conclusive
+- discarded: response shows no indication of exploitation
+
+Return ONLY a valid JSON object, no markdown, no extra text:
+{{
+    "payload_id": "{pid}",
+    "target": "{target}",
+    "payload": "{payload}",
+    "result": "confirmed|possible|discarded",
+    "vulnerability": "{vuln}",
+    "confidence": "high|medium|low",
+    "evidence": "concise technical explanation"
+}}"""
+
+        try:
+            raw_response = ask_llm(prompt)
+            llm_calls += 1
+            # ask_llm in main.py already parses JSON and returns a dict
+            if isinstance(raw_response, str):
+                clean = strip_json_fence(raw_response.strip())
+                llm_result = json.loads(clean)
+            else:
+                llm_result = raw_response
+
+            # Ensure required keys exist
+            llm_result.setdefault("payload_id", pid)
+            llm_result.setdefault("target", target)
+            llm_result.setdefault("payload", payload)
+            llm_result.setdefault("vulnerability", vuln)
+            llm_result.setdefault("cwe_id", cwe_id)
+            llm_result.setdefault("owasp_category", owasp_cat)
+            llm_result.setdefault("result", "discarded")
+            llm_result.setdefault("confidence", "low")
+            llm_result.setdefault("evidence", "No evidence provided by LLM")
+            llm_result["screenshot_path"] = shot
+            llm_result["video_path"] = video
+
+            analyzed.append(llm_result)
+            print(f"[B8] [{pid}] {target} -> {llm_result.get('result', '?').upper()} ({llm_result.get('confidence', '?')})")
+
+        except Exception as e:
+            print(f"[-] Error parsing response for {target}: {e}")
+
+    # 4. Guardar en B8_dynamic_analysis.json
+    final_output = {
+        "status": "complete",
+        "total_analyzed": len(analyzed),
+        "findings": analyzed
+    }
+
+    os.makedirs("results", exist_ok=True)
+    with open(b8_output_path, "w", encoding="utf-8") as f:
+        json.dump(final_output, f, indent=4)
+
+    # 5. Integración en el diccionario central
+    pipeline_results["B8"] = final_output
+    print(
+        f"B8 finalized. LLM calls: {llm_calls} | reused from previous run: {reused} | "
+        f"skipped (no B7 anomaly): {skipped_no_anomaly} | "
+        f"skipped (B7 inconclusive): {skipped_inconclusive} | total: {len(analyzed)}"
+    )
+    print(f"Results saved to {b8_output_path}\n")
+
+    return pipeline_results

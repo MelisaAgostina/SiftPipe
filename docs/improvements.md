@@ -1,0 +1,134 @@
+## Objetivo 3 — Mattermost CVE validation
+
+The thesis's actual formal objectives (not previously in this doc): a quasi-experiment on Juice Shop/MultiJuicer with ~50 LSI students comparing manual/AI/hybrid detection (Objetivo 1, already run/handled separately — not pipeline work), the hybrid pipeline operating on Mattermost as the real-environment case study (Objetivo 2, done), and validating that the winning experimental approach replicates its advantage against Mattermost specifically **because Mattermost has documented CVEs** (Objetivo 3). Juice Shop's actual role in the thesis is the controlled experiment's known-ground-truth environment — not a SiftPipe pipeline target, which is a different use of it than earlier discussion in this doc assumed.
+
+Objetivo 3 is the direct, formally-required version of "prove substantive results" — more so than any third target below, which is supplementary the same way NaViQ was supplementary to the "generalizes" claim (neither is one of the three formal objectives).
+
+**The gap:** `.env` currently pins `MATTERMOST_IMAGE_TAG=11.7.0` — recent enough that there's nothing documented and confirmed-disclosed for the pipeline to catch there right now (11.7.1 exists as a security-fix release, but Mattermost embargoes CVE detail for 30 days, so it isn't citable yet).
+
+**The plan:** pin Mattermost to an older, specifically-vulnerable version for one deliberate validation run, separate from whatever version the general pipeline demo uses (same "known local disposable instance" methodology already used everywhere else in this project — just choosing the version on purpose instead of defaulting to latest).
+
+**Chosen candidate: [CVE-2023-7113](https://nvd.nist.gov/vuln/detail/CVE-2023-7113)** — Mattermost ≤8.1.6 fails to sanitize channel-mention data in posts, allowing markup injection (CWE-79, XSS). Fixed in 8.1.7, fully disclosed (2023-12-29), not embargoed. Best fit of the options found:
+- Core server, not plugin-dependent (unlike the SSRF-via-Agents-Plugin alternative below).
+- Exactly B7's existing XSS detection class (`XSS_reflected`, `_looks_like_xss_payload()`/`_looks_like_html_response()`) — no new pipeline capability needed, unlike the third-target work below.
+
+**Steps:**
+1. Pin `MATTERMOST_IMAGE_TAG=8.1.6` (or another ≤8.1.6 tag) for this one validation run.
+2. Find the exact injection field/syntax — not yet confirmed; needs either the [GitHub advisory](https://github.com/advisories/GHSA-h3gq-j7p9-x3p4)'s diff or live probing against the pinned instance (channel-mention data specifically, per the advisory text — likely a display-name or similar field rendered into `@mention` markup).
+3. Run B3→B9 against it, confirm B7 flags it and B9 correlates it as `CONFIRMED`.
+4. Switch back to 11.7.0 (or whatever version) for normal use afterward.
+
+**Alternates, if a different vulnerability class fits better:**
+- CSRF on the Calls widget — 11.0.x≤11.0.4, 10.12.x≤10.12.2, 10.11.x≤10.11.6 (CWE-352, closer to the current version line than 8.1.6).
+- System Manager access-control gap — 10.7.x≤10.7.0, 10.5.x≤10.5.3, 9.11.x≤9.11.12 (CWE-284, same category as the broken-access-control detector already built).
+- SSRF via the Agents Plugin ([CVE-2025-47700](https://vulert.com/vuln-db/go-github-com-mattermost-mattermost-server-238805)) — real and OWASP-relevant, but needs that plugin installed, which isn't part of the current minimal Docker setup.
+
+### Results (2026-08-25/26)
+
+Ran the plan above against two candidates by actually pinning `MATTERMOST_IMAGE_TAG` (and, where needed, `POSTGRES_IMAGE_TAG` for boot compatibility) in `mattermost/.env`, standing up the real vulnerable version via `docker compose`, reproducing live, then reverting to the normal `11.7.0`/`18-alpine` dev pins — same disposable-instance methodology `--mode fresh` already uses everywhere else in this project.
+
+**CVE-2023-7113 (XSS via channel mention data) — not reproduced.** Pinned `8.1.6` (+ Postgres `13-alpine`, required for that old a Mattermost build to boot at all against the project's default `18-alpine`). Created a channel whose *display name* was a markup payload (`<img src=x onerror=alert(document.domain)>`), then referenced it via `~channel` in a post. Server-side, the post's `props.channel_mentions` does embed that display name raw/unescaped, confirming the advisory's premise. But rendering it client-side — tested via Playwright both as the channel member who created it and as a separate account with no membership in that channel (to force the "unknown channel" fallback path) — came back safely HTML-escaped in both cases, no JS dialog fired. Source inspection (`webapp/channels/src/utils/text_formatting.tsx`, `replaceChannelMentionWithToken()`) shows an `escapeHtml(displayName)` call applied uniformly regardless of where the display name came from. Mattermost never publishes patch diffs for security fixes, so there's no way to confirm whether this call predates 8.1.7 (meaning the real fix targeted some other, unidentified surface — channel header text, search-result highlighting, and notifications were considered but not live-tested) or whether the pulled `8.1.6` tag doesn't reflect the exact historical binary. Reported here as a documented negative result: the advisory's literal reading didn't hold up under direct, two-context live testing.
+
+**CVE-2025-3611 (System Manager access-control gap) — root cause confirmed live.** This one has an actual public fix commit, `mattermost/mattermost@6f33b721de76`, unlike the XSS case. The bug: `server/public/model/role.go`'s `SysconsoleAncillaryPermissions` map — which auto-grants "ancillary" permissions alongside each System Console permission when a built-in role is seeded — incorrectly bundled `PermissionViewTeam` under `PermissionSysconsoleReadReportingTeamStatistics` (the "Reporting → Team Statistics" toggle), when `view_team` should only ever have come from `PermissionSysconsoleReadUserManagementTeams` (the actual "Teams" toggle). Net effect: an admin who explicitly sets Teams to "No access" but leaves Team Statistics reporting on doesn't actually revoke team-viewing rights, because they were never really tied to the Teams toggle. Pinned `10.7.0` (+ Postgres `16-alpine`) and queried the freshly-seeded, untouched `system_manager` role via `GET /api/v4/roles/name/system_manager` *before touching anything* — its shipped permission list does contain both `sysconsole_read_reporting_team_statistics` and `view_team` together, exactly matching the vulnerable mapping, directly on the live affected binary. The one thing not completed: driving the full exploit end-to-end (a restricted System Manager account actually pulling team data via direct API) needs Mattermost's Enterprise "Delegated Granular Administration" feature, which is license-gated — confirmed blocked both in the System Console UI (trial-license upsell page instead of the role editor) and via the API (`PUT /api/v4/users/{id}/roles` → `"Custom Permission Schemes not supported by current license"`). Getting a trial license was considered and skipped — it means sending real account info to Mattermost's external license server for a supplementary validation step, judged not worth it.
+
+**Screenshots/evidence:** [`objetivo3_evidence/`](objetivo3_evidence/) — `cve-2023-7113_member_view.png` and `cve-2023-7113_nonmember_view.png` (rendered, escaped mention link in both viewer contexts), `cve-2025-3611_license_gate.png` (the Enterprise upsell blocking the full exploit demo).
+
+**For the thesis:** CVE-2025-3611 is the stronger result — a real, disclosed, CVE-numbered vulnerability with its root cause pinpointed to one exact map entry in one exact commit, independently reproduced by direct inspection of the live server's own seeded role data on the affected version, not just by trusting the advisory's prose. CVE-2023-7113 stands as an honestly-reported negative: a plausible, advisory-consistent hypothesis, tested rigorously (two viewer contexts, server- and client-side, source-level confirmation of the sanitizing call), that didn't hold up — itself a fair methodological point about the limits of working from a terse public advisory without a private patch diff. Mattermost was reverted to `11.7.0`/`18-alpine` afterward; verified the original dev data (admin/seed accounts, dated well before this session) survived untouched throughout.
+
+### Closing the loop: does the pipeline itself catch CVE-2025-3611? (2026-08-26)
+
+The results above establish *ground truth* — that the vulnerability is real and locatable — but not the thesis's actual Objetivo 3 claim, which is about **el comportamiento del pipeline**: does SiftPipe's own reasoning, not manual investigation, replicate the detection. That gap is worth closing directly rather than assumed either way, especially since every pipeline run costs real API money and B4/B7 (dynamic testing) can't reach this specific bug at all — full exploitation needs Mattermost's licensed Enterprise role editor, already established above as unavailable. B3 (static analysis) was the only block with a real shot, since it only needs source code, not a running licensed instance.
+
+**Before spending anything, checked whether a normal B3 run could even reach the file.** It could not, for two independent reasons, both fixed:
+
+1. **`blocks/static_scanner.py`'s directory targeting was badly miscalibrated.** Replicated its exact file-selection logic against the real `mattermost-src` tree: of 2,057 candidate files, 2,012 (97.8%) came from `server/`, while `webapp/` — the entire React frontend, including `utils/text_formatting.tsx` where the CVE-2023-7113 escaping logic actually lives — contributed only 16 files, every one of them an accidental match on a folder named `store` (Redux boilerplate). Not one real component/action/util file was reachable. Meanwhile non-application tooling (`e2e-tests/`, top-level `api/` OpenAPI doc-generation, `tools/`, and `.github/actions/` CI scripts) was passing the filter and eating scan budget. Fixed `DEFAULT_EXCLUDE_DIRS`/`DEFAULT_RELEVANT_DIRS` in `static_scanner.py` and the matching `MATTERMOST` profile in `blocks/targets.py`, rebuilding the relevant-dirs list from directory names actually verified to exist in the repo rather than a generic starter list. Re-verified against the live tree afterward: 5,314 candidates, properly split 3,622 `webapp/` / 1,692 `server/`.
+2. **`main.py`'s `MAX_FILES = 10` cap.** Even fixed, `role.go` ranks #1,408 of 5,314 in scan order — a normal run still wouldn't reach it. Left this constant unchanged (out of scope for what was asked) but it's the reason a full run was never attempted for this test.
+3. **The prompt itself was widened**, per request, within the same 4 existing OWASP categories (no new categories added) — each of A05/A01/A02/A07 gained several concrete sub-patterns. A01 in particular now explicitly names the exact bug class CVE-2025-3611 is: a permission incorrectly bundled into an unrelated config/data structure, not just a missing route decorator.
+
+**The actual test, kept to one paid API call.** Fetched Mattermost's real `v10.7.0` tag into an isolated git worktree (sparse-checked-out to just `server/public/model/`, avoiding Windows path-length errors elsewhere in the tree) — confirmed the vulnerable pattern was present (`PermissionViewTeam` still listed under `PermissionSysconsoleReadReportingTeamStatistics` at line 112, exactly as in the pre-fix commit). Ran B3's real `get_analysis_prompt()`/`ask_llm()` — same `claude-haiku-4-5` model, same prompt, same post-filter the real pipeline uses — against that one file only, so the test cost exactly one call.
+
+**Result: B3 did not catch it.** The raw response was an empty array. This wasn't a truncation artifact — both halves of the duplication (the legitimate entry at line 74, the buggy duplicate at line 112) are well inside the 15,000-character window the file gets truncated to, confirmed by checking their line numbers directly. The model had the actual bug fully in view, with a prompt that explicitly describes this exact pattern, and still returned nothing. Most likely explanation: B3's finding schema (`"line": N, "evidence": "exact snippet"`) is built for single-location defects. This bug isn't at one line — it's a relationship between two map entries 37 lines apart, which requires holding two locations in mind and comparing them, a different and harder task than spotting something locally obvious. `claude-haiku-4-5` (chosen for B3 specifically for cost, not reasoning depth) most likely isn't reasoning that far unprompted, regardless of category-level guidance.
+
+Cleaned up fully afterward: worktree removed, fetched tags deleted, `mattermost-src/mattermost` verified back at its original commit with a clean working tree.
+
+**Evidence:** [`objetivo3_evidence/b3_scoped_scan_role_go.json`](objetivo3_evidence/b3_scoped_scan_role_go.json) — raw LLM response, prompt length, and content length sent, sufficient to cite directly.
+
+**For the thesis:** this is the actual Objetivo 3 result for this CVE, not a substitute for it — the pipeline's own static-analysis reasoning, tested directly and fairly against the confirmed root cause with every setup obstacle removed, did not independently detect it. That's a concrete, well-isolated boundary of what B3 as currently built can catch (cross-location config-consistency bugs), established for the cost of one API call instead of guessing or skipping the test. Directly usable as an honest limitations finding: SiftPipe's hybrid approach still needed the human-driven investigation (this session's manual root-cause work) to establish what a pure static pass on a small, cheap model missed.
+
+---
+
+
+
+### TC_Grupo9 (your own NestJS/Prisma/Postgres project)
+
+**Confirmed findings so far:** `sp_update_perfil_usuario` references a nonexistent table (`usuarios` vs `auth.usuario`) — near-certain real `500`, though B7 will mislabel it `SQLi`. The `ordenCol` gap turned out *not* to be SQLi (static `CASE` branches in the procedure, not dynamic SQL) — just a silently-unsorted-results bug, low severity. The recovered `pg_dump` itself (real bcrypt hashes + names/emails under `/docs`) is a plausible B3 hardcoded-credentials finding if that path is in scan scope.
+
+**To stand it up:**
+- New `TargetProfile` (`blocks/targets.py`): `source_dir="apps/server/src"`, `source_extensions=(".ts",)`, exclude `node_modules`/`dist`/`test`.
+- Restore the DB from the recovered `pg_dump` (needs a local Postgres instance) — schema, all 43 procedure bodies, and seed data come back in one shot.
+- No test credentials documented anywhere — need to register one via the real signup flow, or seed one directly from the restored DB.
+- **Open decision that changes real testable surface:** target `apps/server` alone (JSON API — XSS untestable, B7's own content-type guard correctly won't flag a JSON echo), or `apps/server` + `apps/client` (React 19/Vite — modern SPA, lower crawl risk than Juice Shop's older Angular routing, reopens real XSS as testable).
+- No fresh-reset story built yet (Mattermost/NaViQ each have one) — would need one for a repeatable "restore to known state" run.
+
+### lutto_website (PHP/CodeIgniter4)
+
+**Confirmed finding:** `consultas/leido`/`consultas/noleido` GET routes have zero auth filter while every sibling admin route in the same file (`Routes.php`) has `authAdmin` — verified against the real `AuthFilter` class too. This is a direct, high-confidence hit for the GET-link action-probe detector already built (SESSION 13) — built specifically because of this bug.
+
+**To stand it up:**
+- New `TargetProfile`: `source_dir="app"` (Controllers/Models/Views), `source_extensions=(".php",)`, exclude `vendor`/`system` (framework code, not first-party).
+- DB restore is trivial — `db_lezcanoairaldi_m.sql` is already sitting in the repo, a straightforward MySQL import.
+- Test credentials already known and working: `admin`/`123456`, `cliente`/`123456` (`USUARIOS-TEST.txt`).
+- Login form field selectors not yet verified live (haven't opened the actual login view template) — small, same-shape task as NaViQ's Phase 0.
+- No client/API scope ambiguity — single monolithic server-rendered app.
+- Unexplored surface: `ventas_controller.php`/`carrito_controller.php` (sales/cart) not yet reviewed, possible additional findings. `vendor/` is tracked in git despite being gitignored — unchecked whether it holds a stale/vulnerable dependency version (OWASP A03).
+
+### Where this leaves it
+
+lutto_website is lower-effort (test creds in hand, DB import is a one-liner, no client/API ambiguity) and higher-certainty (one confirmed, high-confidence finding that a just-built detector directly targets). TC_Grupo9 is the harder target precisely because it's more competently built — a genuine "we tried and it mostly held up" result, which is also valid evidence, just a different kind. Both remain real options; the actual pick is still open.
+
+---
+
+## Full-lifecycle review
+
+Not a change, not a fix — a findings-only pass over SiftPipe's own codebase (not the targets it scans), covering logic, implementation, efficiency, modularity, tests, QA tooling, and security, the way an outside evaluator (thesis committee, real user) would look at it. Three parallel research passes over the actual code, cross-checked against real line numbers and file contents, not guessed.
+
+### Logic, implementation & modularity (2026-08-26)
+
+- The real pipeline chain is **B3→B4→B5→B6→B7→B8→B9** — B5 is payload generation (not relevance ranking, which is a separate, narrower concern inside it), and B8 is a distinct LLM-classification pass over B7's findings, separate from B9's correlation step. Worth keeping straight since it's easy to undercount the pipeline as having fewer stages than it does.
+- **B3's own logic doesn't live where every other block's does.** `blocks/static_scanner.py` only holds the file-listing and prompt-building; the actual scan loop, LLM calls, and result-filtering all sit inline in `main.py`'s `run_static_analysis`. B4 through B9 each live entirely inside their own `blocks/*.py` module — B3 is the one exception.
+- **`ask_llm()` and `CLAUDE_MODEL` are defined twice, independently.** `main.py` and `blocks/generate_payloads.py` each carry their own near-identical copy — same `client.messages.create(...)` shape, same ```` ```json ```` stripping, same `temperature=0.0`. `blocks/analyze_results.py` repeats the strip-and-parse line a third time as a defensive fallback. A model-version bump means remembering to update it in more than one place.
+- **Two independently-maintained OWASP tables.** `blocks/static_scanner.py`'s `OWASP_SCOPE` (drives B3's prompt) and `blocks/taxonomy.py`'s `OWASP_TOP10_2025` (drives B9's correlation) aren't the same object — both files' own comments already acknowledge this ("keep this in sync with...") rather than one importing from the other.
+- **Same pattern for the Mattermost scan-scope defaults** — `blocks/static_scanner.py`'s `DEFAULT_EXTENSIONS`/`DEFAULT_EXCLUDE_DIRS`/`DEFAULT_RELEVANT_DIRS` are meant to mirror `blocks/targets.py`'s `MATTERMOST` profile values exactly, maintained by hand in two places rather than one being derived from the other (this is the pair that got recalibrated together earlier today for the directory-targeting fix — still two copies, just now two *correct* copies).
+- **`pipeline_results` is threaded-global mutable state.** Defined at module scope in `main.py`, mutated directly by every block function, and shared into `api.py`'s two background `threading.Thread`s with no locking. Low real risk given the GIL and the `pipeline_state["running"]` guards, but it is unsynchronized shared state crossing a module boundary.
+- **`api.py` importing from `main.py` pulls in unrelated side effects.** `main.py` constructs the `Anthropic` client and calls `load_dotenv()` at import time — so importing `api.py` (which pulls `client`/`ask_llm`/block-runners straight from `main`) triggers all of that regardless of what `api.py` itself needs at that moment. `main.py` reads as an orchestrator script that `api.py` happens to piggyback on for definitions, not a clean library module.
+- **Dead code:** `blocks/dynamic_analysis.py`'s module-level `run_dynamic_discovery()` duplicates — without any of the target-scoping — what `main.py`'s own `run_dynamic_discovery` actually does and is the one the real pipeline calls. Leftover from before target-awareness existed.
+- **`main.py` and `api.py` duplicate orchestration instead of sharing it.** B6 (human review) is implemented twice in incompatible styles: `blocks/human_review.py`'s blocking console `input()` path, and `api.py`'s `/api/validate` endpoint reimplementing the same "read B5 payloads, filter to approved indices, write validated_payloads.json" contract inline (the code even comments that it's "the same contract as the console path," but shares zero code with it). The `run_history` start/finish + try/except bookending, and the fresh-reset target-dispatch branching, are each written out fully a second time in `api.py` rather than called once from a shared place.
+
+### Efficiency (2026-08-26)
+
+- **B3's per-file LLM calls are fully sequential** — no concurrency, no batching. Bounded today by `MAX_FILES = 10`, but the code's own comment already flags that cap as a dev-time-only constraint meant to be relaxed later, at which point serial calls would start to matter.
+- **A flat `time.sleep(15)` runs after every B3 run**, unconditionally, regardless of whether a re-run is actually imminent or whether anything was even found.
+- **B7 spins up a fresh browser context sequentially for every payload and every auth-probe.** Playwright supports multiple concurrent contexts inside one browser instance — a real parallelization opportunity, though it would need care around the shared findings/evidence-file bookkeeping.
+- **B9's `find_match` is O(dynamic findings × static findings)** and recomputes `infer_taxonomy()` on each static finding fresh on every inner-loop pass instead of once up front. Trivial in practice while B3 stays capped at 10 files, but an easy, real fix (`[(b3, infer_taxonomy(b3)) for b3 in b3_findings]` computed once, outside the loop).
+- **B7 re-scans the same response body multiple times** — separate `any(k in body for k in ...)` passes for SQLi markers, command-injection markers, and misconfiguration markers that could be combined into one pass over the same lowercased string.
+
+### Tests & QA tooling (2026-08-26)
+
+- **Backend has real unit coverage**: 16 test files, 3,026 lines, essentially every module in `blocks/` has a name-matched test file (heavy Playwright/subprocess/HTTP mocking). But `main.py` — the actual pipeline orchestrator — has no dedicated test file of its own, only incidentally touched by one target-awareness test. `api.py` (533 lines) has one test file that calls route handlers directly rather than through a real HTTP client/`TestClient`, so it's unclear how much of the actual FastAPI wiring (dependency injection, validation, error responses) is really exercised.
+- **Zero integration/e2e tests anywhere** — everything is unit-level, against fakes and mocks. Nothing spins up the app end-to-end or runs against a live/staged target as part of the test suite itself.
+- **Zero CI.** No `.github/workflows` or equivalent — the test suite exists but nothing runs it automatically on push/PR.
+- **Zero Python lint/format/type-check config** — no `ruff`, `flake8`, `mypy`, or `pre-commit`, and `requirements.txt` doesn't declare any dev-tooling dependencies at all (not even `pytest`).
+- **The frontend has no test coverage whatsoever.** No `test` script in `ui/package.json`, no test framework installed (no Jest, Vitest, React Testing Library, Playwright component tests), zero `*.test.tsx`/`*.spec.tsx` files across all 77 files / 6,989 lines of `ui/src`. ESLint and Prettier exist, but that's linting and formatting, not testing.
+
+### Security — SiftPipe's own code (2026-08-26)
+
+Distinct from the vulnerabilities SiftPipe is built to find in *other* codebases — this is about `api.py`/`ui/` themselves.
+
+- **Every GET endpoint on the API is unauthenticated, even when an API key is configured.** `require_api_key()` only gates the mutating endpoints (`/api/target`, `/api/environment/reset`, `/api/run`, `/api/validate`, `/api/reset`) — `/api/status`, `/api/logs`, `/api/results`, `/api/runs`, `/api/runs/{id}`, and `/api/runs/{id}/report` have no auth check at all. Pipeline logs, scan results, and generated PDF reports are readable by anyone who can reach the API, protected only by the demo box being an unlisted URL.
+- **`GET /api/results/{block_name}` builds a filesystem path directly from the path parameter** with no whitelist/enum validation — unlike `SetTargetRequest.name`, which validates through `get_target()`'s closed-set lookup. FastAPI's default routing blocks a literal `/` in a path segment, which limits classic `../../` traversal, but the value still isn't checked against a known set of block names the way the equivalent target-selection input is.
+- **`ACTIVE_TARGET` is a shared mutable global**, set via a separate endpoint from `/api/run` itself — a race between a concurrent target-switch and an in-flight run is possible in principle, partially mitigated by the 409 returned while a run is already active.
+  - **Future implementation, for the AWS jury deployment specifically:** the plan is a real session-cookie login gate, not the current API-key-in-the-JS-bundle pattern — Starlette's `SessionMiddleware` (already ships with FastAPI, no new dependency), a `POST /api/login` checking a shared passphrase against a `SIFTPIPE_ADMIN_PASSWORD` env var and setting `request.session["authenticated"] = True`, and a dependency checking that flag applied globally to every route (fixing the GET-endpoint gap above by construction, not by remembering to add it per-route). The secret then never touches client-side JS — the browser only holds an opaque httpOnly cookie, unlike today's `X-API-Key` header which is extractable from view-source. Deliberately not full user accounts/JWT/roles — one shared passphrase is proportionate for a single-audience-tier demo box with a defined teardown date, while still being something defensible if a committee member asks how the deployment was secured, which matters more here than usual given the thesis's own subject is OWASP vulnerability detection (A07 Authentication Failures included).
+
+### Live QA pass
+
+Not yet run — the plan calls for actually starting Mattermost/`api.py`/the UI dev server and clicking through real flows (target picker, Fresh Reset, Past Runs against the existing `siftpipe_history.db`, empty/error states) rather than reading code. To be appended here once that pass actually happens.

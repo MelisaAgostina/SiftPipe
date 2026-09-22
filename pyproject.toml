@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 120
+exclude = [
+    "mattermost-src",
+    "naviq-src",
+    "venv",
+    ".venv",
+]
+
+[tool.ruff.lint]
+# Start conservative: real bugs (F) and import hygiene (E), not style opinions.
+# Widen this over time (e.g. add "I" for import sorting, "UP" for pyupgrade)
+# once the existing codebase is clean against this baseline.
+select = ["E", "F"]
+ignore = [
+    "E501",  # line-length is handled by the line-length setting above, not as a hard error
+]
