@@ -270,7 +270,7 @@ def evidence_dir(target_name: str, run_id) -> str:
     results/ wholesale on every Fresh Reset, which would destroy every past
     run's evidence files in one shot if they lived there — the same reason
     run_history.py's SQLite db already lives outside results/ (see
-    readme.md's "Decisiones técnicas"). Namespacing by run_id (not just
+    docs/readme-old.md's "Decisiones técnicas"). Namespacing by run_id (not just
     target) is what actually stops one run's screenshots/videos from
     overwriting another's — the run_blocks JSON snapshot was already
     immune to this, only the binary evidence files weren't.

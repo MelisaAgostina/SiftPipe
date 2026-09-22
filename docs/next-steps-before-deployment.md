@@ -635,12 +635,106 @@ pass further down exercises it directly instead of a stand-in.*
         `.ruff_cache/`, and stray screenshots; added `.playwright-mcp/` to
         `.gitignore`.
 
+- [X] **GitHub-native security scanning (CodeQL + Dependabot) enabled and
+      triaged (2026-09-10).** Turned on GitHub's built-in static analysis as
+      a second, independent check alongside SiftPipe's own dynamic
+      pipeline — worth being explicit for a committee that CodeQL/Dependabot
+      are pattern-matching static analyzers (known-bad code shapes,
+      known-CVE dependency versions), a genuinely different technique from
+      SiftPipe's own dynamic payload generation and live attack execution,
+      not a redundant version of it.
+      - *Setup:* CodeQL via Advanced setup (custom workflow, not the
+        default one-click config); Dependabot vulnerability + malware
+        alerts on. Dependabot's automatic version-update PRs deliberately
+        left **off** — this repo is close to a thesis defense and an
+        unattended dependency bump landing mid-review is the wrong kind of
+        surprise; secret scanning + push protection were already on by
+        default and confirmed enabled, no action needed.
+      - *Real bug in GitHub's own generated workflow, caught before it could
+        bite:* the CodeQL Advanced-setup wizard scaffolds
+        `.github/workflows/codeql.yml` with `branches: ["dev-beta"]`
+        hardcoded on both the `push` and `pull_request` triggers. Left as
+        generated, this scans would have kept working right up until
+        `dev-beta` merged into `dev`/`main` — then silently stopped, since
+        neither trigger matches any other branch name. Fixed to drop the
+        branch filter entirely, matching `ci.yml`'s existing
+        no-branch-filter convention (commit `c539f6d`).
+      - *Triage of the resulting alerts (17 total: 9 CodeQL, 8
+        Dependabot) — one real fix, several false positives, and a
+        reachability call on the rest:*
+        - **Real, fixed:** `GET /api/results/{block_name}`
+          (`get_block_result` in `api.py`) built a file path directly from
+          the unvalidated URL segment — `RESULTS_DIR /
+          f"{ACTIVE_TARGET.name}_{block_name}.json"` — with no containment
+          check, unlike the neighboring `/media` and `/evidence` routes,
+          which both already resolve through `_safe_file_path`. Verified
+          exploitable before fixing it, not just trusting the alert label:
+          `block_name = "/../../secret"` builds the string
+          `"<target>_/../../secret.json"`, which splits on `/` into
+          `["<target>_", "..", "..", "secret.json"]` — the two `..`
+          segments walk back out past `results/` into the process's cwd.
+          Confirmed by resolving the constructed path directly (landed at
+          the repo root) before writing a test. Fixed by routing the same
+          filename through `_safe_file_path`, exactly like `/media` and
+          `/evidence` already do — no new sanitizer, just closing the one
+          route that was missing the existing one. Regression test calls
+          `get_block_result()` directly rather than through `TestClient`,
+          since an HTTP request's `../` segments get normalized away by the
+          URL parser before ever reaching the route handler — the same
+          reason `test_media_routes.py`'s own traversal tests do the same
+          thing.
+        - **False positive — `auth.py:43`, "weak cryptographic hash."**
+          `verify_password()` hashes both sides with SHA-256 purely to
+          normalize them to fixed-length digests before
+          `hmac.compare_digest` — a timing-side-channel closer for the
+          password check, not password storage. CodeQL's query
+          pattern-matches "sha256 near a password-shaped variable" and
+          can't distinguish the two uses. No change made.
+        - **False positive — 4 of the 6 "uncontrolled data used in path
+          expression" alerts in `api.py`.** Two point inside
+          `_safe_file_path` itself (the sanitizer function), two point at
+          the `/media`/`/evidence` routes that call it. CodeQL doesn't
+          recognize a hand-rolled sanitizer as a sanitizer, so it keeps
+          treating the value as tainted after the containment check that
+          already guards it. The remaining two of the six were the real
+          `get_block_result` bug above.
+        - **Fixed, low-severity — `ci.yml` "workflow does not contain
+          permissions" (x2).** Neither the `backend` nor `frontend` job
+          does anything needing write access — checkout, install, lint,
+          test, build. Added a top-level `permissions: contents: read`,
+          scoping the default `GITHUB_TOKEN` down to what `actions/checkout`
+          actually needs, so a compromised or misbehaving step/action in
+          the workflow can't use an over-broad token to push, comment, or
+          modify the repo.
+        - **Reachability call, left unbumped — all 8 Dependabot alerts**
+          (`sharp`/libheif, `nanoid`, `js-yaml`, `undici` x4, all in
+          `ui/package-lock.json`). None are direct dependencies; traced
+          each with `npm ls <pkg> --all` rather than assuming from the
+          alert alone. All four resolve to dev/build/test tooling, never
+          the production request path: `sharp` and 3 of the 4 `undici`
+          alerts come in through `miniflare` (Cloudflare Workers' local dev
+          simulator, pulled in by `@cloudflare/vite-plugin` and `nitro`);
+          the 4th `undici` alert comes through `jsdom`, used only as
+          `vitest`'s fetch shim during test runs; `nanoid` comes through
+          `postcss` (CSS build step); `js-yaml` comes through `eslint`'s
+          config resolution and TanStack Start's build tooling. Every one
+          of these CVEs needs attacker-controlled input reaching the
+          vulnerable code at runtime to matter, and none of these four
+          packages ever see real request traffic — they only run during
+          `vite dev`/`vite build`/`vitest`, processing input the developer
+          controls. Bumping any of them would mean touching
+          `@cloudflare/vite-plugin`/`nitro` (a deeper, riskier change) for
+          close to zero real risk reduction, so left as-is rather than
+          rushed right before the defense. Worth revisiting post-defense
+          with more room to verify a toolchain bump doesn't break the
+          build.
+
 ### The highest-leverage item
 
 *Code and feature work above should be stable before this — containerizing
 mid-feature-churn just means rebuilding the image repeatedly for no reason.*
 
-- [ ] **Containerize SiftPipe itself.** No Dockerfile exists for the project
+- [X] **Containerize SiftPipe itself.** No Dockerfile exists for the project
       today — only Mattermost's own submodule Dockerfiles. A Dockerfile for
       `api.py` (Python + Playwright/Chromium deps baked in) plus a
       `docker-compose.yml` that also brings up Mattermost turns AWS setup
@@ -653,15 +747,23 @@ mid-feature-churn just means rebuilding the image repeatedly for no reason.*
 
 ### AWS deployment ease
 
-- [ ] Docker (see "highest-leverage item" above).
-- [ ] **Caddy instead of nginx + certbot** — automatic HTTPS with a ~5-line
+- [X] Docker (see "highest-leverage item" above).
+- [X] **Caddy instead of nginx + certbot** — automatic HTTPS with a ~5-line
       Caddyfile, meaningfully less manual TLS setup for a short-lived demo
-      box.
+      box. **Built** in containerization plan 5 (`docker/caddy/Dockerfile`,
+      `docker/caddy/Caddyfile`) — non-root, automatic cert issuance keyed
+      off `SITE_ADDRESS`, cert state persisting across restarts via
+      `caddy_data`/`caddy_config` bind mounts. Verified locally (cold
+      `deploy.sh up` in ~47s); real Let's Encrypt issuance against a public
+      hostname is still unverified until the AWS test day below.
 - [ ] A cloud-init/user-data script (or a minimal Terraform file) so EC2
       provisioning is one launch instead of a manual checklist —
       reproducibility matters more here since the plan is spin-up → demo →
-      tear down, not maintain forever.
-- [ ] **Deploy script: connect to the server, pull the latest code, and
+      tear down, not maintain forever. Still genuinely open — Docker
+      itself and the git clone/submodule/naviq-copy steps are still a
+      manual launch-time checklist (see "AWS deployment steps" below), not
+      baked into the instance at boot.
+- [X] **Deploy script: connect to the server, pull the latest code, and
       restart the service.** Once the box exists (Docker above), updating it
       needs some repeatable way to get new code from git onto the running
       server and restart the container(s) — not a new problem, just one
@@ -712,105 +814,196 @@ mid-feature-churn just means rebuilding the image repeatedly for no reason.*
         matters for a defense-day demo: nothing about the live server
         changes unless someone chooses that exact moment for it to.
 
+      **Built**: `.github/workflows/deploy.yml` (manual `workflow_dispatch`,
+      `main`-only, OIDC — no AWS key stored in GitHub, an optional typed
+      `RESET` input to also wipe run history), `scripts/ssm-deploy.sh`,
+      `docs/github-deploy-setup.md`. Written but **never run against real
+      AWS** — that first real run is the AWS test day in "AWS deployment
+      steps" below, not a separate later step.
+
+- [X] The `chown -R 10001:10001`/UID-mismatch problem this line used to
+      flag for `naviq-src/naviq/` (and every other bind-mounted host
+      folder) is resolved, not just noted — `docker-compose.yml`'s
+      `init-permissions` service does exactly this automatically on every
+      `deploy.sh up`, for every bind mount, not by hand on the server. See
+      the "highest-leverage item" section above.
+
 ### Testing / QA
 
 *Do this against the containerized build above, not the bare-venv setup —
 otherwise you're validating a deployment path you're about to replace.*
 
-- [ ] **Add at least one real end-to-end smoke test.** Everything today is
-      unit-level, against fakes and mocks — nothing spins up the app and
-      runs it end-to-end as part of the test suite. Wire it into the CI
-      workflow from the Architecture section so it's not a one-off; build it
-      before the manual pass below so an automated net exists first.
-- [ ] **Live QA pass** — not yet run. Actually start Mattermost/`api.py`/the
-      UI dev server and click through real flows (target picker, Fresh
-      Reset, Past Runs against the existing `siftpipe_history.db`,
-      empty/error states) rather than reading code.
+- [X] **Add at least one real end-to-end smoke test.** New `docker-smoke`
+      job in `ci.yml`, on every push/PR: `deploy.sh config` (catches
+      compose-interpolation errors like the empty-`NAVIQ_PASSWORD` bug for
+      free), builds all 4 images, `deploy.sh up`, polls `siftpipe-api` and
+      `naviq` for a real Docker `healthy` status, hits `/api/health`, dumps
+      logs on failure, always tears down.
+      - *The real NaViQ problem:* `naviq-src/` is gitignored (private,
+        no redistribution rights) — never present on a GitHub-hosted
+        runner. New `test-fixtures/naviq-stub/` is a minimal, throwaway
+        Django project (not NaViQ's real code) that satisfies
+        `entrypoint.sh`'s exact contract — `naviq_ai.settings`, the 7 named
+        `seed_*` commands, `allauth.account.models.EmailAddress`, a 200 at
+        `GET /` — so the *real* `naviq` Dockerfile/entrypoint/healthcheck
+        path gets exercised in CI, just against fake data instead of real
+        NaViQ. See its `README.md` for exactly what this does and doesn't
+        verify — it proves container plumbing, not NaViQ's actual behavior.
+      - *`.env.example` / `mattermost/.env.example` added* — no template
+        existed before; CI copies them as-is (placeholders, never called
+        for real) and they double as onboarding docs.
+      - *`deploy.sh` gained `config`/`ps`/`exec` passthroughs* (explicit
+        whitelist, not a catch-all, so a typo still hits the usage error)
+        and `logs` no longer hardcodes `-f` — it used to follow forever,
+        which would have hung the CI failure-log step indefinitely; pass
+        `-f` yourself for the old behavior.
+      - *Live-verified before merging, not just written*: the stub's exact
+        `entrypoint.sh` sequence run standalone (venv, migrate, all 7 seed
+        commands, the allauth user-creation snippet, `GET /` → 200), then
+        the real `naviq` Dockerfile built and run against it — caught a
+        real bug this way: `ALLOWED_HOSTS` needed `"localhost"` too (the
+        Dockerfile's own `HEALTHCHECK` curls `localhost:8001`), not just
+        `"naviq"` (what other containers use) — same bug *class* already
+        recorded above against real NaViQ. Then the full compose stack
+        (all 6 services) in a WSL scratch copy, never the real repo/.env:
+        `siftpipe-api` and `naviq` both reached `healthy`, `/api/health`
+        returned 200, clean teardown. Also caught (fixed before the WSL
+        run): `actions/checkout` skips git submodules by default, and
+        `mattermost-src/mattermost` is one (`.gitmodules`) — without
+        `submodules: true`, `siftpipe-api`'s `COPY mattermost-src/
+        ./mattermost-src/` would've silently copied an empty directory in
+        CI, the same *class* of build-context bug already found live.
+- [ ] **Live QA pass — two-phase plan (decided 2026-09-22, neither phase
+      run yet).** Splits a free/local phase from a paid/AWS phase, so the
+      paid phase only happens once the app itself is already known to
+      work — not spending real time and money finding an app-level bug on
+      a live box. See the "AWS deployment steps" section below for why
+      Phase 2 has to be on real AWS at all, not just this project's own
+      local Docker.
+      - **Phase 1 (local, zero AWS, zero cost beyond a possible real
+        pipeline run).** `deploy.sh up` against the real repo's
+        `.env`/`naviq-src`/Mattermost data — not a scratch copy like the CI
+        smoke test's, since this phase specifically needs real
+        `siftpipe_history.db`/Past Runs data — plus the frontend via
+        `npm run dev` (not containerized; nothing in `docker-compose.yml`
+        serves it, Caddy only reverse-proxies to `siftpipe-api`). Click
+        through target picker, Fresh Reset, Past Runs, empty/error states.
+        Catches every app-level bug for free: Docker behaves identically on
+        any Linux host, so this doesn't need AWS to be meaningful, and the
+        CI smoke test above already proved the containers themselves boot
+        healthy — this phase is about the app's actual behavior, not
+        plumbing.
+      - **Phase 2** — see "AWS deployment steps" below; it's now one
+        combined plan with that section rather than a separate line item,
+        since the two are sequenced together.
 
 ### AWS deployment steps (infra, not code — from `AWS_HOSTING_TODO.md` §2)
 
-*Only once the containerized build has passed the QA pass above — this is
-real time and (small) money, so validate locally first.*
+*Only once Phase 1 of the Live QA pass above has passed — this is real time
+and money, so validate the app locally first.*
 
+**Decision (2026-09-22): two AWS passes, not one — a disposable ~1-day test
+deploy first, then delete it and redeploy for real mid–end of October.**
+Spending the money this costs is pre-authorized by the project owner.
+Reasoning:
+
+- *What Phase 1 (local QA) structurally cannot catch, no matter how
+  thorough:* real HTTPS certificate issuance (`SITE_ADDRESS=localhost`
+  locally means Caddy never actually talks to Let's Encrypt); the
+  cross-origin login-cookie behavior between Cloudflare Pages and the EC2
+  backend flagged as a real, specific gap in the Security section above
+  (`localhost:5173` ↔ `localhost:8000` is same-site despite the different
+  ports — genuinely different domains are the only way to exercise
+  `SameSite=None`+`Secure` actually working, not just being configured);
+  EC2 instance sizing under real load; and the GitHub Actions deploy
+  workflow itself (`deploy.yml`/`scripts/ssm-deploy.sh`, written but never
+  run against real AWS).
+- *Why not deploy once, for real, in October, and skip the test day:* that
+  makes the first time any of the above gets exercised the same moment as
+  the actual handoff — no runway left to fix a surprise. A dedicated test
+  day weeks earlier finds the same bugs with real time to fix them instead
+  of none.
+- *Why tear it down after ~1 day instead of leaving it running:* smallest
+  possible cost and attack-surface window while nothing is actively being
+  tested; nothing about this project needs a live box before the actual
+  defense.
+- *Durable vs. disposable, so nothing gets built twice:* the account-level
+  setup below (Secrets Manager, the budget alert, the IAM/OIDC role
+  `deploy.yml` already references via `AWS_DEPLOY_ROLE_ARN`/`AWS_REGION`)
+  costs nothing to leave in place and isn't rebuilt for the October
+  deploy — only the EC2 instance itself, and whatever run data/state it
+  accumulates, gets deleted after the test day. The October deploy then
+  reruns an already-proven recipe against that same durable scaffolding,
+  instead of being a first attempt.
+- *Fold Cloudflare Pages (see its own line below) into the test day
+  itself, rather than testing the backend alone* — a temporary Pages build
+  pointed at the temporary EC2 backend is the only way to actually
+  exercise the cross-origin cookie path above; a backend-only test day
+  would still miss it entirely.
+- *Why the "one-time server setup" below is now so much shorter than it
+  used to be:* every host-level dependency that old checklist walked
+  through by hand — NaViQ's Python 3.10 + the `uv`/`setuptools` override,
+  SiftPipe's own venv, Playwright/Chromium, nginx, certbot — is now baked
+  into the container images themselves (`docker/naviq/Dockerfile` is
+  `FROM python:3.10-slim` and runs the exact `uv pip install --override`
+  recipe in its own `entrypoint.sh`; `docker/siftpipe-api/Dockerfile` is
+  `FROM mcr.microsoft.com/playwright/python`; Caddy replaced nginx+certbot
+  in containerization plan 5). None of that setup happens on the EC2 host
+  directly anymore, on either the test day or the real deploy — this is
+  the "highest-leverage item" above actually paying off for AWS setup
+  specifically, not just local dev.
+
+**Durable setup (build once, keep across both AWS passes):**
+
+- [ ] Merge `feat/containerize-siftpipe` to `main` — `deploy.yml` only
+      deploys `main`.
 - [ ] **Secrets via AWS Secrets Manager/SSM** instead of a hand-edited
       `.env` on the box.
-
 - [ ] Set an AWS Budget alert ($10 / $25 / $50).
+- [ ] The IAM/OIDC role `deploy.yml` assumes (`AWS_DEPLOY_ROLE_ARN`,
+      `AWS_REGION` — referenced already, not yet created).
+
+**Disposable test day (Phase 2 of the Live QA pass — launch, verify, then
+delete):**
+
 - [ ] Launch EC2 (t3.medium, Ubuntu 24.04, security group closed except
-      80/443) + allocate an Elastic IP.
-- [ ] **One-time server setup**, in this specific order — env vars have to
-      exist before anything below reads them, and Mattermost (fully
-      automated, no private code to place by hand) is worth getting green
-      before layering NaViQ's extra manual steps on top:
-      1. Install Docker, Python (whatever `python3` defaults to on Ubuntu
-         24.04 is fine for SiftPipe's own venv below — no version pin in
-         `requirements.txt`), nginx, certbot. **Also install Python 3.10
-         specifically** (Ubuntu 24.04's default `python3` is 3.12, and
-         NaViQ's stack requires 3.10 exactly — Django 5.2.16 on it, per
-         `naviq-src/naviq/CLAUDE.md`) — not in Ubuntu 24.04's default repos
-         anymore, needs the deadsnakes PPA: `sudo add-apt-repository
-         ppa:deadsnakes/ppa && sudo apt install python3.10 python3.10-venv`.
-      2. `git clone` the repo, then `git submodule update --init --depth 1`
-         (otherwise `mattermost-src/mattermost` comes down empty and B3
-         silently scans zero files against Mattermost).
-      3. Write `.env` (repo root) and `mattermost/.env` with real values.
-         `.env` needs: `ANTHROPIC_API_KEY`, `MM_ADMIN_EMAIL`/
-         `MM_ADMIN_PASS` (Mattermost's bootstrap admin, created
-         automatically via API on first fresh-reset — see step 5),
-         `NAVIQ_USERNAME`/`NAVIQ_PASSWORD` (read by step 6 below), and
-         `PLAYWRIGHT_HEADLESS=true` specifically — Playwright can't open a
-         window on a server with no display, so this one isn't optional
-         here the way it is for local dev.
-      4. SiftPipe's own environment: `python3 -m venv venv && source
-         venv/bin/activate && pip install -r requirements.txt &&
-         playwright install --with-deps chromium`.
-      5. **Mattermost**: `python main.py --mode fresh --target mattermost`
-         (from SiftPipe's own venv). Fully automated — starts the Docker
-         Compose stack, waits for it to boot, creates the System Admin
-         account via API using `MM_ADMIN_EMAIL`/`MM_ADMIN_PASS` from step
-         3. Confirm this succeeds before moving on to NaViQ below; it's
-         the simpler of the two targets and a good checkpoint.
-      6. **NaViQ** — not covered by `git clone` at all, since `naviq-src/`
-         is gitignored (private third-party source, no redistribution
-         rights), and needs real manual setup, unlike Mattermost above:
-         - Copy your own authorized `naviq-src/naviq` folder onto the
-           server by hand (`scp`/`rsync`), never `git clone`.
-         - Inside it, create NaViQ's *own* venv using **Python 3.10
-           specifically** (from step 1, not the system default):
-           `python3.10 -m venv .venv310 && source
-           .venv310/bin/activate`.
-         - Install its dependencies. **Plain `pip install -r
-           requirements.txt` is known to fail here** — this is the exact
-           command that hit `resolution-too-deep` during this project's
-           own NaViQ version upgrade: the vendored `requirements.txt`
-           pins `setuptools==58.1.0`, but `paypal-server-sdk` (via
-           `apimatic-core`) needs `>=68.0.0` — an unsatisfiable pin,
-           unrelated to this server, so it'll fail identically here.
-           Fixed locally with `uv` and a one-line override file (not by
-           hand-editing the vendored `requirements.txt`); the original
-           override file wasn't saved, so **this exact recipe hasn't been
-           re-verified live** — confirm it works before relying on it for
-           the actual deploy:
-           ```
-           pip install uv
-           echo "setuptools>=68.0.0" > overrides.txt
-           uv pip install -r requirements.txt --override overrides.txt
-           ```
-         - Run `python main.py --mode fresh --target naviq` once (from
-           SiftPipe's own venv, not NaViQ's) to migrate + seed NaViQ's DB
-           and create its test account. This is the step that depends on
-           the 2026-09-06 fix to `blocks/environment.py`'s
-           `NAVIQ_VENV_PYTHON` — without it, this fails with "file not
-           found" on this Ubuntu box, since it used to assume a Windows
-           venv layout.
-- [ ] TLS: pick a domain or use the free AWS hostname, run certbot, confirm
-      nginx proxies to the API.
-- [ ] `systemd` unit for the API; confirm Mattermost's `unless-stopped`
-      restart policy.
-- [ ] Deploy frontend to Cloudflare Pages with `VITE_API_BASE` set.
-- [ ] Go-live check: `/api/health`, one full B3→B9 dry run, then send the
-      link.
-- [ ] Afterward: stop or terminate everything.
+      80/443) + an Elastic IP or just the free AWS public DNS hostname
+      (real Let's Encrypt works against either — no domain purchase needed
+      just for this test).
+- [ ] One-time setup, now genuinely one-time and short: install Docker,
+      `git clone` + `git submodule update --init --depth 1` (otherwise
+      `mattermost-src/mattermost` comes down empty and B3 silently scans
+      zero files against Mattermost), copy your own authorized
+      `naviq-src/naviq` folder onto the box by hand (`scp`/`rsync`, never
+      `git clone` — private third-party source, no redistribution rights,
+      the one manual step containerization can't remove), write `.env`
+      (repo root) and `mattermost/.env` — from Secrets Manager if that's
+      ready in time, by hand otherwise as a fallback — then
+      `NAVIQ_SRC_PATH=/path/to/naviq-src/naviq ./deploy.sh up`. TLS,
+      restarts (`unless-stopped`), and both targets' migrate/seed all
+      happen automatically inside the containers — no systemd unit, no
+      certbot, no separate Mattermost/NaViQ bootstrap commands to run by
+      hand.
+- [ ] Deploy a *temporary* Cloudflare Pages build with `VITE_API_BASE`
+      pointed at this box, specifically to exercise the cross-origin
+      cookie path (see reasoning above) — not the final Pages deploy.
+- [ ] Go-live check: `/api/health`, one real B3→B9 dry run (flag the
+      Anthropic spend before triggering it — roughly 12–15¢ per the last
+      estimate, but flag it regardless of size), and confirm login
+      actually survives a real Cloudflare Pages ↔ EC2 round trip, not
+      just that the API accepts the request.
+- [ ] Fix whatever the go-live check finds, with real runway before the
+      deadline — this is the entire point of doing this early.
+- [ ] Tear down: terminate the EC2 instance, release its Elastic IP,
+      remove the temporary Cloudflare Pages deploy. Leave the durable
+      setup above in place, untouched.
+
+**Final deploy (mid–end of October — a rerun, not a first attempt):**
+
+- [ ] Repeat the disposable-test-day steps above against the same durable
+      scaffolding, this time for keeps: launch EC2, one-time setup,
+      deploy the *real* Cloudflare Pages frontend, go-live check, send the
+      link. No teardown afterward — this is the live box for the defense.
 
 ### Optional / supplementary (not required by the thesis's formal objectives)
 

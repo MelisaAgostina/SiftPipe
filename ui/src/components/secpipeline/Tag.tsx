@@ -8,6 +8,7 @@ export const TONE_BG_STYLES: Record<BadgeTone, string> = {
   input: "bg-[var(--status-form)] text-[var(--status-form-fg)]",
   confirmada: "bg-[var(--status-confirmada)] text-[var(--status-confirmada-fg)]",
   descartada: "bg-[var(--status-descartada)] text-[var(--status-descartada-fg)]",
+  error: "bg-[var(--status-error)] text-[var(--status-error-fg)]",
 };
 
 // The bare accent color (no paired foreground) - for accenting content that
@@ -19,6 +20,7 @@ export const TONE_ACCENT_TEXT: Record<BadgeTone, string> = {
   input: "text-[var(--status-form)]",
   confirmada: "text-[var(--status-confirmada)]",
   descartada: "text-[var(--status-descartada)]",
+  error: "text-[var(--status-error)]",
 };
 export const TONE_ACCENT_BG: Record<BadgeTone, string> = {
   posible: "bg-[var(--status-posible)]",
@@ -26,6 +28,7 @@ export const TONE_ACCENT_BG: Record<BadgeTone, string> = {
   input: "bg-[var(--status-form)]",
   confirmada: "bg-[var(--status-confirmada)]",
   descartada: "bg-[var(--status-descartada)]",
+  error: "bg-[var(--status-error)]",
 };
 
 export function Tag({ tone, label }: { tone: BadgeTone; label: string }) {

@@ -1,0 +1,15 @@
+.git
+venv
+ui/node_modules
+naviq-src
+.env
+results
+evidence
+siftpipe_history.db
+db_backups
+logs
+mattermost/volumes
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache

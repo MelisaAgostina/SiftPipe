@@ -89,6 +89,43 @@ class TestLoginRoute(_AuthTestCase):
         self.assertEqual(res.status_code, 200)
 
 
+class TestSessionCookieSecurityMatchesOrigin(unittest.TestCase):
+    """FRONTEND_ORIGIN being set at all used to force Secure+SameSite=None on
+    the session cookie unconditionally - correct for the real deployment
+    (Cloudflare Pages <-> HTTPS EC2 host) but wrong for same-LAN HTTP testing
+    (e.g. a phone on the same WiFi hitting http://<lan-ip>:5173): browsers
+    drop Secure cookies entirely over plain HTTP, so login would return 200
+    with no usable session. The cookie's security should follow the actual
+    scheme of FRONTEND_ORIGIN, not just whether it's set at all."""
+
+    def setUp(self):
+        env = dict(REQUIRED_ENV)
+        env["FRONTEND_ORIGIN"] = "http://10.10.141.71:5173"
+        self._env_patch = patch.dict(os.environ, env)
+        self._env_patch.start()
+
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        os.chdir(self._tmp.name)
+
+        sys.modules.pop("api", None)
+        import api
+
+        self.api = api
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+        self._env_patch.stop()
+
+    def test_http_frontend_origin_does_not_force_a_secure_cookie(self):
+        with TestClient(self.api.app) as client:
+            res = client.post("/api/login", json={"password": "correct-horse"})
+        set_cookie = res.headers.get("set-cookie", "").lower()
+        self.assertNotIn("secure", set_cookie)
+        self.assertIn("samesite=lax", set_cookie)
+
+
 class TestSessionRoute(_AuthTestCase):
     def test_reports_not_authenticated_before_login(self):
         with TestClient(self.api.app) as client:

@@ -19,6 +19,7 @@ import type {
 } from "@/lib/types";
 import type { Strings } from "@/lib/strings";
 import { mediaUrl } from "@/lib/api";
+import { CLASSIFICATION_DISPLAY_LABELS } from "@/lib/classification";
 
 // AI-generated vulnerability strings are usually "Category - Specific Name"
 // (e.g. "Broken Access Control - Insecure Direct Object Reference (IDOR)").
@@ -107,7 +108,13 @@ export function mapB5Group(g: B5PayloadGroup, idx: number, t: Strings): UIFindin
 
 export function mapB8Finding(f: B8Finding, t: Strings): UIFinding {
   const tone =
-    f.result === "confirmed" ? "confirmada" : f.result === "possible" ? "posible" : "descartada";
+    f.result === "confirmed"
+      ? "confirmada"
+      : f.result === "possible"
+        ? "posible"
+        : f.result === "error"
+          ? "error"
+          : "descartada";
   const { category: readableCategory, title } = splitVulnerability(f.vulnerability);
   return {
     tone,
@@ -143,7 +150,7 @@ export function mapB9Entry(e: B9Entry): UIFinding {
 
   return {
     tone,
-    bannerLabel: e.classification,
+    bannerLabel: CLASSIFICATION_DISPLAY_LABELS[e.classification],
     category: categoryLine(readableCategory, e.owasp_category, e.cwe_id),
     title,
     location,

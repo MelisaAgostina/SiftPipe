@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from blocks import pipeline
+from blocks import pipeline, static_scanner
 from blocks.targets import MATTERMOST, NAVIQ
 
 
@@ -152,6 +152,43 @@ class TestNotFoundPlaceholderIsFiltered(unittest.TestCase):
         findings = pipeline.pipeline_results["B3"]["findings"]
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["vulnerability"], "Injection")
+
+
+class TestScanBudgetGoesToTheMostPromisingFiles(unittest.TestCase):
+    """
+    With a one-file budget (MAX_FILES patched down), the single LLM call must go to the file with
+    real logic, not to a boilerplate admin.py that only matches a path keyword. Real gap found
+    live 2026-09-19: NaViQ's 10-file scan spent 9 slots on admin.py/manage.py/apps.py-style files.
+    """
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        os.chdir(self._tmp.name)
+        pipeline.pipeline_results.clear()
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _write(self, relative_path, text):
+        path = Path(NAVIQ.source_dir) / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_the_single_scan_slot_goes_to_the_view_not_the_admin_registration(self):
+        padding = "\n".join(f"value_{i} = {i}" for i in range(30))
+        self._write("blog/admin.py", "from django.contrib import admin\nadmin.site.register(Post)\n" + padding)
+        self._write("users/views.py", "MARKER_VIEW\n@login_required\ndef profile(request):\n    return request.GET['next']\n" + padding)
+
+        prompts = []
+        with patch.object(static_scanner, "MAX_FILES", 1), \
+             patch.object(pipeline, "ask_llm", side_effect=lambda prompt: prompts.append(prompt) or []):
+            pipeline.run_static_analysis(pipeline.pipeline_results, NAVIQ)
+
+        self.assertEqual(pipeline.pipeline_results["B3"]["total_scanned"], 1)
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("MARKER_VIEW", prompts[0])
 
 
 if __name__ == "__main__":

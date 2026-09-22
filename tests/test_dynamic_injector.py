@@ -106,12 +106,13 @@ class FakePage:
     this dict, matching every existing caller that never redirects.
     """
 
-    def __init__(self, responses, goto_statuses=None, goto_final_urls=None):
+    def __init__(self, responses, goto_statuses=None, goto_final_urls=None, goto_errors=None):
         self._responses = responses
         self._call_idx = 0
         self.keyboard = FakeKeyboard()
         self._goto_statuses = goto_statuses or {}
         self._goto_final_urls = goto_final_urls or {}
+        self._goto_errors = goto_errors or {}
         self.url = ""
 
     def _next_response(self):
@@ -125,6 +126,8 @@ class FakePage:
         return FakeExpectResponse(self, predicate, timeout)
 
     def goto(self, url, wait_until=None, timeout=None):
+        if url in self._goto_errors:
+            raise di.PlaywrightTimeoutError(self._goto_errors[url])
         status = self._goto_statuses.get(url)
         self.url = self._goto_final_urls.get(url, url)
         return FakeGotoResponse(status) if status is not None else None
@@ -244,8 +247,8 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         os.chdir(self._cwd)
         self._tmp.cleanup()
 
-    def _run(self, responses, goto_statuses=None, goto_final_urls=None):
-        page = FakePage(responses, goto_statuses, goto_final_urls)
+    def _run(self, responses, goto_statuses=None, goto_final_urls=None, goto_errors=None):
+        page = FakePage(responses, goto_statuses, goto_final_urls, goto_errors)
 
         def fake_sync_playwright():
             return FakeSyncPlaywright(page)
@@ -486,6 +489,32 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         self.assertIsNone(first["status_code"])
         self.assertFalse(first["anomaly_detected"])
         self.assertIn("No matching same-origin POST", first["error"])
+
+    def test_navigation_timeout_is_marked_inconclusive_not_clean(self):
+        """
+        Real bug found live 2026-09-16 (run id 1 in siftpipe_history.db,
+        against Mattermost on a resource-constrained network): page.goto()
+        itself timed out before the page ever loaded, for every one of 5
+        sequential payload attempts against the same field. The resulting
+        screenshots showed Mattermost's own loading skeleton, not the page
+        under test - evidence of "never tested", not "tested and clean".
+        Before this fix, status_code=None + error set produced the exact
+        same anomaly_detected=False shape as a payload that really was
+        submitted and found nothing wrong, so a whole field going untested
+        was invisible downstream (B8 silently discarded it as "no B7
+        anomaly"). `inconclusive` makes that distinction explicit.
+        """
+        result = self._run(
+            [],  # goto() raises before expect_response() is ever reached
+            goto_errors={"http://localhost:8065/town-square": "Timeout 15000ms exceeded."},
+        )
+
+        self.assertEqual(len(result["findings"]), 2)  # both payloads on the one non-skipped field
+        for finding in result["findings"]:
+            self.assertIsNone(finding["status_code"])
+            self.assertFalse(finding["anomaly_detected"])
+            self.assertTrue(finding.get("inconclusive"))
+            self.assertIn("Timeout", finding["error"])
 
     def test_unauthenticated_success_is_flagged_as_broken_access_control(self):
         """

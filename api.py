@@ -65,13 +65,18 @@ app.add_middleware(
 # sent at all once frontend/backend split across genuinely different
 # registrable domains (Cloudflare Pages <-> an EC2 host) — same signal
 # FRONTEND_ORIGIN already uses elsewhere in this file for "are we deployed",
-# reused here rather than inventing a second one. Secure=True requires
-# HTTPS, which is only true once actually deployed — hence also conditional.
+# reused here rather than inventing a second one. Gated on scheme, not just
+# "is FRONTEND_ORIGIN set", because that used to force Secure+SameSite=None
+# unconditionally — right for the real HTTPS deployment, but wrong for
+# same-LAN HTTP testing (e.g. a phone on the same WiFi hitting
+# http://<lan-ip>:5173): browsers silently drop Secure cookies entirely over
+# plain HTTP, so login would return 200 with no usable session.
+_frontend_is_https = any(o.startswith("https://") for o in _extra_origins)
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("SIFTPIPE_SESSION_SECRET", ""),
-    same_site="none" if _extra_origins else "lax",
-    https_only=bool(_extra_origins),
+    same_site="none" if _frontend_is_https else "lax",
+    https_only=_frontend_is_https,
 )
 
 
@@ -774,8 +779,8 @@ def get_results():
 def get_block_result(block_name: str):
     """Devuelve el resultado de un bloque específico del target activo. Ej:
     /api/results/B3_static -> results/{ACTIVE_TARGET.name}_B3_static.json"""
-    file = RESULTS_DIR / f"{ACTIVE_TARGET.name}_{block_name}.json"
-    if not file.exists():
+    file = _safe_file_path(RESULTS_DIR, f"{ACTIVE_TARGET.name}_{block_name}.json")
+    if file is None:
         raise HTTPException(status_code=404, detail=f"{block_name} has no results yet")
     with open(file) as f:
         return json.load(f)

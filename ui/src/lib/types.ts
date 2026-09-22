@@ -133,7 +133,12 @@ export type B8Finding = {
   payload_id: string;
   target: string;
   payload: string;
-  result: "confirmed" | "possible" | "discarded";
+  // "error": B7 never obtained a real response for this payload (e.g. a
+  // navigation timeout) — distinct from "discarded", which means it WAS
+  // tested and found clean. See blocks/analyze_results.py's `inconclusive`
+  // handling (real bug found live 2026-09-16: a resource-starved run made
+  // "never reached the target" look identical to "0 vulnerabilities").
+  result: "confirmed" | "possible" | "discarded" | "error";
   vulnerability: string;
   cwe_id?: string | null;
   owasp_category?: string | null;
@@ -223,7 +228,7 @@ export type ResetResponse = { message: string };
 export type ResultsBulk = Record<string, unknown | null>;
 
 // ── shared UI-level types, used by Section/FindingRow/Tag ──────────────────
-export type BadgeTone = "posible" | "form" | "input" | "confirmada" | "descartada";
+export type BadgeTone = "posible" | "form" | "input" | "confirmada" | "descartada" | "error";
 export type UIFinding = {
   tone: BadgeTone;
   // Single word/tag for the banner - the same value the old small Tag badge

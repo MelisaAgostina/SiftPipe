@@ -119,6 +119,10 @@
   --status-confirmada-fg: oklch(0.2 0.05 155);
   --status-descartada: oklch(0.72 0.16 25);
   --status-descartada-fg: oklch(0.25 0.08 25);
+  /* Neutral gray, not a red/amber/green security verdict on purpose —
+     "error" means B7 never got a real result to judge, not "ruled out". */
+  --status-error: oklch(0.6 0.01 250);
+  --status-error-fg: oklch(0.97 0.005 250);
   --status-callout: oklch(0.88 0.06 80);
   --status-callout-fg: oklch(0.28 0.05 60);
   --chart-1: oklch(0.646 0.222 41.116);
@@ -149,6 +153,40 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
+  }
+
+  /* Native scrollbars default to the OS light theme regardless of the
+     page's own colors — Firefox via `scrollbar-color`, Chromium/WebKit via
+     the ::-webkit-scrollbar pseudo-elements below. Track is transparent so
+     it always matches whatever surface it's scrolling over instead of
+     fighting --card/--background across the app's different panels. */
+  html {
+    scrollbar-color: var(--color-muted-foreground) transparent;
+    scrollbar-width: thin;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-muted-foreground);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-foreground);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
 }
 
