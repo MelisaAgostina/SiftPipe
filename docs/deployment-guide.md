@@ -27,7 +27,7 @@ done for good — skip straight to Part B next time (October).
 
 ### A1. Budget alert (2 minutes, do this first)
 
-- [ ] Done
+- [X] Done
 
 Console → **Billing and Cost Management → Budgets → Create budget** →
 Monthly cost budget, no fixed limit needed beyond the top alert threshold.
@@ -47,7 +47,7 @@ Console → **IAM → Identity providers → Add provider** → OpenID Connect:
 - Provider URL: `https://token.actions.githubusercontent.com`
 - Audience: `sts.amazonaws.com`
 
-- [ ] Done — provider ARN: `arn:aws:iam::___________:oidc-provider/token.actions.githubusercontent.com`
+- [X] Done — provider ARN: arn:aws:iam::731872836427:oidc-provider/token.actions.githubusercontent.com
 
 ### A3. Secrets in SSM Parameter Store
 
@@ -68,25 +68,37 @@ KMS key (`alias/aws/ssm`). Only the genuinely secret keys; non-secret ones
 (`MM_URL`, `MM_TEAM`, etc.) just go straight into `.env` as plain text,
 same as local dev.
 
-- [ ] Parameters created under `/siftpipe/`
+- [X] Parameters created under `/siftpipe/`
 
-`.env` on the box then needs exactly one line —
-`SIFTPIPE_SSM_PATH=/siftpipe/` — plus the non-secret keys. This satisfies
-`deploy.sh`'s `preflight()` file-existence check and `docker-compose.yml`'s
-`env_file:` mount; the real secret values never land in that file at all.
+`.env` on the box then needs three lines beyond the non-secret keys:
+`SIFTPIPE_SSM_PATH=/siftpipe/`, **`AWS_REGION=us-east-1`**, and
+**`AWS_DEFAULT_REGION=us-east-1`** — `boto3` doesn't auto-detect region
+inside the container, and the installed version only honored
+`AWS_DEFAULT_REGION`, not `AWS_REGION` alone (found the hard way: it kept
+failing with `NoRegionError` with only `AWS_REGION` set - add both, no
+harm in the redundancy). This satisfies `deploy.sh`'s `preflight()`
+file-existence check and `docker-compose.yml`'s `env_file:` mount; the
+real secret values never land in that file at all.
 
-**`mattermost/.env` secrets are the one real gap** — Compose reads that
-file directly at `docker compose up` time, before any container (let alone
-`aws_secrets.py`'s Python) runs, so the in-process trick above can't reach
-it. `scripts/fetch-mattermost-secrets.sh` (new, mirrors the same
-one-parameter-per-key convention) patches it in place, right before
-`deploy.sh up`, called automatically from `ssm-deploy.sh`. Create:
+**Also add `NAVIQ_PASSWORD` directly here** (same value as its
+`/siftpipe/NAVIQ_PASSWORD` SSM parameter) — unlike the other 5 secrets,
+`docker-compose.yml`'s `naviq` service reads it via `${NAVIQ_PASSWORD}`
+Compose-file interpolation, resolved from `.env`'s file contents at
+`docker compose up` time, *before* any container - let alone
+`load_aws_secrets()` inside `siftpipe-api` - ever runs. The in-process SSM
+fetch structurally can't reach a different service's Compose-level
+variable, so this one has to land in the file itself, same as
+`mattermost/.env`'s `POSTGRES_PASSWORD`.
+
+**`mattermost/.env` secrets are the one real gap** — Compose reads that file directly at `docker compose up` time, before any container (let alone `aws_secrets.py`'s Python) runs, so the in-process trick above can't reach it. `scripts/fetch-mattermost-secrets.sh` (new, mirrors the same one-parameter-per-key convention) patches it in place, right before `deploy.sh up`, called automatically from `ssm-deploy.sh`.
+
+Create:
 
 `/siftpipe/mattermost/POSTGRES_PASSWORD` — SecureString, default KMS key.
 (`DOMAIN` isn't secret — set it directly when copying `.env.example` →
 `.env` in B3, no Parameter Store entry needed.)
 
-- [ ] Parameter created under `/siftpipe/mattermost/`
+- [X] Parameter created under `/siftpipe/mattermost/`
 
 Both scripts are no-ops unless their path variable is set, so a local run
 is untouched either way — same shape `SIFTPIPE_SSM_PATH` already uses.
@@ -212,14 +224,36 @@ script only prints the last 60 lines and never echoes `.env` values.
 
 ### B3. One-time OS-level bootstrap
 
-SSM in (no SSH key needed): `aws ssm start-session --target <INSTANCE_ID>`.
+Connect via SSM (no SSH key needed) — Console → EC2 → select the instance
+→ **Connect → Session Manager → Connect**, or
+`aws ssm start-session --target <INSTANCE_ID>` from your own machine.
+
+SSM drops you in as a default `ssm-user`. Install Docker and add `ubuntu`
+to the `docker` group first, from here (works via `sudo` regardless of
+which user runs it):
 
 ```bash
-# Docker + Compose plugin
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker ubuntu
+```
 
+**Then switch to `ubuntu`** — this needs to be a *fresh* login (not just
+mid-session) for the group membership just granted to actually take
+effect, which is exactly what `sudo su -` does. `ssm-deploy.sh` (the
+automated redeploy path) always runs as `ubuntu` and expects the repo at
+`/home/ubuntu/siftpipe`, so everything from here on happens as that user
+too, for consistency:
+
+```bash
+sudo su - ubuntu   # confirm with: whoami (ubuntu), pwd (/home/ubuntu)
+docker ps           # should work with no permission error - confirms the group membership is active
+```
+
+Everything below runs as `ubuntu`:
+
+```bash
 # AWS CLI v2 (Ubuntu's apt package is the outdated v1 - fetch-mattermost-secrets.sh needs v2)
+sudo apt-get update && sudo apt-get install -y unzip  # not preinstalled on the base Ubuntu Server image
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
 unzip awscliv2.zip && sudo ./aws/install
 
@@ -228,16 +262,26 @@ git clone <your-repo-url> ~/siftpipe && cd ~/siftpipe
 git submodule update --init --depth 1
 ```
 
-Then, from your own machine (not the box — `naviq-src/` is gitignored,
-private, never `git clone`d):
+**Getting `naviq-src/naviq` onto the box** (gitignored, private, never
+`git clone`d) — B1 launched this instance with no key pair, so `scp`/SSH
+isn't an option at all, and it never will be unless a key pair gets added
+later. Use S3 as a one-time relay instead, entirely through the Console,
+never touching port 22:
 
-```bash
-scp -r naviq-src/naviq ubuntu@<instance-ip-or-hostname>:~/siftpipe/naviq-src/naviq
-```
-
-(If SSH is closed per B1, do this over SSM's port-forwarding, or
-temporarily open 22 from your own IP only, copy, then close it again —
-your call at the time; don't leave 22 open unattended either way.)
+1. On your machine: zip `naviq-src/naviq`, upload the zip to any S3
+   bucket (Console → S3 → your bucket → **Upload**).
+2. Select the uploaded object → **Actions → Share with a presigned URL**
+   → pick a short expiry (e.g. 1 hour) → copy the URL.
+3. On the box (inside the SSM session):
+   ```bash
+   curl -o naviq-src.zip "<presigned-url>"
+   mkdir -p ~/siftpipe/naviq-src
+   unzip naviq-src.zip -d ~/siftpipe/naviq-src/naviq
+   rm naviq-src.zip
+   ```
+4. Back in the Console: select the S3 object → **Delete** — it's private
+   third-party source with no redistribution rights, don't leave a copy
+   sitting in S3 after this.
 
 Back on the box, write the two `.env` files (real secrets stay out of
 both — see A3):
@@ -246,11 +290,13 @@ both — see A3):
 cd ~/siftpipe
 # .env: SIFTPIPE_SSM_PATH=/siftpipe/ plus the non-secret keys from .env.example
 nano .env
-
-# mattermost/.env: copy the template, real secret gets patched in below
+AWS_REGION=us-east-1
+AWS_DEFAULT_REGION=us-east-1
+NAVIQ_PASSWORD=<same value as the SSM parameter>
+# mattermost/.env: copy the template as-is - DOMAIN and everything else
+# in it stays at the template default, Mattermost is never exposed to the
+# internet directly (only siftpipe-api, via Caddy, is), so it doesn't matter
 cp mattermost/.env.example mattermost/.env
-nano mattermost/.env   # at least set DOMAIN (not secret, no Parameter Store entry)
-
 ./scripts/fetch-mattermost-secrets.sh   # patches POSTGRES_PASSWORD into mattermost/.env from A3 (path defaults to /siftpipe/mattermost/)
 ```
 
@@ -265,6 +311,9 @@ existing either way.
 
 ```bash
 SITE_ADDRESS=<ec2-public-dns-hostname> ./deploy.sh up
+```
+```bash
+curl -sk https://localhost/api/health
 ```
 
 Caddy issues the Let's Encrypt certificate automatically against that
