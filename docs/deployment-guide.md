@@ -288,14 +288,45 @@ both — see A3):
 
 ```bash
 cd ~/siftpipe
-# .env: SIFTPIPE_SSM_PATH=/siftpipe/ plus the non-secret keys from .env.example
 nano .env
+```
+
+Paste in the non-secret keys from `.env.example` (`MM_ADMIN_EMAIL`,
+`MM_URL=http://mattermost:8065`, `MM_TEAM`, `MM_USERNAME`, `MM_CHANNEL`,
+`MM_SEED_USERNAME`, `NAVIQ_URL=http://naviq:8001`, `NAVIQ_USERNAME`), plus
+these lines — **all of these vary per-deployment, re-check every time**,
+not just the first:
+
+```
+SIFTPIPE_SSM_PATH=/siftpipe/
 AWS_REGION=us-east-1
 AWS_DEFAULT_REGION=us-east-1
-NAVIQ_PASSWORD=<same value as the SSM parameter>
-# mattermost/.env: copy the template as-is - DOMAIN and everything else
-# in it stays at the template default, Mattermost is never exposed to the
-# internet directly (only siftpipe-api, via Caddy, is), so it doesn't matter
+NAVIQ_PASSWORD=<same value as the /siftpipe/NAVIQ_PASSWORD SSM parameter>
+FRONTEND_ORIGIN=<the frontend's actual current URL, e.g. https://main-siftpipe.<account>.workers.dev>
+SITE_ADDRESS=<this instance's public DNS hostname, e.g. ec2-XX-XX-XX-XX.compute-1.amazonaws.com>
+```
+
+`AWS_REGION`/`AWS_DEFAULT_REGION` stay `us-east-1` as long as everything
+else does too. `NAVIQ_PASSWORD` only changes if the SSM parameter's value
+ever does. `FRONTEND_ORIGIN` and `SITE_ADDRESS` change **every single
+deployment** — the test day's Cloudflare URL and EC2 hostname are both
+temporary, and October's real ones will be different again.
+`FRONTEND_ORIGIN` is what switches the session cookie to
+`SameSite=None`+`Secure` and enables CORS for that exact origin, so a
+stale value here silently breaks cross-origin login rather than erroring
+loudly. **Put `SITE_ADDRESS` in `.env` itself, not a shell prefix on
+`./deploy.sh up`** — `docker-compose.yml` reads it the same way it reads
+`NAVIQ_PASSWORD`, straight from this file, so it's not something that can
+be silently lost by forgetting to repeat a shell prefix on a later
+`down`/`up` cycle (found the hard way: Caddy quietly fell back to serving
+its `localhost` self-signed cert instead of the real one, once a later
+restart didn't repeat it).
+
+Then `mattermost/.env` (`DOMAIN` and everything else in it stays at the
+template default — Mattermost is never exposed to the internet directly,
+only `siftpipe-api`, via Caddy, is — so it doesn't matter):
+
+```bash
 cp mattermost/.env.example mattermost/.env
 ./scripts/fetch-mattermost-secrets.sh   # patches POSTGRES_PASSWORD into mattermost/.env from A3 (path defaults to /siftpipe/mattermost/)
 ```
@@ -309,10 +340,10 @@ existing either way.
 
 ### B4. Bring it up
 
+`SITE_ADDRESS` is already in `.env` from B3 above, so just:
+
 ```bash
-SITE_ADDRESS=<ec2-public-dns-hostname> ./deploy.sh up
-```
-```bash
+./deploy.sh up
 curl -sk https://localhost/api/health
 ```
 
