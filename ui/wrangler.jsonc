@@ -1,7 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tanstack-start-app",
+  "name": "siftpipe",
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
-  "main": "src/server.ts",
+  // Points at the already-built, fully-resolved output ("npm run build" -
+  // this project's vite-tanstack-config skips the Nitro deploy plugin, so
+  // it's dist/, not the generic .output/ path TanStack Start's own docs
+  // show) - not src/server.ts directly. Wrangler's own esbuild pass can't
+  // resolve TanStack Start's Vite-plugin-only virtual imports
+  // (#tanstack-router-entry etc.), which only Vite's build already did.
+  "main": "dist/server/server.js",
+  "assets": {
+    "directory": "dist/client"
+  },
 }
