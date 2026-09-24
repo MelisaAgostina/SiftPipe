@@ -64,7 +64,22 @@ class TestApiRoutes(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_health(self):
-        self.assertEqual(api.health(), {"status": "ok"})
+        self.assertEqual(
+            api.health(),
+            {"status": "ok", "pipeline_running": False, "pipeline_waiting": False},
+        )
+
+    def test_health_reports_an_active_run(self):
+        """scripts/ssm-deploy.sh's pre-deploy guard reads this field to
+        refuse deploying over a run that's actually in progress."""
+        api.pipeline_state["running"] = True
+        self.assertEqual(api.health()["pipeline_running"], True)
+
+    def test_health_reports_a_run_waiting_for_human_review(self):
+        # Paused for B6 still occupies the pipeline - not "idle" just because
+        # nothing is actively executing at this exact moment.
+        api.pipeline_state["waiting_for_human"] = True
+        self.assertEqual(api.health()["pipeline_waiting"], True)
 
     def test_reset_clears_state(self):
         api.pipeline_state["error"] = "boom"

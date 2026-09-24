@@ -6,22 +6,26 @@
 An LLM-driven pipeline for automated web application security assessment.
 </div>
 
+<div align="center">
+Visit: https://siftpipe.com
+</div>
+
 ---
 
 ## Pipeline main blocks
 
-| Block | Purpose 
+| Block | Purpose
 |---|---|
-| `Environment prep`   | Docker fresh reset (Mattermost) or dev-server bring-up (NaViQ), per-target seeding 
-| `Static Analysis`   | LLM-based source review per target, OWASP/CWE tagging 
-| `Dynamic Discovery`   | Playwright same-origin BFS crawl, form/input extraction 
-| `Payload Generation`  | LLM-generated attack payloads from the static analysis + the dynamic discovery output 
-| `Human Review`   | Validates/filters payloads before the next block runs them 
-| `Attack Execution `   | Runs validated payloads against real forms, captures responses/screenshots/video 
+| `Environment prep`   | Docker fresh reset (Mattermost) or dev-server bring-up (NaViQ), per-target seeding
+| `Static Analysis`   | LLM-based source review per target, OWASP/CWE tagging
+| `Dynamic Discovery`   | Playwright same-origin BFS crawl, form/input extraction
+| `Payload Generation`  | LLM-generated attack payloads from the static analysis + the dynamic discovery output
+| `Human Review`   | Validates/filters payloads before the next block runs them
+| `Attack Execution `   | Runs validated payloads against real forms, captures responses/screenshots/video
 | `Results Analysis`   | LLM classifies each attack attempt as confirmed/possible/discarded
-| `Correlation`   | Matches dynamic findings back to static ones (CWE-exact → LLM judge → OWASP → text fallback), scores severity 
-| `Reporting`   | Bilingual PDF export per run, grouped remediation by CWE 
-| `UI`   | React dashboard for the full pipeline, human review, and past-run history 
+| `Correlation`   | Matches dynamic findings back to static ones (CWE-exact → LLM judge → OWASP → text fallback), scores severity
+| `Reporting`   | Bilingual PDF export per run, grouped remediation by CWE
+| `UI`   | React dashboard for the full pipeline, human review, and past-run history
 
 ---
 
@@ -29,8 +33,9 @@ An LLM-driven pipeline for automated web application security assessment.
 
 - **Backend:** Python, FastAPI, Anthropic Claude (`claude-haiku-4-5`), Playwright, SQLite (run history)
 - **Frontend:** React 19, TanStack Start/Router, TypeScript, Tailwind, Radix UI
-- **Testing:** 360+ backend tests (`unittest`), 178+ frontend tests (Vitest)
-- **CI/Security:** GitHub Actions, CodeQL, Dependabot, secret scanning + push protection
+- **Infrastructure:** Docker Compose (`siftpipe-api`, `sidecar`, `naviq`, `mattermost`, `postgres`, `caddy`), Caddy (automatic HTTPS), AWS EC2 + SSM Parameter Store for secrets, Cloudflare (frontend hosting)
+- **Testing:** 430+ backend tests (`unittest`), 200+ frontend tests (Vitest)
+- **CI/Security:** GitHub Actions (lint/test, Docker smoke test, manual SSM deploy with an active-run guard), CodeQL, Dependabot, secret scanning + push protection
 
 ---
 
@@ -41,6 +46,8 @@ SiftPipe/
 ├── main.py                     # Console entrypoint — runs the pipeline B1→B9 by target/mode
 ├── api.py                      # FastAPI app — every block exposed as an endpoint, session-cookie auth
 ├── seed.py                     # Seeds a fresh Mattermost instance with test data
+├── deploy.sh                   # Wrapper around the multi-file `docker compose` stack (up/down/config/ps/exec/logs/reset)
+├── docker-compose.yml          # siftpipe-api, sidecar, naviq, init-permissions, caddy (Mattermost/Postgres come from mattermost/)
 │
 ├── blocks/                     # Pipeline logic — see detail below
 │
@@ -54,13 +61,21 @@ SiftPipe/
 │       └── routes/             # TanStack Router routes
 │
 ├── tests/                      # Backend test suite, one file per block/module
+├── sidecar/                    # Small control service that runs Docker operations (resets) on behalf of siftpipe-api
+├── docker/                     # Dockerfiles/entrypoints per service (siftpipe-api, sidecar, naviq, caddy)
+├── scripts/                    # Deploy helpers: ssm-deploy.sh (used by the deploy workflow), fetch-mattermost-secrets.sh
+├── test-fixtures/              # NaViQ stub used by CI's docker-smoke job in place of the real (private) NaViQ
+├── .github/workflows/          # ci.yml (backend, frontend, docker-smoke), codeql.yml, deploy.yml (manual, OIDC → SSM)
 │
 ├── mattermost/                 # Docker Compose stack for the Mattermost target
 ├── mattermost-src/             # Mattermost source (git submodule, scanned by B3)
+├── naviq-src/                  # NaViQ source (private, gitignored — the second target)
 │
 ├── results/                    # Per-run pipeline output (gitignored)
 ├── evidence/                   # B7 screenshots/videos (gitignored)
 ├── siftpipe_history.db         # SQLite run history
+│
+├── qa_reports/                 # Local and deployed QA pass reports
 │
 └── docs/                       # Project documentation — see below
 ```
@@ -79,7 +94,8 @@ blocks/
 │                          #   credentials, B3 scan config)
 ├── environment.py         # B1 — fresh_reset() (Mattermost/Docker) and naviq_fresh_reset() +
 │                          #   dev-server lifecycle (NaViQ)
-├── static_scanner.py      # B3 — file listing, extension/dir filtering, prompt construction
+├── static_scanner.py      # B3 — file listing, extension/dir filtering, prompt construction; each finding
+│                          #   also carries a short LLM-written explanation of why it was flagged
 ├── crawler.py             # B4 — generic same-origin BFS crawl for attack-surface discovery
 ├── dynamic_analysis.py    # B4 — orchestrates login, crawl, form/input extraction
 ├── mattermost_auth.py     # Shared login-selector resolution (with fallback), used by B4 and B7
@@ -91,7 +107,8 @@ blocks/
 │                          #   → text fallback), reuses judgments across runs
 ├── scoring.py             # B9 — weighted confidence/severity scoring
 ├── taxonomy.py            # CWE/OWASP catalog + inference helpers, shared across B3/B5/B7/B9/B10
-├── report.py              # B10 — bilingual PDF report generation (Playwright/Chromium)
+├── report.py              # B10 — bilingual PDF report generation (Playwright/Chromium), incl. per-finding
+│                          #   "Why:" explanation
 ├── run_history.py         # SQLite persistence for "Past Runs"
 ├── auth.py                # Session-cookie login gate (single shared admin passphrase)
 └── aws_secrets.py         # Backfills secrets from AWS SSM Parameter Store at deploy time
@@ -100,6 +117,8 @@ blocks/
 ---
 
 ## Running it
+
+**Local development** (Python + Vite dev server):
 
 ```bash
 # Backend
@@ -114,8 +133,16 @@ npm ci
 npm run dev
 ```
 
+**Containerized stack** (what production runs; needs Docker, a filled-in `.env` from `.env.example`, and `mattermost/.env` from `mattermost/.env.example`):
+
+```bash
+./deploy.sh up       # builds and starts every service
+./deploy.sh down
+```
+
+**Deployment:** the backend runs on EC2 behind Caddy at `api.siftpipe.com`, with secrets in SSM Parameter Store. It is updated by the manual **Deploy** GitHub Action (`.github/workflows/deploy.yml` → `scripts/ssm-deploy.sh`), which refuses to deploy while a pipeline run is active unless forced. The frontend deploys separately through Cloudflare. Full setup steps are in `docs/deployment-guide.md`.
 
 ---
 
 ## Docs
-See /docs for ...
+See /docs for the compiled project write-up (`siftpipe-compiled.md`), fixes log, containerization/deployment guides, resource/cost plan and script reference. QA pass reports are in /qa_reports.

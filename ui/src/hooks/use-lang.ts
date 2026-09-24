@@ -4,7 +4,8 @@ import { es } from "@/lib/es";
 
 export type Lang = "en" | "es";
 
-const STORAGE_KEY = "siftpipe-lang";
+// Exported so lib/error-page.ts (static HTML, no React) reads the very same key.
+export const LANG_STORAGE_KEY = "siftpipe-lang";
 const dictionaries = { en, es };
 
 // The login page (Security, sequenced right after this) sits in front of the
@@ -16,7 +17,7 @@ const dictionaries = { en, es };
 function detectInitialLang(): Lang {
   if (typeof window === "undefined") return "en";
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const stored = window.localStorage.getItem(LANG_STORAGE_KEY);
     if (stored === "en" || stored === "es") return stored;
   } catch {
     // localStorage unavailable (private mode, disabled) — fall through to browser detection
@@ -31,7 +32,7 @@ function setLang(lang: Lang) {
   if (lang === currentLang) return;
   currentLang = lang;
   try {
-    window.localStorage.setItem(STORAGE_KEY, lang);
+    window.localStorage.setItem(LANG_STORAGE_KEY, lang);
   } catch {
     // best-effort persistence only
   }

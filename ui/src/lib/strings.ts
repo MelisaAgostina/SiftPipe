@@ -205,6 +205,17 @@ export type Strings = {
     description: string;
     cta: string;
   };
+  // The root route's two fallback screens (routes/__root.tsx): a render crash and an
+  // unknown URL. Kept in the dictionaries so a Spanish visitor doesn't land on an
+  // English-only page at exactly the moment something already went wrong.
+  rootErrors: {
+    errorTitle: string;
+    errorDescription: string;
+    tryAgain: string;
+    notFoundTitle: string;
+    notFoundDescription: string;
+    goHome: string;
+  };
   login: {
     title: string;
     subtitle: string;

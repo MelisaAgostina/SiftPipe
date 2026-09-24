@@ -257,6 +257,15 @@ export const es: Strings = {
     description: "Tu sesión expiró. Inicia sesión de nuevo para continuar.",
     cta: "Iniciar sesión de nuevo",
   },
+  rootErrors: {
+    errorTitle: "Esta página no se cargó",
+    errorDescription:
+      "Algo salió mal por nuestra parte. Puedes actualizar la página o volver al inicio.",
+    tryAgain: "Intentar de nuevo",
+    notFoundTitle: "Página no encontrada",
+    notFoundDescription: "La página que buscas no existe o fue movida.",
+    goHome: "Volver al inicio",
+  },
   login: {
     title: "ACCESO PRIVADO",
     subtitle:
