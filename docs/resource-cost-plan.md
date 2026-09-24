@@ -10,15 +10,15 @@
 
 | Resource | Rate | Source |
 |---|---|---|
-| EC2 `t3.medium`, Linux, on-demand | **$0.0416/hr** | Matches the rate already cited in `AWS_HOSTING_TODO.md §3`; cross-verified via [Vantage](https://instances.vantage.sh/aws/ec2/t3.medium) (displays as $0.042, rounded) |
+| EC2 `t3.medium`, Linux, on-demand | **$0.0416/hr** | Cross-verified via [Vantage](https://instances.vantage.sh/aws/ec2/t3.medium) (displays as $0.042, rounded) |
 | EBS `gp3` | **$0.08/GB-month** (3,000 IOPS / 125MB/s included) | [AWS EBS Pricing](https://aws.amazon.com/ebs/pricing/) (worked example states this rate directly), cross-verified via [economize.cloud](https://www.economize.cloud/resources/aws/pricing/ec2/t3.medium/) |
 | Public IPv4 address / Elastic IP | **$0.005/hr**, in-use or idle, identical rate | [AWS VPC Pricing](https://aws.amazon.com/vpc/pricing/), [AWS EIP docs](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html) |
 | Data transfer OUT to internet | **First 100GB/month free** (account-wide, all services/regions combined), then $0.09/GB up to 10TB | Free allowance confirmed directly on [AWS's EC2 pricing page](https://aws.amazon.com/ec2/pricing/on-demand/); per-GB rate cross-verified via multiple aggregators (AWS's own tiered table renders via JS, not directly scrapable) |
 | AWS Systems Manager (Session Manager) | **$0** — no additional charge for the shell-access mechanism itself | [AWS Systems Manager Pricing](https://aws.amazon.com/systems-manager/pricing/) |
 | TLS certificate (Let's Encrypt, via Caddy) | **$0** — not an AWS service, Let's Encrypt is free | — |
-| Custom domain (optional) | ~$12/year, **registrar-dependent, not an AWS-priced resource** | Carried forward from `AWS_HOSTING_TODO.md §2.4` as an estimate, not independently re-verified — skip entirely and use the AWS-generated hostname for $0 |
+| Custom domain (optional) | ~$12/year, **registrar-dependent, not an AWS-priced resource** | An estimate, not independently re-verified — skip entirely and use the AWS-generated hostname for $0 |
 
-**EBS volume size: 40GB, not the original plan's 30GB** — a deliberate upward adjustment, not a copy-paste of the old figure. `AWS_HOSTING_TODO.md`'s 30GB was sized for the bare-venv plan; `containerize-siftpipe-design.md`'s five container images (Playwright's base image alone bundles a full Chromium install) add real baseline disk usage on top of that. 40GB is still an estimate — confirm against actual image sizes once the Dockerfiles exist, per that spec's own "confirm during implementation" pattern for still-unbuilt specifics.
+**EBS volume size: 40GB.** `containerize-siftpipe-design.md`'s five container images (Playwright's base image alone bundles a full Chromium install) carry real baseline disk usage beyond a bare-venv setup. 40GB is still an estimate — confirm against actual image sizes on the real box.
 
 ## 2. Resource tables by scenario
 
@@ -61,37 +61,46 @@ Both scenarios use the identical launch shape (same instance type, same AMI, sam
 
 If both run back-to-back as described in §5 (one box, tested then handed to the jury) rather than as two separate instances, the combined cost is **≈ $39.20** for the full ~32-day window — not simply additive with a second EC2 launch, since it's the same instance running longer, not two.
 
-## 4. One box or two? One
 
 
-- **One continuous box (recommended, cheaper, less setup work).** Launch once, let testers try it, run the history-reset step from `containerize-siftpipe-design.md §8`'s `/siftpipe/reset-history` sidecar endpoint (or the manual Past-Runs archive-then-delete flow if that endpoint isn't built yet — see chat history), then hand the same URL to the jury. Total cost matches the combined figure above (~$39.20), and there's no second round of EC2 launch / DNS / TLS setup.
+# Anthropic API cost per pipeline run
 
+Every LLM call in the pipeline goes through `blocks/llm.py`'s shared
+`call_llm_json()`, and all four calling steps (B3, B5, B8, B9) use the
+same model — `claude-haiku-4-5-20251001` — confirmed by reading
+`blocks/pipeline.py` and `blocks/generate_payloads.py` directly. B7
+(dynamic attack execution) makes no LLM call at all; it's pure
+Playwright + rule-based detection.
 
-## 5. Deployment guide
+**Pricing (confirmed against the Anthropic Console, not estimated):**
 
-**This describes the intended procedure once `containerize-siftpipe-design.md` is actually implemented** (Dockerfiles, the root `docker-compose.yml`, the `./deploy.sh` wrapper, and the GitHub Actions redeploy workflow don't exist in this repo yet — nothing here is runnable today). Written now so the AWS-facing steps are settled ahead of that implementation work, consistent with `next-steps-before-deployment.md`'s own execution order (code first, then package, then deploy).
+| | Input | Output |
+|---|---|---|
+| `claude-haiku-4-5-20251001` | $1 / MTok | $5 / MTok |
 
-### 5a. One-time setup (before either scenario)
+No prompt caching is implemented anywhere in the pipeline today, so the
+plain per-token rates above are what apply — caching's lower rates
+($1.25/MTok write, $0.10/MTok read) aren't relevant unless that's added
+later.
 
-1. **Set a spending alarm first** — AWS Console → Billing and Cost Management → Budgets → alerts at $10/$25/$50 (`AWS_HOSTING_TODO.md §2.1`). Free, catches any mistake before it matters; given §4's totals, hitting even the $10 alert would mean something is already wrong.
-2. **Launch the EC2 instance**: `t3.medium`, Ubuntu 24.04 LTS AMI, 40GB `gp3` root volume (§2), security group allowing inbound `80`/`443` from `0.0.0.0/0` only — no inbound `22` (`AWS_HOSTING_TODO.md §2.2`). Attach an IAM instance profile with `AmazonSSMManagedInstanceCore` for SSM-based shell access.
-3. **Allocate and associate a public IPv4/Elastic IP** — per §1, this costs the same whether you call it "Elastic IP" or just use the instance's default address, so there's no reason to skip it; allocating one explicitly just makes the address stable across any future stop/start.
-4. **Point a domain at it, or use the AWS-generated hostname.** A custom domain (~$12/year, any registrar) reads better for the jury; the free AWS hostname (`ec2-XX-XX-XX-XX.compute-1.amazonaws.com`) works identically. Caddy (per `containerize-siftpipe-design.md`) handles the TLS certificate automatically either way once DNS points at the box — no manual `certbot` step, unlike the original bare-metal plan.
-5. **SSM in** (`aws ssm start-session --target i-xxxxxxxxxxxx`), install Docker Engine + Compose plugin.
-6. **Clone the repo and get NaViQ's source onto the box**: `git clone <repo> ~/siftpipe && cd ~/siftpipe`, then `scp`/`rsync` your own authorized `naviq-src/` checkout onto the box by hand — it's gitignored, never `git clone`d (`containerize-siftpipe-design.md §5`).
-7. **Write `.env`** with real values — `ANTHROPIC_API_KEY`, `SIFTPIPE_ADMIN_PASSWORD`, `SIFTPIPE_SESSION_SECRET`, `MM_ADMIN_EMAIL`/`MM_ADMIN_PASS`, `NAVIQ_USERNAME`/`NAVIQ_PASSWORD`, `FRONTEND_ORIGIN` (your Cloudflare Pages URL), and `MM_URL=http://mattermost:8065`/`NAVIQ_URL=http://naviq:8001` (Compose service-name DNS, not `localhost` — `containerize-siftpipe-design.md §7`'s one real code-facing consequence of containerizing).
-8. **`./deploy.sh up`** (the wrapper around the multi-file `docker compose -f ... -f ...` invocation, `containerize-siftpipe-design.md §4`) — brings up all 5 services, Caddy issues the TLS cert automatically.
-9. **Deploy the frontend** to Cloudflare Pages with `VITE_API_BASE` set to your API's URL (`AWS_HOSTING_TODO.md §2.6`) — unchanged by containerization, still a separate deploy target.
-10. **Go-live check**: confirm `https://<your-domain>/api/health` responds (`api.py:512`), run one full B3→B9 pass yourself end-to-end.
+**Token estimates below are derived from reading each prompt-building
+function and each call's real caps — not measured against a live API
+call** (an actual run would be the only way to get exact usage, and
+running one purely to measure tokens isn't worth the cost). Treat these
+as a defensible order-of-magnitude estimate, not a guarantee.
 
-### 5b. Test period (§3a)
+| Step | Calls/run (assumption) | Est. input tokens/call | Est. output tokens/call | Cost/call | Cost/run |
+|---|---|---|---|---|---|
+| B3 (static analysis) | 10 — `MAX_FILES` hard cap, so this is fixed, not a guess | ~4,800 (OWASP scope text ~1,200 + prompt instructions ~500 + up to 15,000 chars of source code, ~3,000 avg at ~4 chars/token) | ~200 (0–3 findings per file, each with the new explanation field) | ~$0.0058 | **~$0.058** |
+| B5 (payload generation) | ~15 (varies with how many forms/inputs B4 discovers — seen as low as ~5, as high as ~30 in real runs) | ~500 (compact prompt: target description, taxonomy hint, "generate exactly 5 payloads") | ~200 (capped at `max_tokens=512`) | ~$0.0015 | **~$0.023** |
+| B8 (dynamic classification) | ~10 (only findings B7 flags as anomalous get a call — historically observed around 70% of attempts, but varies by target/payload mix) | ~800 (target, payload, status code, rule-based detections, and the captured HTTP/HTML response snippet — **this snippet isn't length-capped in the code**, so a verbose response page could push this higher) | ~120 | ~$0.0014 | **~$0.014** |
+| B9 (correlation judge) | ~3 (only ambiguous same-OWASP/different-CWE pairs reach the judge at all; hard-capped at `MAX_JUDGE_CALLS=15`, and cached verdicts are reused across re-runs at no cost) | ~500 (both findings' vulnerability/CWE/file/evidence, plus MITRE's real CWE definition text) | ~50 (`{same_vulnerability, rationale}`) | ~$0.00075 | **~$0.002** |
+| **Total, one typical run** | | | | | **~$0.10** |
 
-11. Share the Cloudflare Pages link with testers. Let them run the pipeline, click around, generate real `siftpipe_history.db` rows.
-12. **When the test window ends**, clear the history before the jury sees it: call the sidecar's `POST /siftpipe/reset-history` endpoint if it's been built by then, or use the Past Runs UI's archive-then-delete flow per run (confirmed in chat to genuinely restore the `FirstRunGuide` welcome state — `FirstRunGuide.tsx:17` checks `runs.length === 0`, and deleted rows are hard-removed, unlike archived ones).
-13. **If running the two-box path instead** (§5): tear this instance down now (`aws ec2 terminate-instances`, release the Elastic IP) and restart from step 2 for a fresh jury box.
-
-### 5c. Jury period (§3b)
-
-14. Confirm the reset from step 12 actually worked — reload the app, confirm the first-run welcome guide shows, not a stale Past Runs list.
-15. Hand over the same Cloudflare Pages link to the jury. Leave the box running for however long the review window actually needs (§3b prices a 30-day ceiling; stopping earlier just means a smaller actual bill).
-16. **Afterward**: `aws ec2 stop-instances` (keep everything in case you need to show it again — note the Elastic IP's $0.005/hr keeps ticking even while stopped, per §1) or fully terminate + release the Elastic IP + delete the EBS volume if you're completely done (`AWS_HOSTING_TODO.md §2.8`).
+**Worst case** (every cap hit at once — 10 B3 files, ~30 B5 targets, every
+B7 finding anomalous triggering a B8 call across a large run, and the
+full 15 B9 judge calls): still under **$0.20** per run. Even a jury
+member running the pipeline repeatedly across a review window stays
+well within a few dollars total — this is not a cost category that
+needs the same caution as, say, a batch reprocessing job across many
+historical runs at once.

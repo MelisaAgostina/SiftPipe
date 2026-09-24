@@ -1,12 +1,8 @@
 # Deployment Guide
 
-The single doc to follow at actual deploy time — the disposable AWS test
-day and the real October deploy both follow this, in order. Supersedes
-`AWS_HOSTING_TODO.md` and `github-deploy-setup.md` (both deleted —
-written for the pre-containerization, bare-venv setup, or split out
-separately when only part of this existed) now that `./deploy.sh` and the
-Docker images exist. `resource-cost-plan.md` is left as-is for the cost
-tables; this doc is now the canonical step list.
+The single doc to follow at actual deploy time, in order, whether this is
+a short disposable test box or a longer-lived deployment. `resource-cost-plan.md`
+covers the cost tables; this doc is the canonical step list.
 
 Two kinds of step below:
 - **Part A — account-level, done once, kept for both the test day and
@@ -109,12 +105,12 @@ is untouched either way — same shape `SIFTPIPE_SSM_PATH` already uses.
 
 ---
 
-## Part B — Per-box (test day today, real deploy in October)
+## Part B — Per-box (repeat this whole part for each new box)
 
 ### B1. Launch EC2
 
 Console → **EC2 → Launch instance**:
-- AMI: **Ubuntu 24.04 LTS**
+- AMI: **Ubuntu 26.04 LTS**
 - Type: **t3.medium**
 - Storage: **40GB gp3** (see `resource-cost-plan.md` §1 for why 40 not 30)
 - Security group: inbound **80/tcp and 443/tcp from 0.0.0.0/0** only — **no
@@ -220,27 +216,22 @@ identifiers, not passwords):
 > Actions only *warns* on unknown inputs rather than failing, so the typo
 > silently hid the misconfiguration until the credentials step ran.
 
-**On every future re-launch** (each time a box gets terminated and a new
-one launched — including October, if the test-day box was torn down),
-this step repeats: the policy is scoped to one instance ARN, so a new
-instance means editing that one JSON resource line and the
+**On every future re-launch** a new instance means editing that one JSON resource line and the
 `DEPLOY_INSTANCE_ID` variable, not recreating anything else.
 
-**Using it later**, once B3–B4 below have run at least once by hand: repo
-→ Actions → **Deploy** → Run workflow (branch `main`). Leave the input
-blank for a normal deploy; type `RESET` to also permanently wipe run
-history. A normal deploy keeps all data (Mattermost, NaViQ, run history)
-— only the typed `RESET` deletes anything. To deploy from your own
-machine instead, without GitHub: `aws sso login` then
-`INSTANCE_ID=<INSTANCE_ID> bash scripts/ssm-deploy.sh`. If a run fails,
-the Action log shows the server's stderr — common causes are `git pull`
-refusing because someone hand-edited a tracked file on the box (it uses
-`--ff-only`, never overwrites — this includes a bare file-mode change like
-`chmod +x` on `scripts/fetch-mattermost-secrets.sh`, which git counts as
-a modification; check with `git status` / `git diff` on the box, and if
-`main` already has the same change, discard the local one with
-`git checkout -- <file>`), or `ubuntu` not yet in the `docker` group
-(fixed in B3 below).
+> First: Do B3–B4 by hand once.
+
+### Deploy
+
+- GitHub: Actions → Deploy → Run workflow (main). Leave the input blank.
+
+- Type RESET instead to also wipe run history permanently. Nothing else is ever deleted.
+From your computer: aws sso login, then INSTANCE_ID=<INSTANCE_ID> bash scripts/ssm-deploy.sh
+
+### If it fails (check the Action log)
+
+- Someone edited a file on the server. Even chmod +x counts. Check with git status or git diff. If main already has the same change, run git checkout -- file.
+- The ubuntu user isn't in the docker group. Step B3 fixes this.
 
 **This workflow only deploys the backend, and only when you click Run
 workflow** (`workflow_dispatch`) — a push to `main` does *not* trigger it.
@@ -435,15 +426,17 @@ connect this GitHub repo → build env var
 
 ### B7. Afterward
 
-**Test day (today):** terminate the EC2 instance and release the Elastic
-IP. Leave Part A (OIDC provider, SSM parameters, budget) untouched —
-reused as-is in October. **Don't delete the Cloudflare Worker** — it now
-has the permanent `siftpipe.com` domain attached; decide what stays before
-removing anything there. If the EIP is released, the `api` `A` record
-must be updated to the new IP on the next launch.
+**Tearing a box down:** terminate the EC2 instance and release the
+Elastic IP. Leave Part A (OIDC provider, SSM parameters, budget)
+untouched — it's account-level and gets reused for the next box. **Don't
+delete the Cloudflare Worker** — it carries the permanent `siftpipe.com`
+domain; decide what stays before removing anything there. If the EIP is
+released, the `api` `A` record must be updated to the new IP on the next
+launch.
 
-**October (real deploy):** no teardown. `aws ec2 stop-instances` only if
-you need to pause and resume later without losing state; full `terminate`
-only once you're completely done with the box, since that also removes
-whatever run history/evidence it accumulated (see `db_backups/` handling
+**Keeping a box running:** no teardown needed. `aws ec2 stop-instances`
+only if you need to pause and resume later without losing state; full
+`terminate` only once you're completely done with the box, since that
+also removes whatever run history/evidence it accumulated (see
+`db_backups/` handling
 if that needs preserving first).
