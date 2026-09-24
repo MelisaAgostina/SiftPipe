@@ -26,7 +26,13 @@ export function WelcomeCard({
     <Dialog open={open} onOpenChange={(next) => !next && onSkip()}>
       <DialogPortal>
         <DialogOverlay />
-        <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 flex w-[min(90vw,34rem)] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3 rounded-3xl bg-[#004aad] px-8 pb-6 pt-8 text-center text-white shadow-2xl duration-200 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+        {/* Concentric corners: the buttons are pills 52px tall (py-3 + text-lg's 28px line), so
+            radius 26px, and they sit 20px (px-5 / pb-5) from the card's right and bottom edges
+            - card radius = 26 + 20 = 46px keeps both curves parallel instead of pinching at
+            the corner. outline-none: the card itself isn't interactive (Radix may focus it),
+            so the browser's focus ring around the whole card would just look like a stray
+            border; the buttons keep their own focus ring. */}
+        <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 flex w-[min(90vw,34rem)] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3 rounded-[46px] bg-[#004aad] px-5 pb-5 pt-8 outline-none text-center text-white shadow-2xl duration-200 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
           <DialogPrimitive.Title className="text-5xl font-semibold tracking-tight">
             {t.welcomeCard.title}
           </DialogPrimitive.Title>
