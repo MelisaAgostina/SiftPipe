@@ -1,29 +1,14 @@
-import { Compass } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
 import { tabs, type TabId } from "./data";
 
-// Every cell (the 5 tabs plus the guided-tour trigger) shares one grid with
-// equal-width, equal-height columns — grid instead of flex so a longer
-// Spanish label wrapping to two lines grows every column's row height
-// together instead of leaving the shorter neighbors looking short and the
-// row looking unevenly split.
-export function Tabs({
-  value,
-  onChange,
-  onStartTour,
-  showTourHint = false,
-}: {
-  value: TabId;
-  onChange: (v: TabId) => void;
-  onStartTour: () => void;
-  /** Draws the eye to the guided-tour button for a user who has no reason
-   * yet to know it exists - see SecPipelineApp's showTourHint comment for
-   * when this turns on/off. */
-  showTourHint?: boolean;
-}) {
+// Every cell shares one grid with equal-width, equal-height columns — grid
+// instead of flex so a longer Spanish label wrapping to two lines grows
+// every column's row height together instead of leaving the shorter
+// neighbors looking short and the row looking unevenly split.
+export function Tabs({ value, onChange }: { value: TabId; onChange: (v: TabId) => void }) {
   const { t } = useLang();
   return (
-    <div className="grid w-full grid-cols-6 gap-1 rounded-lg border border-border bg-card p-1">
+    <div className="grid w-full grid-cols-5 gap-1 rounded-lg border border-border bg-card p-1">
       {tabs.map((tab) => {
         const active = tab.id === value;
         return (
@@ -42,17 +27,6 @@ export function Tabs({
           </button>
         );
       })}
-      <button
-        onClick={onStartTour}
-        data-testid={showTourHint ? "tour-hint-active" : undefined}
-        className={
-          "flex min-h-13 items-center justify-center gap-1.5 rounded-md border border-border px-2 text-center text-sm font-medium leading-tight text-muted-foreground transition-colors hover:bg-accent hover:text-foreground " +
-          (showTourHint ? "tour-hint-ring" : "")
-        }
-      >
-        <Compass className="h-4 w-4 shrink-0" />
-        {t.secPipelineApp.guidedTour}
-      </button>
     </div>
   );
 }

@@ -193,6 +193,46 @@ class TestPossibleFindingExplanations(unittest.TestCase):
         self.assertIn(REPORT_STRINGS["es"]["possible_pattern_lead"], html)
 
 
+class TestExplanationField(unittest.TestCase):
+    """B3's own reasoning for why a static finding is exploitable
+    (blocks/static_scanner.py's new "explanation" field, threaded through
+    B9's correlated output) - distinct from match_rationale, which explains
+    the correlation step's own tier choice, not the underlying vulnerability."""
+
+    def test_full_card_shows_the_why_label_and_explanation(self):
+        confirmed = _finding(
+            classification="CONFIRMED",
+            severity="HIGH",
+            explanation="user_id is taken from the request and concatenated into the query.",
+        )
+        html = build_report_html(_run([confirmed]), lang="en")
+        self.assertIn(REPORT_STRINGS["en"]["why_label"], html)
+        self.assertIn("user_id is taken from the request and concatenated into the query.", html)
+
+    def test_full_card_omits_the_why_line_when_theres_no_explanation(self):
+        confirmed = _finding(classification="CONFIRMED", severity="HIGH")
+        html = build_report_html(_run([confirmed]), lang="en")
+        self.assertNotIn(REPORT_STRINGS["en"]["why_label"], html)
+
+    def test_possible_item_leads_with_the_explanation_before_the_code_pattern(self):
+        anchor = _finding(classification="CONFIRMED", severity="HIGH")
+        possible = _finding(
+            explanation="folder comes straight from CLI args with no path validation.",
+            evidence="folder = cli_args.folder",
+        )
+        html = build_report_html(_run([anchor, possible]), lang="en")
+        possible_html = html.split('class="possible-item"')[1]
+        why_index = possible_html.find("folder comes straight from CLI args")
+        pattern_index = possible_html.find("cli_args.folder")
+        self.assertNotEqual(why_index, -1)
+        self.assertLess(why_index, pattern_index)
+
+    def test_why_label_present_in_spanish_too(self):
+        confirmed = _finding(classification="CONFIRMED", severity="HIGH", explanation="por qué")
+        html = build_report_html(_run([confirmed]), lang="es")
+        self.assertIn(REPORT_STRINGS["es"]["why_label"], html)
+
+
 class TestRecommendations(unittest.TestCase):
 
     def test_repeated_findings_in_the_same_file_collapse_into_one_recommendation_group(self):

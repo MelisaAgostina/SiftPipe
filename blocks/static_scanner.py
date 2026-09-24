@@ -151,6 +151,7 @@ CRITICAL INSTRUCTIONS:
     "cwe_id": "CWE-XX",
     "line": 12,
     "evidence": "exact code snippet",
+    "explanation": "1-2 sentences on why this specific code is exploitable",
     "confidence": "high"
   }}
 ]
@@ -159,6 +160,10 @@ CRITICAL INSTRUCTIONS:
    Traversal, CWE-284 for Broken/Missing Access Control, CWE-798 for Hardcoded
    Credentials, CWE-16 for Security Misconfiguration, CWE-287 for Broken Authentication).
    If none of these fit precisely, use your best-fit real CWE identifier instead of omitting the field.
+   "explanation" must describe the actual attack this specific line enables (e.g. what an
+   attacker-controlled value reaches and what it lets them do), in plain language a
+   non-security reviewer can follow. Never just restate the vulnerability name or category,
+   and never describe the category in the abstract - ground it in this exact evidence.
 4. If you find nothing, return an empty array EXACTLY like this:
 []
 5. Never include a placeholder entry that just states a category wasn't found - e.g. do NOT return

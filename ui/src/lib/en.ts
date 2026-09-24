@@ -236,6 +236,7 @@ export const en: Strings = {
     pipelineErrorToastTitle: "Pipeline error",
     environmentErrorToastTitle: "Environment error",
     guidedTour: "Guided tour",
+    pipelineFinishedToast: "Pipeline finished, results available in Past Runs tab",
   },
   landing: {
     heading: "Hybrid security pipeline",

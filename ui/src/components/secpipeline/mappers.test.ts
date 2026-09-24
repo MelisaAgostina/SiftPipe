@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { mapB8Finding, mapB9Entry } from "./mappers";
+import { mapB3Finding, mapB8Finding, mapB9Entry } from "./mappers";
 import { en } from "@/lib/en";
-import type { B8Finding, B9Entry } from "@/lib/types";
+import type { B3Finding, B8Finding, B9Entry } from "@/lib/types";
+
+function b3Finding(overrides: Partial<B3Finding> = {}): B3Finding {
+  return {
+    vulnerability: "Injection",
+    category: "A05",
+    line: 42,
+    evidence: 'cursor.execute(f"SELECT * FROM users WHERE id={user_id}")',
+    confidence: "high",
+    file: "app/views.py",
+    ...overrides,
+  };
+}
 
 function b9Entry(overrides: Partial<B9Entry> = {}): B9Entry {
   return {
@@ -41,6 +53,30 @@ function b8Finding(overrides: Partial<B8Finding> = {}): B8Finding {
     ...overrides,
   };
 }
+
+describe("mapB3Finding", () => {
+  it("surfaces the LLM's explanation as the finding's description", () => {
+    const ui = mapB3Finding(
+      b3Finding({
+        explanation:
+          "user_id is taken directly from the request and concatenated into the query, letting an attacker alter its logic.",
+      }),
+    );
+    expect(ui.description).toBe(
+      "user_id is taken directly from the request and concatenated into the query, letting an attacker alter its logic.",
+    );
+  });
+
+  it("leaves description unset for a finding from before this field existed", () => {
+    const ui = mapB3Finding(b3Finding());
+    expect(ui.description).toBeUndefined();
+  });
+
+  it("still shows the raw evidence as the code snippet, unaffected by the new field", () => {
+    const ui = mapB3Finding(b3Finding({ explanation: "why" }));
+    expect(ui.snippet).toBe('cursor.execute(f"SELECT * FROM users WHERE id={user_id}")');
+  });
+});
 
 describe("mapB8Finding", () => {
   it("maps a discarded result to the descartada tone", () => {
@@ -82,5 +118,27 @@ describe("mapB9Entry", () => {
 
   it("still derives the descartada tone from the real backend value, unaffected by the label fix", () => {
     expect(mapB9Entry(b9Entry({ classification: "DESCARTED" })).tone).toBe("descartada");
+  });
+
+  it("surfaces the matched static finding's explanation as the description", () => {
+    const ui = mapB9Entry(
+      b9Entry({ explanation: "Reflected input reaches innerHTML unescaped, enabling stored XSS." }),
+    );
+    expect(ui.description).toBe(
+      "Reflected input reaches innerHTML unescaped, enabling stored XSS.",
+    );
+  });
+
+  it("leaves description unset when there's no static explanation (null or absent)", () => {
+    expect(mapB9Entry(b9Entry({ explanation: null })).description).toBeUndefined();
+    expect(mapB9Entry(b9Entry()).description).toBeUndefined();
+  });
+
+  it("still exposes match_rationale as rationale, distinct from the new description", () => {
+    const ui = mapB9Entry(
+      b9Entry({ explanation: "why it's a vulnerability", match_rationale: "why it was matched" }),
+    );
+    expect(ui.description).toBe("why it's a vulnerability");
+    expect(ui.rationale).toBe("why it was matched");
   });
 });

@@ -293,6 +293,79 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
         self.assertIsNone(result["cwe_id"])
         self.assertEqual(result["owasp_category"], "A05")
 
+    def test_static_only_finding_carries_its_own_explanation_through(self):
+        pipeline_results = {
+            "B3": {"findings": [
+                {"vulnerability": "Injection", "category": "A05", "file": "x.js",
+                 "evidence": "eval(input)", "confidence": "medium",
+                 "explanation": "input reaches eval() unsanitized, letting an attacker run arbitrary code."},
+            ]},
+            "B8": {"findings": []},
+        }
+
+        out = correlate_results(pipeline_results)
+
+        self.assertEqual(
+            out["results"][0]["explanation"],
+            "input reaches eval() unsanitized, letting an attacker run arbitrary code.",
+        )
+
+    def test_static_finding_with_no_explanation_field_is_none_not_a_crash(self):
+        """Old runs' B3 findings predate the explanation field entirely."""
+        pipeline_results = {
+            "B3": {"findings": [
+                {"vulnerability": "Injection", "category": "A05",
+                 "file": "x.js", "evidence": "eval(input)", "confidence": "medium"},
+            ]},
+            "B8": {"findings": []},
+        }
+
+        out = correlate_results(pipeline_results)
+
+        self.assertIsNone(out["results"][0]["explanation"])
+
+    def test_matched_dynamic_finding_carries_the_matched_static_findings_explanation(self):
+        pipeline_results = {
+            "B3": {"findings": [
+                {"vulnerability": "Injection", "category": "A05", "file": "x.js",
+                 "evidence": "eval(userInput)",
+                 "explanation": "userInput is attacker-controlled and reaches eval() directly."},
+            ]},
+            "B8": {"findings": [
+                {"vulnerability": "Command_Injection", "target": "t",
+                 "result": "confirmed", "evidence": "shell output leaked",
+                 "payload_id": "1_1"},
+            ]},
+        }
+
+        out = correlate_results(pipeline_results)
+
+        result = out["results"][0]
+        self.assertEqual(result["source"], "Hybrid (Static + Dynamic)")
+        self.assertEqual(
+            result["explanation"],
+            "userInput is attacker-controlled and reaches eval() directly.",
+        )
+
+    def test_dynamic_only_finding_with_no_static_match_has_no_explanation(self):
+        pipeline_results = {
+            "B3": {"findings": [
+                {"vulnerability": "Hardcoded Secret", "category": "A04",
+                 "file": "x.js", "evidence": "API_KEY = 'abc123'"},
+            ]},
+            "B8": {"findings": [
+                {"vulnerability": "Command_Injection", "target": "t",
+                 "result": "confirmed", "evidence": "shell output leaked",
+                 "payload_id": "1_1"},
+            ]},
+        }
+
+        out = correlate_results(pipeline_results)
+
+        result = out["results"][0]
+        self.assertEqual(result["source"], "Dynamic")
+        self.assertIsNone(result["explanation"])
+
 
 class TestFindMatchTaxonomyCaching(unittest.TestCase):
     """

@@ -49,6 +49,8 @@ function setup(
     envStatus?: { running: boolean; completed: boolean; error: string | null };
     setTargetPending?: boolean;
     setTargetError?: boolean;
+    onStartTour?: () => void;
+    showTourHint?: boolean;
   } = {},
 ) {
   vi.mocked(usePipelineStatus).mockReturnValue({
@@ -69,7 +71,9 @@ function setup(
     isError: overrides.setTargetError ?? false,
   } as never);
 
-  return render(<TopBar />);
+  return render(
+    <TopBar onStartTour={overrides.onStartTour ?? vi.fn()} showTourHint={overrides.showTourHint} />,
+  );
 }
 
 describe("TopBar", () => {
@@ -170,5 +174,26 @@ describe("TopBar", () => {
     });
 
     expect(screen.getByText(/environment not ready/i)).toBeInTheDocument();
+  });
+
+  it("calls onStartTour when the guided-tour button is clicked", () => {
+    const onStartTour = vi.fn();
+    setup({ onStartTour });
+
+    fireEvent.click(screen.getByText(/guided tour/i));
+
+    expect(onStartTour).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no attention hint on the guided-tour button by default", () => {
+    setup();
+
+    expect(screen.queryByTestId("tour-hint-active")).not.toBeInTheDocument();
+  });
+
+  it("shows the attention hint on the guided-tour button when showTourHint is true", () => {
+    setup({ showTourHint: true });
+
+    expect(screen.getByTestId("tour-hint-active")).toBeInTheDocument();
   });
 });
