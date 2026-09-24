@@ -1,4 +1,4 @@
-import { Database, Loader2, LogOut } from "lucide-react";
+import { Compass, Database, Loader2, LogOut } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import logo from "@/assets/siftpipe-logo.png";
 import {
@@ -63,7 +63,45 @@ function LogoutButton() {
   );
 }
 
-export function TopBar() {
+// Draws the eye to the guided-tour button for a user who has no reason yet
+// to notice it — see SecPipelineApp's showTourHint comment for when this
+// turns on/off. A static dot rather than an animated ring: it needs to be
+// noticeable without being distracting in a corner of the topbar that's
+// visible the entire session, not just for a first glance at the tab row.
+function TourButton({
+  onStartTour,
+  showTourHint,
+}: {
+  onStartTour: () => void;
+  showTourHint: boolean;
+}) {
+  const { t } = useLang();
+  return (
+    <button
+      onClick={onStartTour}
+      data-testid={showTourHint ? "tour-hint-active" : undefined}
+      className="relative flex items-center gap-1.5 rounded-md border border-border bg-background/60 px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <Compass className="h-4 w-4 shrink-0" />
+      {t.secPipelineApp.guidedTour}
+      {showTourHint && (
+        <span
+          aria-hidden="true"
+          className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-(--status-callout) ring-2 ring-card"
+        />
+      )}
+    </button>
+  );
+}
+
+export function TopBar({
+  onStartTour,
+  showTourHint = false,
+}: {
+  onStartTour: () => void;
+  /** See TourButton above. */
+  showTourHint?: boolean;
+}) {
   // Shares the same queries (and React Query cache) Sidebar.tsx already
   // polls for the prereqs list / reset flow — this doesn't add extra
   // requests, just reads the same real state instead of a hardcoded dot.
@@ -149,6 +187,7 @@ export function TopBar() {
         )}
       </div>
       <div className="flex items-center gap-4">
+        <TourButton onStartTour={onStartTour} showTourHint={showTourHint} />
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span className={"h-2 w-2 rounded-full " + DOT_STYLE[dotState]} />
           {t.topBar.dotLabel[dotState]}

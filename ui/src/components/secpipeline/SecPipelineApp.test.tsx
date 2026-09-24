@@ -8,7 +8,21 @@ const { driveMock } = vi.hoisted(() => ({ driveMock: vi.fn() }));
 // exercises SecPipelineApp's own orchestration logic (which tab is active,
 // the session-expired gate, the auto-switch-to-review effect). Tabs itself
 // is left real (no data dependencies) so a real click can drive the switch.
-vi.mock("./TopBar", () => ({ TopBar: () => <div>TopBarStub</div> }));
+// TopBar pulls in its own unrelated query deps (env health, active target,
+// logout...), so it's stubbed too - but the stub still renders the real
+// guided-tour button contract (onStartTour/showTourHint) it's actually
+// given, so this file's own tour-hint/welcome-card tests keep exercising
+// the real prop wiring instead of a component that ignores its props.
+vi.mock("./TopBar", () => ({
+  TopBar: ({ onStartTour, showTourHint }: { onStartTour: () => void; showTourHint?: boolean }) => (
+    <div>
+      <span>TopBarStub</span>
+      <button onClick={onStartTour} data-testid={showTourHint ? "tour-hint-active" : undefined}>
+        Guided tour
+      </button>
+    </div>
+  ),
+}));
 vi.mock("./Sidebar", () => ({ Sidebar: () => <div>SidebarStub</div> }));
 vi.mock("./PipelineView", () => ({ PipelineView: () => <div>PipelineViewStub</div> }));
 vi.mock("./CorrelationView", () => ({ CorrelationView: () => <div>CorrelationViewStub</div> }));
@@ -30,6 +44,10 @@ vi.mock("@/lib/queries", () => ({
 vi.mock("@/hooks/use-session-expired", () => ({ useSessionExpired: vi.fn() }));
 vi.mock("@/hooks/use-error-toast", () => ({ useErrorToast: vi.fn() }));
 vi.mock("@/lib/session-expired-store", () => ({ clearSessionExpired: vi.fn() }));
+// The pipeline-finished notification's own module (sonner) - mocked here (as
+// opposed to useErrorToast above) because the effect that calls it lives
+// directly in SecPipelineApp, not behind a hook this file already stubs out.
+vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 
 import {
   usePipelineStatus,
@@ -40,6 +58,7 @@ import {
 import { useSessionExpired } from "@/hooks/use-session-expired";
 import { useErrorToast } from "@/hooks/use-error-toast";
 import { clearSessionExpired } from "@/lib/session-expired-store";
+import { toast } from "sonner";
 import { WELCOME_CHOICE_STORAGE_KEY } from "@/lib/welcome-choice";
 import { SecPipelineApp } from "./SecPipelineApp";
 
@@ -50,6 +69,8 @@ function loadedQuery<T>(data: T) {
 function setup(
   overrides: {
     waiting?: boolean;
+    completed?: boolean;
+    liveRunVisible?: boolean;
     sessionExpired?: boolean;
     statusError?: string | null;
     envError?: string | null;
@@ -68,13 +89,14 @@ function setup(
   vi.mocked(usePipelineStatus).mockReturnValue(
     loadedQuery({
       waiting_for_human: overrides.waiting ?? false,
+      completed: overrides.completed ?? false,
       error: overrides.statusError ?? null,
     }) as never,
   );
   vi.mocked(useEnvironmentStatus).mockReturnValue(
     loadedQuery({ error: overrides.envError ?? null }) as never,
   );
-  vi.mocked(useLiveRunVisible).mockReturnValue(true as never);
+  vi.mocked(useLiveRunVisible).mockReturnValue((overrides.liveRunVisible ?? true) as never);
   vi.mocked(useSessionExpired).mockReturnValue(overrides.sessionExpired ?? false);
   // Defaults to "at least one past run" so existing tests (none of which
   // care about the tour hint) don't accidentally exercise the first-time
@@ -92,6 +114,7 @@ describe("SecPipelineApp", () => {
   beforeEach(() => {
     vi.mocked(clearSessionExpired).mockClear();
     vi.mocked(useErrorToast).mockClear();
+    vi.mocked(toast.success).mockClear();
     driveMock.mockClear();
     window.localStorage.clear();
   });
@@ -165,6 +188,40 @@ describe("SecPipelineApp", () => {
     expect(useErrorToast).toHaveBeenCalledWith("docker down", expect.any(String));
   });
 
+  it("fires the pipeline-finished toast once, on the transition into completed", () => {
+    const { rerender } = setup({ completed: false });
+    expect(toast.success).not.toHaveBeenCalled();
+
+    vi.mocked(usePipelineStatus).mockReturnValue(
+      loadedQuery({ waiting_for_human: false, completed: true, error: null }) as never,
+    );
+    rerender(<SecPipelineApp />);
+
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringMatching(/past runs/i),
+      expect.objectContaining({ position: "top-center" }),
+    );
+  });
+
+  it("does not re-fire the pipeline-finished toast on a later render that's still completed", () => {
+    const { rerender } = setup({ completed: true });
+    expect(toast.success).toHaveBeenCalledTimes(1);
+
+    rerender(<SecPipelineApp />);
+
+    expect(toast.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire the pipeline-finished toast for a stale completed run this session never observed running", () => {
+    // completed: true from a previous session's leftover state, but
+    // liveRunVisible false because this session never saw it running or
+    // waiting - same staleness guard Sidebar.tsx applies to its own label.
+    setup({ completed: true, liveRunVisible: false });
+
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   it("shows the guided-tour attention hint only when there are no past runs at all yet", () => {
     setup({ pastRunsCount: 0 });
 
@@ -222,7 +279,7 @@ describe("SecPipelineApp", () => {
       expect(driveMock).not.toHaveBeenCalled();
     });
 
-    it("Skip leaves the green hint on the tour button so the tour can still be found", () => {
+    it("Skip leaves the amber hint on the tour button so the tour can still be found", () => {
       setup({ pastRunsCount: 0, welcomeChoice: null });
 
       fireEvent.click(screen.getByRole("button", { name: "Skip" }));

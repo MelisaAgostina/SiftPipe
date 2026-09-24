@@ -191,6 +191,7 @@ export type Strings = {
     pipelineErrorToastTitle: string;
     environmentErrorToastTitle: string;
     guidedTour: string;
+    pipelineFinishedToast: string;
   };
   landing: {
     heading: string;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { driver } from "driver.js";
 import "driver.js/dist/driver.css";
+import { toast } from "sonner";
 import { useErrorToast } from "@/hooks/use-error-toast";
 import { useLang } from "@/hooks/use-lang";
 import { useSessionExpired } from "@/hooks/use-session-expired";
@@ -30,6 +31,10 @@ import type { TabId } from "./data";
 // moment after "Let's go" closes it, and Radix keeps the page non-interactive until
 // it finishes - starting driver.js only after that keeps the tour's own buttons clickable.
 const TOUR_START_DELAY_MS = 300;
+
+// Long enough to read the full sentence without having to rush to the Past
+// Runs tab before it disappears - sonner's 4s default was too short for that.
+const PIPELINE_FINISHED_TOAST_DURATION_MS = 8000;
 
 export function SecPipelineApp() {
   const [tab, setTab] = useState<TabId>("pipeline");
@@ -69,13 +74,33 @@ export function SecPipelineApp() {
 
   const liveRunVisible = useLiveRunVisible();
 
+  // Same "genuinely finished, this session" signal Sidebar.tsx uses to gate
+  // the "Pipeline completed" label — status.completed alone would also fire
+  // for a stale completed run left over from a previous session on page load.
+  const isCompleted = status?.completed === true && liveRunVisible;
+
+  // Fires once on the transition into "completed", not on every 2s status
+  // poll that still sees the same finished run - a juror watching the run
+  // from another tab or scrolled away from the sidebar otherwise has no way
+  // to notice it's done besides remembering to check back.
+  const wasCompleted = useRef(false);
+  useEffect(() => {
+    if (isCompleted && !wasCompleted.current) {
+      toast.success(t.secPipelineApp.pipelineFinishedToast, {
+        duration: PIPELINE_FINISHED_TOAST_DURATION_MS,
+        position: "top-center",
+      });
+    }
+    wasCompleted.current = isCompleted;
+  }, [isCompleted, t.secPipelineApp.pipelineFinishedToast]);
+
   // A juror landing on this cold has no reason to notice the guided-tour
-  // button tucked at the end of the tab row - reuses the same "no past runs
-  // at all yet" signal FirstRunGuide already treats as the real first-time
-  // marker (server-verified, not a localStorage flag that a cleared profile
-  // or a different browser would lose). Dismisses the moment the tour is
-  // actually opened, so it doesn't keep pulsing at someone who already
-  // clicked it but hasn't run the pipeline yet.
+  // button next to the environment-ready indicator in the top bar - reuses
+  // the same "no past runs at all yet" signal FirstRunGuide already treats
+  // as the real first-time marker (server-verified, not a localStorage flag
+  // that a cleared profile or a different browser would lose). Dismisses the
+  // moment the tour is actually opened, so it doesn't keep drawing the eye
+  // at someone who already clicked it but hasn't run the pipeline yet.
   const { data: pastRuns } = usePastRuns();
   const [tourHintDismissed, setTourHintDismissed] = useState(false);
   const showTourHint = pastRuns !== undefined && pastRuns.runs.length === 0 && !tourHintDismissed;
@@ -83,7 +108,7 @@ export function SecPipelineApp() {
   // The welcome card offers that same tour up front, on the same server-verified
   // first-time signal. Whichever way the visitor answers (skip or take the tour) is
   // remembered per browser so it doesn't nag on every reload while history is still
-  // empty; the green hint on the tour button above stays either way, so someone who
+  // empty; the amber hint on the tour button above stays either way, so someone who
   // skipped can still find the tour.
   const [welcomeChoice, setWelcomeChoice] = useState<WelcomeChoice | null>(() =>
     readWelcomeChoice(),
@@ -122,11 +147,11 @@ export function SecPipelineApp() {
         onSkip={() => chooseWelcome("skipped")}
         onStart={startTourFromWelcome}
       />
-      <TopBar />
+      <TopBar onStartTour={startTour} showTourHint={showTourHint} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main className="flex-1 space-y-6 overflow-y-auto p-6">
-          <Tabs value={tab} onChange={setTab} onStartTour={startTour} showTourHint={showTourHint} />
+          <Tabs value={tab} onChange={setTab} />
           {tab === "pipeline" && <PipelineView liveVisible={liveRunVisible} />}
           {tab === "revision" && <PayloadReviewView onValidated={() => setTab("logs")} />}
           {tab === "correlacion" && <CorrelationView liveVisible={liveRunVisible} />}
