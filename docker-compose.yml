@@ -88,6 +88,9 @@ services:
         mkdir -p /repo/results /repo/evidence /repo/db_backups /repo/logs /repo/caddy_data /repo/caddy_config
         touch /repo/siftpipe_history.db
         chown -R 10001:10001 /repo/results /repo/evidence /repo/db_backups /repo/logs /repo/caddy_data /repo/caddy_config /repo/siftpipe_history.db /naviq-src
+        # A Windows-made zip (B3's S3 relay) can extract directories without the execute bit,
+        # which makes them unenterable even for their owner (Django: PermissionError on templates).
+        find /naviq-src -type d -exec chmod u+rwx,go+rx {} +
         mkdir -p /repo/mattermost/volumes/app/mattermost/config /repo/mattermost/volumes/app/mattermost/data /repo/mattermost/volumes/app/mattermost/logs /repo/mattermost/volumes/app/mattermost/plugins /repo/mattermost/volumes/app/mattermost/client/plugins /repo/mattermost/volumes/app/mattermost/bleve-indexes
         chown -R 2000:2000 /repo/mattermost/volumes/app/mattermost
 

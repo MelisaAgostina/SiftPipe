@@ -4,7 +4,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from blocks.dynamic_analysis import build_attack_surface_records, _determine_status, dedupe_forms, dedupe_inputs
+from blocks.dynamic_analysis import (
+    build_attack_surface_records, _determine_status, _login_stuck_message, _server_error_message,
+    dedupe_forms, dedupe_inputs,
+)
 
 
 class TestBuildAttackSurfaceRecords(unittest.TestCase):
@@ -182,6 +185,58 @@ class TestDetermineStatus(unittest.TestCase):
 
     def test_login_ok_with_no_errors_is_complete(self):
         self.assertEqual(_determine_status(login_ok=True, errors=[]), "complete")
+
+
+class TestLoginStuckMessage(unittest.TestCase):
+    """
+    _login_stuck_message() turns "never left the login page" into a message that
+    points at the likely cause (rejected credentials) instead of a bare timeout.
+    """
+
+    PLAYWRIGHT_TIMEOUT = (
+        "Timeout 15000ms exceeded.\n=========================== logs ===========================\n"
+        'waiting for navigation to "<function wrapper_func at 0x1>" until \'load\'\n'
+    )
+
+    def test_names_the_login_path_the_wait_and_the_likely_cause(self):
+        msg = _login_stuck_message("/login", 15000, self.PLAYWRIGHT_TIMEOUT)
+
+        self.assertIn("Still on /login 15s after submitting", msg)
+        self.assertIn("credentials were probably rejected", msg)
+
+    def test_keeps_only_the_first_line_of_the_original_error(self):
+        msg = _login_stuck_message("/login/", 15000, self.PLAYWRIGHT_TIMEOUT)
+
+        self.assertIn("Original error: Timeout 15000ms exceeded.", msg)
+        self.assertNotIn("wrapper_func", msg)
+
+    def test_survives_an_empty_original_error(self):
+        self.assertIn("Original error: timeout", _login_stuck_message("/login", 15000, ""))
+
+
+class TestServerErrorMessage(unittest.TestCase):
+    """
+    _server_error_message() decides whether a crawled page's HTTP status means
+    the page is an error page rather than real content — pure, so testable
+    without a browser, same rationale as _determine_status above.
+    """
+
+    def test_5xx_is_flagged_with_its_code(self):
+        self.assertEqual(_server_error_message(500), "HTTP 500")
+        self.assertEqual(_server_error_message(503), "HTTP 503")
+
+    def test_success_and_redirect_statuses_are_not_flagged(self):
+        for status in (200, 204, 301, 302):
+            self.assertIsNone(_server_error_message(status))
+
+    def test_4xx_is_not_flagged(self):
+        # 403/404 can be a normal page of the app being scanned, not a crawl failure.
+        for status in (401, 403, 404):
+            self.assertIsNone(_server_error_message(status))
+
+    def test_missing_status_is_not_flagged(self):
+        # page.goto() returns None for some navigations (e.g. same-URL hash changes).
+        self.assertIsNone(_server_error_message(None))
 
 
 if __name__ == "__main__":

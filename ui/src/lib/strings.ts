@@ -15,6 +15,8 @@ export type Strings = {
   common: {
     unknown: string;
     unknownTarget: string;
+    // Stand-in for a target's display name while GET /api/target hasn't answered yet.
+    theTarget: string;
     cancel: string;
   };
   phaseLabels: Record<PhaseId, string>;
@@ -72,7 +74,7 @@ export type Strings = {
     logoutErrorTitle: string;
   };
   pipelineView: {
-    liveHintRunning: string;
+    liveHintRunning: (target: string) => string;
     liveHintFinished: string;
     emptyGuideCallout: string;
     b3EmptyMessage: string;
@@ -168,7 +170,7 @@ export type Strings = {
     waitingForB6: string;
     alreadyValidated: (count: number) => string;
     reviewerNotePrefix: string;
-    pausedForReview: string;
+    pausedForReview: (target: string) => string;
     selectedCount: (selected: number, total: number) => string;
     selectAll: string;
     deselectAll: string;
@@ -195,7 +197,6 @@ export type Strings = {
     description: string;
     openPipeline: string;
     logIn: string;
-    footerTagline: string;
   };
   unauthorized: {
     errorLabel: string;
@@ -224,6 +225,13 @@ export type Strings = {
     inputLabel: string;
     errorLlmLabel: string;
     formTitleConnector: (formName: string, method: string) => string;
+  };
+  welcomeCard: {
+    title: string;
+    question: string;
+    description: string;
+    skip: string;
+    start: string;
   };
   tour: {
     nextBtnText: string;

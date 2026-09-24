@@ -11,6 +11,7 @@ import {
   usePipelineStatus,
 } from "@/lib/queries";
 import { clearSessionExpired } from "@/lib/session-expired-store";
+import { readWelcomeChoice, saveWelcomeChoice, type WelcomeChoice } from "@/lib/welcome-choice";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { Tabs } from "./Tabs";
@@ -20,9 +21,15 @@ import { LogsView } from "./LogsView";
 import { PastRunsView } from "./PastRunsView";
 import { PayloadReviewView } from "./PayloadReviewView";
 import { Unauthorized } from "./Unauthorized";
+import { WelcomeCard } from "./WelcomeCard";
 import { buildDriveSteps } from "./buildDriveSteps";
 import { buildTourSteps } from "./tour";
 import type { TabId } from "./data";
+
+// The welcome card's exit animation (ui/dialog.tsx, 200ms) is still running for a
+// moment after "Let's go" closes it, and Radix keeps the page non-interactive until
+// it finishes - starting driver.js only after that keeps the tour's own buttons clickable.
+const TOUR_START_DELAY_MS = 300;
 
 export function SecPipelineApp() {
   const [tab, setTab] = useState<TabId>("pipeline");
@@ -73,6 +80,21 @@ export function SecPipelineApp() {
   const [tourHintDismissed, setTourHintDismissed] = useState(false);
   const showTourHint = pastRuns !== undefined && pastRuns.runs.length === 0 && !tourHintDismissed;
 
+  // The welcome card offers that same tour up front, on the same server-verified
+  // first-time signal. Whichever way the visitor answers (skip or take the tour) is
+  // remembered per browser so it doesn't nag on every reload while history is still
+  // empty; the green hint on the tour button above stays either way, so someone who
+  // skipped can still find the tour.
+  const [welcomeChoice, setWelcomeChoice] = useState<WelcomeChoice | null>(() =>
+    readWelcomeChoice(),
+  );
+  const showWelcome =
+    pastRuns !== undefined && pastRuns.runs.length === 0 && welcomeChoice === null;
+  const chooseWelcome = (choice: WelcomeChoice) => {
+    saveWelcomeChoice(choice);
+    setWelcomeChoice(choice);
+  };
+
   if (sessionExpired) return <Unauthorized />;
 
   const startTour = () => {
@@ -88,8 +110,18 @@ export function SecPipelineApp() {
     }).drive();
   };
 
+  const startTourFromWelcome = () => {
+    chooseWelcome("toured");
+    window.setTimeout(startTour, TOUR_START_DELAY_MS);
+  };
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <WelcomeCard
+        open={showWelcome}
+        onSkip={() => chooseWelcome("skipped")}
+        onStart={startTourFromWelcome}
+      />
       <TopBar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />

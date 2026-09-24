@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 vi.mock("@/lib/queries", () => ({
+  useActiveTarget: vi.fn(),
   useB3: vi.fn(),
   useB4Raw: vi.fn(),
   useB4Summary: vi.fn(),
@@ -11,6 +12,7 @@ vi.mock("@/lib/queries", () => ({
 }));
 
 import {
+  useActiveTarget,
   useB3,
   useB4Raw,
   useB4Summary,
@@ -35,8 +37,14 @@ function setup(
     b3?: unknown;
     b4Raw?: unknown;
     b5?: unknown;
+    target?: { name: string; display_name: string } | undefined;
   } = {},
 ) {
+  vi.mocked(useActiveTarget).mockReturnValue(
+    loadedQuery(
+      "target" in overrides ? overrides.target : { name: "mattermost", display_name: "Mattermost" },
+    ) as never,
+  );
   vi.mocked(usePipelineStatus).mockReturnValue(
     loadedQuery({ running: overrides.running ?? false }) as never,
   );
@@ -51,6 +59,7 @@ function setup(
 describe("PipelineView", () => {
   it("shows the first-run guide instead of any panel when no live run is visible yet", () => {
     vi.mocked(usePastRuns).mockReturnValue(loadedQuery({ runs: [] }) as never);
+    vi.mocked(useActiveTarget).mockReturnValue(loadedQuery(undefined) as never);
     vi.mocked(usePipelineStatus).mockReturnValue(loadedQuery({ running: false }) as never);
     vi.mocked(useB3).mockReturnValue(loadedQuery(EMPTY_B3) as never);
     vi.mocked(useB4Raw).mockReturnValue(loadedQuery(EMPTY_B4RAW) as never);
@@ -66,6 +75,19 @@ describe("PipelineView", () => {
     setup({ running: true });
 
     expect(screen.getByText(/running live against mattermost/i)).toBeInTheDocument();
+  });
+
+  it("names the active target in the running hint instead of always saying Mattermost", () => {
+    setup({ running: true, target: { name: "naviq", display_name: "NaViQ" } });
+
+    expect(screen.getByText(/running live against naviq/i)).toBeInTheDocument();
+    expect(screen.queryByText(/mattermost/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to a generic phrase in the running hint until the active target has loaded", () => {
+    setup({ running: true, target: undefined });
+
+    expect(screen.getByText(/running live against the target/i)).toBeInTheDocument();
   });
 
   it("shows the finished hint once the pipeline is no longer running", () => {

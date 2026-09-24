@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
-import { usePipelineStatus, useB5, useValidatedPayloads, useValidatePayloads } from "@/lib/queries";
+import {
+  useActiveTarget,
+  usePipelineStatus,
+  useB5,
+  useValidatedPayloads,
+  useValidatePayloads,
+} from "@/lib/queries";
 import type { ApiError } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import type { Strings } from "@/lib/strings";
@@ -168,6 +174,7 @@ function InteractiveReview({
   submitting: boolean;
 }) {
   const { t } = useLang();
+  const { data: activeTarget } = useActiveTarget();
   const selectableCount = useMemo(
     () => payloads.filter((g) => g.payloads.length > 0).length,
     [payloads],
@@ -175,7 +182,9 @@ function InteractiveReview({
 
   return (
     <div className="space-y-4">
-      <Callout>{t.payloadReviewView.pausedForReview}</Callout>
+      <Callout>
+        {t.payloadReviewView.pausedForReview(activeTarget?.display_name ?? t.common.theTarget)}
+      </Callout>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
