@@ -320,6 +320,35 @@ PIPELINE_STEPS = [
 ]
 
 
+def _abort_failed_discovery(summary):
+    """
+    Ends the run when B4 could not log in at all (status "failed"): nothing
+    downstream can use an empty attack surface, and B5 would spend paid LLM
+    calls on it - found live 2026-09-23, when a run with a failed B4 went on to
+    B5-B9 and finished as "completed".
+
+    Raises into the same path any crash takes (_fail_pipeline -> status "error",
+    which _find_resume_point already treats as resumable). B4's two result files
+    are removed first because finish_run() snapshots every result file written
+    during the run: left in place, the failed B4 would be recorded as done and
+    Resume would skip straight to B5 with the same empty data. Removed, Resume
+    re-runs B4 only - B3's snapshot is kept, so its paid results aren't redone.
+    """
+    for filename in ("B4_dynamic.json", "attack_surface.json"):
+        try:
+            os.remove(result_path(ACTIVE_TARGET.name, filename))
+        except FileNotFoundError:
+            pass
+
+    errors = summary.get("errors") or []
+    first_message = str(errors[0].get("message", "")).strip() if errors else ""
+    reason = first_message.splitlines()[0] if first_message else "no details recorded"
+    raise RuntimeError(
+        f"B4 dynamic discovery failed ({reason}). "
+        "Fix the cause, then Resume to re-run B4 - B3's results are kept."
+    )
+
+
 def _run_pipeline_from(start_index):
     """
     Runs PIPELINE_STEPS[start_index:], pausing for B6 human review right
@@ -339,7 +368,9 @@ def _run_pipeline_from(start_index):
             for state_id, stored_name, step, start_message in PIPELINE_STEPS[start_index:]:
                 pipeline_state["current_block"] = state_id
                 log(f">> {start_message}")
-                step()
+                result = step()
+                if state_id == "B4" and isinstance(result, dict) and result.get("status") == "failed":
+                    _abort_failed_discovery(result)
                 run_history._snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
                 log(f"OK {state_id} completed")
 

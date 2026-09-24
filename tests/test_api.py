@@ -658,6 +658,97 @@ class TestApiRoutes(unittest.TestCase):
         resumed_run = api.run_history.get_run(run_id)
         self.assertEqual(set(resumed_run["blocks"].keys()), {"B3_static", "B4_dynamic"})
 
+    # ── Failed discovery (B4 could not log in) ──────────────────────────────
+
+    def _write_result(self, target_name, stored_name, data):
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/{target_name}_{stored_name}.json", "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    def _fake_b3_writing_result(self, target_name):
+        def _fake(*a, **k):
+            self._write_result(target_name, "B3_static", {"status": "complete"})
+        return _fake
+
+    def _fake_b4_returning(self, target_name, status, errors=None):
+        """Mimics run_dynamic_discovery: writes B4's two result files, returns its summary."""
+        summary = {"status": status, "forms_found": 0, "errors": errors or []}
+
+        def _fake(*a, **k):
+            self._write_result(target_name, "B4_dynamic", summary)
+            self._write_result(target_name, "attack_surface", {"status": status})
+            return summary
+        return _fake
+
+    def test_failed_b4_ends_the_run_as_error_and_never_reaches_b5(self):
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+        login_error = [{"stage": "login", "message": "Login failed: Still on /login 15s after submitting\nlogs..."}]
+
+        with patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)), \
+             patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "failed", login_error)), \
+             patch.object(api, "generate_payloads") as mock_b5:
+            api._run_pipeline_from(0)
+
+        mock_b5.assert_not_called()
+        self.assertFalse(api.pipeline_state["running"])
+        self.assertFalse(api.pipeline_state["completed"])
+        self.assertFalse(api.pipeline_state["waiting_for_human"])
+        self.assertIn("B4 dynamic discovery failed", api.pipeline_state["error"])
+        self.assertIn("Login failed: Still on /login", api.pipeline_state["error"])
+        self.assertNotIn("logs...", api.pipeline_state["error"])  # only the first line of the reason
+        self.assertEqual(api.run_history.get_run(run_id)["status"], "error")
+
+    def test_failed_b4_resume_reruns_b4_and_keeps_b3(self):
+        """The reason B4's files are removed on failure: finish_run() snapshots every
+        result file, so a left-behind failed B4 would look "done" and Resume would skip it."""
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        with patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)), \
+             patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "failed")), \
+             patch.object(api, "generate_payloads"):
+            api._run_pipeline_from(0)
+
+        self.assertEqual(set(api.run_history.get_run(run_id)["blocks"].keys()), {"B3_static"})
+        self.assertEqual(api._find_resume_point(target_name), (run_id, 1, "B4"))
+
+        # Credentials fixed: Resume re-runs B4 only (B3 must not run again) and reaches B6.
+        b3_reruns = []
+        api.pipeline_state["error"] = None
+        with patch.object(api, "run_static_analysis", side_effect=lambda *a, **k: b3_reruns.append(True)), \
+             patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "complete")), \
+             patch.object(api, "generate_payloads") as mock_b5:
+            api._run_resumed_pipeline(run_id, 1)
+
+        self.assertEqual(b3_reruns, [])
+        mock_b5.assert_called_once()
+        self.assertTrue(api.pipeline_state["waiting_for_human"])
+        self.assertEqual(
+            set(api.run_history.get_run(run_id)["blocks"].keys()),
+            {"B3_static", "B4_dynamic", "attack_surface"},
+        )
+
+    def test_partial_b4_still_continues_to_b5_and_the_b6_pause(self):
+        """Only a failed login stops the run - a partial discovery still has usable data."""
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        with patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)), \
+             patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "partial")), \
+             patch.object(api, "generate_payloads") as mock_b5:
+            api._run_pipeline_from(0)
+
+        mock_b5.assert_called_once()
+        self.assertTrue(api.pipeline_state["waiting_for_human"])
+        self.assertIsNone(api.pipeline_state["error"])
+
     # ── Voluntary discard (POST /api/run/discard) ───────────────────────────
 
     def test_discard_endpoint_rejects_when_not_running(self):
