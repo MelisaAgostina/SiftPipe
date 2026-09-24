@@ -314,6 +314,13 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
             "severity": severity,
             "evidence": evidence,
             "match_rationale": _explain_match(match_tier, matched_b3, b8, judge_rationale, target),
+            # Why the *code itself* is a vulnerability (B3's own reasoning,
+            # not this correlation step's) - distinct from match_rationale
+            # above, which explains why this dynamic attempt was matched to
+            # that static finding, not whether the static finding is real.
+            # None when there's no matched static finding, or it predates
+            # this field (see B3Finding.explanation in ui/src/lib/types.ts).
+            "explanation": (matched_b3 or {}).get("explanation"),
             "matched_static_finding": (
                 {"file": matched_b3.get("file"), "line": matched_b3.get("line"), "vulnerability": matched_b3.get("vulnerability")}
                 if matched_b3 else None
@@ -346,6 +353,7 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
             "severity": severity,
             "evidence": b3.get("evidence", "Static detection only"),
             "match_rationale": f"No dynamic attempt has correlated with this static finding yet ({b3.get('file', 'unknown file')}:{b3.get('line', '?')}).",
+            "explanation": b3.get("explanation"),
             "matched_static_finding": None,
         })
 

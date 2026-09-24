@@ -44,6 +44,10 @@ export type B3Finding = {
   cwe_id?: string; // prompt-requested but not code-enforced — may be absent
   line: number;
   evidence: string;
+  // Plain-language why this specific line is exploitable (CodeQL-style alert
+  // message) - prompt-requested but not code-enforced, and absent on a run
+  // from before this field existed.
+  explanation?: string;
   confidence: "high" | "medium";
   file: string;
 };
@@ -168,6 +172,11 @@ export type B9Entry = {
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   evidence: string;
   match_rationale: string; // plain-language why/where this match_tier was picked
+  // B3's own reasoning for why the matched (or unmatched-static) finding is
+  // exploitable - distinct from match_rationale, which explains the
+  // correlation itself, not the underlying vulnerability. null when there's
+  // no static origin, or absent on a run predating this field.
+  explanation?: string | null;
   matched_static_finding: {
     file: string | null;
     line: number | null;

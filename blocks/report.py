@@ -83,6 +83,7 @@ REPORT_STRINGS = {
         "col_vulnerability": "Vulnerability",
         "col_file": "File / Target",
         "col_class": "Class.",
+        "why_label": "Why:",
         "correlation_label": "Correlation:",
         "eyebrow_recommendations": "Remediation Guidance",
         "recommendations_heading": "Recommendations",
@@ -182,6 +183,7 @@ REPORT_STRINGS = {
         "col_vulnerability": "Vulnerabilidad",
         "col_file": "Archivo / Objetivo",
         "col_class": "Clasif.",
+        "why_label": "Por qué:",
         "correlation_label": "Correlación:",
         "eyebrow_recommendations": "Guía de Remediación",
         "recommendations_heading": "Recomendaciones",
@@ -501,6 +503,16 @@ def _finding_card_html(entry, lang):
     score = entry.get("score")
     score_html = f' {strings["score_label"]} {score:.2f}.' if isinstance(score, (int, float)) else ""
 
+    # B3's own reasoning for why the flagged code is exploitable - absent on
+    # findings with no matched static origin, or from a run predating this
+    # field (see B9Entry.explanation in ui/src/lib/types.ts).
+    explanation = entry.get("explanation")
+    why_html = (
+        f'<div class="rationale"><strong>{_esc(strings["why_label"])}</strong> {_esc(explanation)}</div>'
+        if explanation
+        else ""
+    )
+
     shot_html = ""
     shot_path = entry.get("screenshot_path")
     if shot_path:
@@ -529,6 +541,7 @@ def _finding_card_html(entry, lang):
     </div>
     <div class="evidence-block">{_esc(evidence)}</div>
     {shot_html}
+    {why_html}
     <div class="rationale"><strong>{_esc(strings["correlation_label"])}</strong> {_esc(rationale)}{score_html}</div>
   </div>"""
 
@@ -541,6 +554,9 @@ def _possible_item_html(entry, lang):
     chips = _finding_chips(entry, lang, include_classification=False)
 
     sentences = []
+    explanation = entry.get("explanation")
+    if explanation:
+        sentences.append(_esc(explanation))
     snippet = _clean_evidence_snippet(entry.get("evidence"))
     if snippet:
         sentences.append(f'{_esc(strings["possible_pattern_lead"])} <code>{_esc(snippet)}</code>.')

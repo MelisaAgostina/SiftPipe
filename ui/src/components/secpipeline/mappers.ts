@@ -53,6 +53,7 @@ export function mapB3Finding(f: B3Finding): UIFinding {
     title,
     location: `${f.file}:${f.line}`,
     snippet: f.evidence,
+    description: f.explanation,
     confidence: f.confidence.toUpperCase(),
   };
 }
@@ -155,6 +156,7 @@ export function mapB9Entry(e: B9Entry): UIFinding {
     title,
     location,
     snippet: e.evidence,
+    description: e.explanation ?? undefined,
     severity: e.severity,
     type: e.source,
     score: e.score,

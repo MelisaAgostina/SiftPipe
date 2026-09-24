@@ -196,6 +196,17 @@ class TestGetAnalysisPrompt(unittest.TestCase):
         self.assertIn("cwe_id", prompt)
         self.assertIn("CWE-89", prompt)
 
+    def test_prompt_requests_a_plain_language_explanation_grounded_in_the_evidence(self):
+        """
+        The user-facing feedback this answers: findings had no CodeQL-style
+        "why is this flagged" message, only a code snippet. The LLM already
+        reasons about this when it decides to flag a line - this just asks
+        it to write that reasoning down instead of discarding it.
+        """
+        prompt = get_analysis_prompt("os.system(user_input)")
+        self.assertIn('"explanation"', prompt)
+        self.assertIn("Never just restate the vulnerability name or category", prompt)
+
 
 class TestNumberLines(unittest.TestCase):
     """
