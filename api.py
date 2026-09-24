@@ -542,7 +542,16 @@ class LoginRequest(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    # pipeline_running/pipeline_waiting: exposed unauthenticated, like the
+    # rest of this endpoint - not sensitive (any logged-in user already sees
+    # the same thing in the sidebar), just a plain "is a run occupying the
+    # pipeline right now" signal so scripts/ssm-deploy.sh can refuse to
+    # deploy over an active run instead of silently killing it.
+    return {
+        "status": "ok",
+        "pipeline_running": pipeline_state["running"],
+        "pipeline_waiting": pipeline_state["waiting_for_human"],
+    }
 
 
 @app.post("/api/login")

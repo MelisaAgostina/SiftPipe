@@ -8,6 +8,10 @@ on:
         description: "Type RESET to ALSO permanently wipe SiftPipe's run history after deploying. Leave blank for a normal deploy."
         required: false
         default: ""
+      force:
+        description: "Type FORCE to deploy even if a pipeline run is currently active on the live stack. Leave blank to be blocked instead (recommended)."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -37,4 +41,5 @@ jobs:
         env:
           INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
           RESET_INPUT: ${{ inputs.reset_history }}
+          FORCE_INPUT: ${{ inputs.force }}
         run: bash scripts/ssm-deploy.sh

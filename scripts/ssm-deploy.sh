@@ -6,6 +6,7 @@ set -euo pipefail
 
 : "${INSTANCE_ID:?INSTANCE_ID is required}"
 RESET_INPUT="${RESET_INPUT:-}"
+FORCE_INPUT="${FORCE_INPUT:-}"
 
 REMOTE_DIR="/home/ubuntu/siftpipe"
 REMOTE_USER="ubuntu"
@@ -17,13 +18,39 @@ if [ -n "$RESET_INPUT" ] && [ "$RESET_INPUT" != "RESET" ]; then
   echo "RESET_INPUT must be empty or exactly RESET" >&2
   exit 1
 fi
+if [ -n "$FORCE_INPUT" ] && [ "$FORCE_INPUT" != "FORCE" ]; then
+  echo "FORCE_INPUT must be empty or exactly FORCE" >&2
+  exit 1
+fi
 
 remote_script="set -euo pipefail
 cd $REMOTE_DIR
 git checkout main
 git pull --ff-only origin main
 git submodule update --init --depth 1
-./scripts/fetch-mattermost-secrets.sh
+./scripts/fetch-mattermost-secrets.sh"
+
+# Refuses to deploy over an active run: recreating siftpipe-api mid-run kills
+# it outright (the pipeline runs as a plain in-process thread - see api.py's
+# POST /api/run - with no persisted resume state), leaving that run stuck
+# showing RUNNING forever in Past Runs. Checks the CURRENTLY LIVE stack
+# (pre-pull, pre-rebuild) via /api/health's new pipeline_running/
+# pipeline_waiting fields - unauthenticated, like the rest of that endpoint.
+# grep, not jq: jq is guaranteed on the GitHub Actions runner (used further
+# below in THIS script) but not necessarily on the EC2 host, where this
+# block actually runs. Fails OPEN on purpose - a missing/unreachable stack
+# (first-ever deploy, or already down) must never block a deploy it can't
+# evaluate; only an explicit "true" from a reachable /api/health blocks it.
+if [ "$FORCE_INPUT" != "FORCE" ]; then
+  remote_script="$remote_script
+health=\$(curl -sk https://localhost/api/health || true)
+if echo \"\$health\" | grep -qE '\"pipeline_(running|waiting)\": *true'; then
+  echo 'Refusing to deploy: a pipeline run is currently active on the live stack. Re-run with Force=FORCE to override.' >&2
+  exit 1
+fi"
+fi
+
+remote_script="$remote_script
 ./deploy.sh up"
 
 if [ "$RESET_INPUT" = "RESET" ]; then
