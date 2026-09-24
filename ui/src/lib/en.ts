@@ -4,6 +4,7 @@ export const en: Strings = {
   common: {
     unknown: "unknown",
     unknownTarget: "unknown target",
+    theTarget: "the target",
     cancel: "Cancel",
   },
   phaseLabels: {
@@ -93,7 +94,8 @@ export const en: Strings = {
     logoutErrorTitle: "Couldn't log out — try again.",
   },
   pipelineView: {
-    liveHintRunning: "What you're seeing here is the pipeline running live against Mattermost.",
+    liveHintRunning: (target) =>
+      `What you're seeing here is the pipeline running live against ${target}.`,
     liveHintFinished: "This run has finished — see the Past Runs tab to revisit it later.",
     emptyGuideCallout:
       "No active run in this session yet — run the pipeline from the button in the sidebar to see static analysis, dynamic discovery, and payload generation live, or check the Past Runs tab for previous results.",
@@ -208,8 +210,8 @@ export const en: Strings = {
     waitingForB6: "Waiting for the pipeline to reach the human review step…",
     alreadyValidated: (count) => `Already validated — ${count} target(s) approved in this run.`,
     reviewerNotePrefix: "Reviewer note: ",
-    pausedForReview:
-      "The pipeline is paused, waiting for review. Choose which payloads to run against Mattermost during attack execution.",
+    pausedForReview: (target) =>
+      `The pipeline is paused, waiting for review. Choose which payloads to run against ${target} during attack execution.`,
     selectedCount: (selected, total) => `${selected} of ${total} selected`,
     selectAll: "Select all",
     deselectAll: "Deselect all",
@@ -238,10 +240,9 @@ export const en: Strings = {
   landing: {
     heading: "Hybrid security pipeline",
     description:
-      "SiftPipe pairs AI-driven static analysis with Playwright-powered dynamic discovery and context-aware payload generation — then pauses for human sign-off before any attack runs. Every result gets cross-checked and confirmed, so what you see is signal, not noise.",
+      "A hybrid AI and human security pipeline: it finds, attacks only after your sign-off, and confirms every finding.",
     openPipeline: "Open the pipeline",
     logIn: "Log in",
-    footerTagline: "Fewer false positives. More real findings.",
   },
   unauthorized: {
     errorLabel: "ERROR",
@@ -272,6 +273,13 @@ export const en: Strings = {
     inputLabel: "INPUT",
     errorLlmLabel: "ERROR LLM",
     formTitleConnector: (formName, method) => `${formName} — inputs via ${method}`,
+  },
+  welcomeCard: {
+    title: "Welcome!",
+    question: "Guided Tour?",
+    description: "Get a guided tour through the app for ease of use",
+    skip: "Skip",
+    start: "Let's go!",
   },
   tour: {
     nextBtnText: "Next",

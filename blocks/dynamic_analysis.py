@@ -3,7 +3,7 @@
 import os
 import time
 from urllib.parse import urlsplit
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from dotenv import load_dotenv
 from blocks.mattermost_auth import find_working_selector
 from blocks.targets import MATTERMOST, discovery_evidence_dir
@@ -180,14 +180,47 @@ def _determine_status(login_ok, errors):
     return "complete"
 
 
+LOGIN_REDIRECT_TIMEOUT_MS = 15000
+
+
+def _login_stuck_message(login_path, timeout_ms, original):
+    """Pure message builder for "submitted the login form but never left the login
+    page". Real gap found live 2026-09-23: Mattermost answered a wrong MM_USERNAME
+    with an instant 401, yet B4 only reported Playwright's own "Timeout 15000ms
+    exceeded" plus a wall of internal logs, which reads like a slow-server problem
+    and cost most of a debugging session. Can't be certain of the cause from here
+    (Mattermost returns a 401, Django re-renders the form with a 200, so there's
+    no reliable per-app "bad password" signal), hence "probably"; the original
+    error's first line is kept so a genuine slowness diagnosis isn't lost."""
+    first_line = str(original).strip().splitlines()[0] if str(original).strip() else "timeout"
+    return (
+        f"Still on {login_path} {timeout_ms // 1000}s after submitting the login form - "
+        f"the credentials were probably rejected (check the target's username/password "
+        f"in .env or SSM). Original error: {first_line}"
+    )
+
+
+def _server_error_message(status):
+    """Pure check on the HTTP status the server answered a crawled page with:
+    a 5xx means the app itself broke while rendering it, so what's on screen is
+    an error page (e.g. Django's debug traceback), not the page's real content —
+    scraping its forms would feed the attack surface (and B5's paid calls)
+    garbage. 4xx is deliberately not flagged: a 403/404 can be a normal page of
+    the app being scanned. None/non-int (e.g. goto() returns None for some
+    same-URL navigations) means "no evidence of a problem"."""
+    if isinstance(status, int) and status >= 500:
+        return f"HTTP {status}"
+    return None
+
+
 def _goto_with_retry(page, url, attempts=2, **kwargs):
     """Retries a single transient navigation failure before giving up — a lone
-    network hiccup shouldn't be enough to fail the whole discovery run."""
+    network hiccup shouldn't be enough to fail the whole discovery run.
+    Returns Playwright's Response (or None) so callers can check its status."""
     last_exc = None
     for attempt in range(1, attempts + 1):
         try:
-            page.goto(url, **kwargs)
-            return
+            return page.goto(url, **kwargs)
         except Exception as e:
             last_exc = e
             if attempt < attempts:
@@ -314,7 +347,14 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                 # is always empty (discover_target.py never guesses it, since it
                 # already uses this same URL check for its own success test),
                 # and joining an empty list produced an invalid "" CSS selector.
-                page.wait_for_url(lambda url: target.login_path not in url, timeout=15000)
+                try:
+                    page.wait_for_url(
+                        lambda url: target.login_path not in url, timeout=LOGIN_REDIRECT_TIMEOUT_MS
+                    )
+                except PlaywrightTimeoutError as timeout_error:
+                    raise Exception(
+                        _login_stuck_message(target.login_path, LOGIN_REDIRECT_TIMEOUT_MS, timeout_error)
+                    ) from timeout_error
                 login_ok = True
                 print("Login exitoso.")
 
@@ -413,7 +453,16 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                     visited.add(url)
 
                     try:
-                        _goto_with_retry(page, url, wait_until="domcontentloaded")
+                        response = _goto_with_retry(page, url, wait_until="domcontentloaded")
+                        # Real gap found live 2026-09-23: NaViQ's /dashboard/ 500'd on the
+                        # deployed box (unreadable template dirs), yet B4 scraped Django's
+                        # debug page as if it were the dashboard and reported "complete"
+                        # with 1 form / 0 errors. Raising here reuses the except below, so
+                        # it's recorded as a crawl error (run becomes "partial") and the
+                        # error page's forms/links are never collected.
+                        server_error = _server_error_message(response.status if response else None)
+                        if server_error:
+                            raise Exception(server_error)
                         # domcontentloaded fires once the initial HTML/JS has loaded,
                         # not once a React SPA has actually rendered its content -
                         # wait_for_mattermost_webapp (blocks/environment.py) already

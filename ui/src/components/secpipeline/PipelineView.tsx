@@ -1,4 +1,11 @@
-import { useB3, useB4Raw, useB4Summary, useB5, usePipelineStatus } from "@/lib/queries";
+import {
+  useActiveTarget,
+  useB3,
+  useB4Raw,
+  useB4Summary,
+  useB5,
+  usePipelineStatus,
+} from "@/lib/queries";
 import { useLang } from "@/hooks/use-lang";
 import { mapB3Finding, mapB4Form, mapB4Input, mapB5Group } from "./mappers";
 import { Callout } from "./Callout";
@@ -46,6 +53,8 @@ function B4StatusBanner() {
 export function PipelineView({ liveVisible }: { liveVisible: boolean }) {
   const { t } = useLang();
   const { data: status } = usePipelineStatus();
+  const { data: activeTarget } = useActiveTarget();
+  const targetName = activeTarget?.display_name ?? t.common.theTarget;
   const b3Query = useB3();
   const b4Query = useB4Raw();
   const b5Query = useB5();
@@ -57,7 +66,9 @@ export function PipelineView({ liveVisible }: { liveVisible: boolean }) {
   return (
     <div className="space-y-6">
       <Callout>
-        {status?.running ? t.pipelineView.liveHintRunning : t.pipelineView.liveHintFinished}
+        {status?.running
+          ? t.pipelineView.liveHintRunning(targetName)
+          : t.pipelineView.liveHintFinished}
       </Callout>
 
       <QueryState

@@ -1,5 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
+
+const { driveMock } = vi.hoisted(() => ({ driveMock: vi.fn() }));
 
 // Every child view has its own extensive query dependencies, already
 // covered by their own test files - stubbed here so this file only
@@ -16,7 +18,7 @@ vi.mock("./PayloadReviewView", () => ({
   PayloadReviewView: () => <div>PayloadReviewViewStub</div>,
 }));
 vi.mock("./Unauthorized", () => ({ Unauthorized: () => <div>UnauthorizedStub</div> }));
-vi.mock("driver.js", () => ({ driver: () => ({ drive: vi.fn() }) }));
+vi.mock("driver.js", () => ({ driver: () => ({ drive: driveMock }) }));
 vi.mock("driver.js/dist/driver.css", () => ({}));
 
 vi.mock("@/lib/queries", () => ({
@@ -38,6 +40,7 @@ import {
 import { useSessionExpired } from "@/hooks/use-session-expired";
 import { useErrorToast } from "@/hooks/use-error-toast";
 import { clearSessionExpired } from "@/lib/session-expired-store";
+import { WELCOME_CHOICE_STORAGE_KEY } from "@/lib/welcome-choice";
 import { SecPipelineApp } from "./SecPipelineApp";
 
 function loadedQuery<T>(data: T) {
@@ -51,8 +54,17 @@ function setup(
     statusError?: string | null;
     envError?: string | null;
     pastRunsCount?: number;
+    // What the visitor already chose on the welcome card in an earlier visit.
+    // Defaults to "skipped" so tests that aren't about the card don't have it
+    // pop up over the page (and add a second "Guided Tour?" text to the DOM).
+    welcomeChoice?: "skipped" | "toured" | null;
+    // The run-history query hasn't answered yet (data still undefined).
+    pastRunsLoading?: boolean;
   } = {},
 ) {
+  const welcomeChoice = "welcomeChoice" in overrides ? overrides.welcomeChoice : "skipped";
+  if (welcomeChoice) window.localStorage.setItem(WELCOME_CHOICE_STORAGE_KEY, welcomeChoice);
+
   vi.mocked(usePipelineStatus).mockReturnValue(
     loadedQuery({
       waiting_for_human: overrides.waiting ?? false,
@@ -68,7 +80,9 @@ function setup(
   // care about the tour hint) don't accidentally exercise the first-time
   // state - tests that do care pass pastRunsCount explicitly.
   vi.mocked(usePastRuns).mockReturnValue(
-    loadedQuery({ runs: Array(overrides.pastRunsCount ?? 1).fill({}) }) as never,
+    (overrides.pastRunsLoading
+      ? { data: undefined }
+      : loadedQuery({ runs: Array(overrides.pastRunsCount ?? 1).fill({}) })) as never,
   );
 
   return render(<SecPipelineApp />);
@@ -78,6 +92,12 @@ describe("SecPipelineApp", () => {
   beforeEach(() => {
     vi.mocked(clearSessionExpired).mockClear();
     vi.mocked(useErrorToast).mockClear();
+    driveMock.mockClear();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("shows the Unauthorized page instead of the app shell once the session has expired", () => {
@@ -164,5 +184,87 @@ describe("SecPipelineApp", () => {
     fireEvent.click(screen.getByText(/guided tour/i));
 
     expect(screen.queryByTestId("tour-hint-active")).not.toBeInTheDocument();
+  });
+
+  describe("welcome card", () => {
+    it("appears for a first-time visitor: no past runs and no remembered choice", () => {
+      setup({ pastRunsCount: 0, welcomeChoice: null });
+
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByText("Welcome!")).toBeInTheDocument();
+    });
+
+    it("stays away once at least one past run exists", () => {
+      setup({ pastRunsCount: 1, welcomeChoice: null });
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("stays away when the visitor already answered it on an earlier visit", () => {
+      setup({ pastRunsCount: 0, welcomeChoice: "skipped" });
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("waits for the run history to load instead of flashing for a returning user", () => {
+      setup({ pastRunsLoading: true, welcomeChoice: null });
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("Skip closes it, remembers the choice, and does not start the tour", () => {
+      setup({ pastRunsCount: 0, welcomeChoice: null });
+
+      fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(window.localStorage.getItem(WELCOME_CHOICE_STORAGE_KEY)).toBe("skipped");
+      expect(driveMock).not.toHaveBeenCalled();
+    });
+
+    it("Skip leaves the green hint on the tour button so the tour can still be found", () => {
+      setup({ pastRunsCount: 0, welcomeChoice: null });
+
+      fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+
+      expect(screen.getByTestId("tour-hint-active")).toBeInTheDocument();
+    });
+
+    it("Let's go closes it, remembers the choice, and starts the guided tour", () => {
+      vi.useFakeTimers();
+      setup({ pastRunsCount: 0, welcomeChoice: null });
+
+      fireEvent.click(screen.getByRole("button", { name: "Let's go!" }));
+      expect(window.localStorage.getItem(WELCOME_CHOICE_STORAGE_KEY)).toBe("toured");
+      expect(driveMock).not.toHaveBeenCalled(); // waits for the card's exit animation
+
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(driveMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId("tour-hint-active")).not.toBeInTheDocument();
+    });
+
+    it("does not come back on a reload after being skipped", () => {
+      const first = setup({ pastRunsCount: 0, welcomeChoice: null });
+      fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+      first.unmount();
+
+      // A new mount reads the remembered choice from storage, like a page reload would.
+      render(<SecPipelineApp />);
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("Esc counts as Skip", () => {
+      setup({ pastRunsCount: 0, welcomeChoice: null });
+
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(window.localStorage.getItem(WELCOME_CHOICE_STORAGE_KEY)).toBe("skipped");
+      expect(driveMock).not.toHaveBeenCalled();
+    });
   });
 });

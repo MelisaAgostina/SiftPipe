@@ -166,6 +166,9 @@ def run_dynamic_discovery(pipeline_results, target=None, run_id=None):
         json.dump(attack_surface, f, indent=4)
 
     logger.info(f"B4 dynamic completed and stored in {attack_surface_path}")
+    # Returned so api.py's step loop can tell a failed discovery (login never
+    # worked) apart from a usable one and stop before B5 spends LLM calls on nothing.
+    return summary
 
 
 def execute_attacks(target=None, run_id=None):

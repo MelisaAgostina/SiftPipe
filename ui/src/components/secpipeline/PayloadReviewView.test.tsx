@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
 vi.mock("@/lib/queries", () => ({
+  useActiveTarget: vi.fn(),
   usePipelineStatus: vi.fn(),
   useB5: vi.fn(),
   useValidatedPayloads: vi.fn(),
@@ -9,7 +10,13 @@ vi.mock("@/lib/queries", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import { usePipelineStatus, useB5, useValidatedPayloads, useValidatePayloads } from "@/lib/queries";
+import {
+  useActiveTarget,
+  usePipelineStatus,
+  useB5,
+  useValidatedPayloads,
+  useValidatePayloads,
+} from "@/lib/queries";
 import { toast } from "sonner";
 import { PayloadReviewView } from "./PayloadReviewView";
 
@@ -44,6 +51,9 @@ describe("PayloadReviewView", () => {
       mutate: validateMutate,
       isPending: false,
     } as never);
+    vi.mocked(useActiveTarget).mockReturnValue(
+      loadedQuery({ name: "naviq", display_name: "NaViQ" }) as never,
+    );
   });
 
   function setup(waiting: boolean, b5Payloads = [group()]) {
@@ -74,6 +84,8 @@ describe("PayloadReviewView", () => {
     setup(true);
 
     expect(screen.getByText(/paused, waiting for review/i)).toBeInTheDocument();
+    // Names the active target (mocked as NaViQ here), not a hardcoded "Mattermost".
+    expect(screen.getByText(/payloads to run against naviq/i)).toBeInTheDocument();
     expect(screen.getByRole("checkbox")).toBeInTheDocument();
     expect(screen.getByText("0 of 1 selected")).toBeInTheDocument();
   });

@@ -72,10 +72,6 @@ function Index() {
           </Link>
         </div>
       </section>
-
-      <footer className=" italic relative z-10 mt-8 mb-8 text-xs text-muted-foreground">
-        {t.landing.footerTagline}
-      </footer>
     </main>
   );
 }

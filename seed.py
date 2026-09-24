@@ -9,27 +9,44 @@ BASE_URL = f"{os.getenv('MM_URL', 'http://localhost:8065')}/api/v4"
 ADMIN_EMAIL = os.getenv("MM_ADMIN_EMAIL", "test@mail.com")
 ADMIN_PASS = os.getenv("MM_ADMIN_PASS")  # never hardcode this      # Cambiar por tu contraseña admin
 
-# Datos ficticios a inyectar
-NEW_USER = {
-    "email": "victima@test.com",
-    "username": "usuario_test",
-    "password": "Password123!",
-    "first_name": "Usuario",
-    "last_name": "Prueba"
-}
-NEW_TEAM = {
-    "name": "equipo-tesina",
-    "display_name": "Equipo Tesina",
-    "type": "O" # O = Open (Público)
-}
-NEW_CHANNEL = {
-    "name": "canal-analisis",
-    "display_name": "Canal de Análisis",
-    "type": "O"
-}
+def _require_env(name):
+    """Identifiers and credentials come from .env (or SSM on the deployed box), never
+    from this file: B4/B7 log in with these same variables, so seeding and logging in
+    can't drift apart (found live 2026-09-23: a hardcoded seed email differed from the
+    box's MM_USERNAME, and B4's login failed with a bare timeout)."""
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"[seed] {name} is not set - it defines the seeded account/team/channel.")
+    return value
+
+
+# Datos ficticios a inyectar: identifiers/credentials from the environment,
+# purely fictitious sample content (names, display labels, post text) stays here.
+def _seed_data():
+    new_user = {
+        "email": _require_env("MM_USERNAME"),
+        "username": _require_env("MM_SEED_USERNAME"),
+        "password": _require_env("MM_PASSWORD"),
+        "first_name": "Usuario",
+        "last_name": "Prueba"
+    }
+    new_team = {
+        "name": _require_env("MM_TEAM"),
+        "display_name": "Equipo Tesina",
+        "type": "O" # O = Open (Público)
+    }
+    new_channel = {
+        "name": _require_env("MM_CHANNEL"),
+        "display_name": "Canal de Análisis",
+        "type": "O"
+    }
+    return new_user, new_team, new_channel
+
+
 MESSAGE = "¡Hola! Este es un mensaje semilla inyectado por el orquestador Python."
 
 def seed_mattermost():
+    NEW_USER, NEW_TEAM, NEW_CHANNEL = _seed_data()
     session = requests.Session()
 
     print("1. Autenticando como Admin...")

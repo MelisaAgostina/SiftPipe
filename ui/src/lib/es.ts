@@ -4,6 +4,7 @@ export const es: Strings = {
   common: {
     unknown: "desconocido",
     unknownTarget: "objetivo desconocido",
+    theTarget: "el objetivo",
     cancel: "Cancelar",
   },
   phaseLabels: {
@@ -95,7 +96,7 @@ export const es: Strings = {
     logoutErrorTitle: "No se pudo cerrar sesión — intenta de nuevo.",
   },
   pipelineView: {
-    liveHintRunning: "Esto es el pipeline ejecutándose en vivo contra Mattermost.",
+    liveHintRunning: (target) => `Esto es el pipeline ejecutándose en vivo contra ${target}.`,
     liveHintFinished:
       "Esta ejecución ha terminado — consulta la pestaña de Ejecuciones anteriores para volver a verla.",
     emptyGuideCallout:
@@ -213,8 +214,8 @@ export const es: Strings = {
     waitingForB6: "Esperando a que el pipeline llegue al paso de revisión humana…",
     alreadyValidated: (count) => `Ya validado — ${count} objetivo(s) aprobados en esta ejecución.`,
     reviewerNotePrefix: "Nota del revisor: ",
-    pausedForReview:
-      "El pipeline está en pausa, esperando revisión. Elige qué payloads ejecutar contra Mattermost durante la ejecución de ataques.",
+    pausedForReview: (target) =>
+      `El pipeline está en pausa, esperando revisión. Elige qué payloads ejecutar contra ${target} durante la ejecución de ataques.`,
     selectedCount: (selected, total) => `${selected} de ${total} seleccionados`,
     selectAll: "Seleccionar todos",
     deselectAll: "Deseleccionar todos",
@@ -244,10 +245,9 @@ export const es: Strings = {
   landing: {
     heading: "Pipeline híbrido de seguridad",
     description:
-      "SiftPipe combina análisis estático impulsado por IA con descubrimiento dinámico mediante Playwright y generación de payloads sensible al contexto — y luego se detiene para una aprobación humana antes de ejecutar cualquier ataque. Cada resultado se verifica y confirma de forma cruzada, así que lo que ves es señal, no ruido.",
+      "Un pipeline híbrido de seguridad con IA y revisión humana: encuentra, ataca solo tras tu aprobación y confirma cada hallazgo.",
     openPipeline: "Abrir el pipeline",
     logIn: "Iniciar sesión",
-    footerTagline: "Menos falsos positivos. Más hallazgos reales.",
   },
   unauthorized: {
     errorLabel: "ERROR",
@@ -278,6 +278,13 @@ export const es: Strings = {
     inputLabel: "CAMPO",
     errorLlmLabel: "ERROR LLM",
     formTitleConnector: (formName, method) => `${formName} — campos vía ${method}`,
+  },
+  welcomeCard: {
+    title: "¡Bienvenido!",
+    question: "¿Recorrido guiado?",
+    description: "Haz un recorrido guiado por la app para usarla con más facilidad",
+    skip: "Omitir",
+    start: "¡Vamos!",
   },
   tour: {
     nextBtnText: "Siguiente",

@@ -133,9 +133,16 @@ Console → **EC2 → Launch instance**:
 Then: **Allocate an Elastic IP**, associate it with the instance. (Public
 IPv4 pricing changed in 2024 — a plain public IP now costs the same
 $0.005/hr as an EIP either way, so there's no cost reason to skip this,
-and it keeps the link stable across any restart.) Note the instance's
-AWS-generated hostname (`ec2-XX-XX-XX-XX.compute-1.amazonaws.com`) — this
-is `SITE_ADDRESS` in B4, and needs no domain purchase.
+and it keeps the link stable across any restart.) Note the Elastic IP —
+you'll point a DNS `A` record at it in B4.
+
+**Why not just use the AWS-generated hostname
+(`ec2-XX-XX-XX-XX.compute-1.amazonaws.com`) as `SITE_ADDRESS`?** Let's
+Encrypt refuses to issue certificates for `amazonaws.com` hostnames
+(they're on the shared-domain rate-limit list, and you don't control the
+zone), so Caddy can never get a real cert for one. You need a hostname
+under a domain you own. This project uses `api.siftpipe.com` (backend) and
+`siftpipe.com` (frontend), bought from Cloudflare Registrar.
 
 ### B2. Finish the GitHub deploy role
 
@@ -203,6 +210,16 @@ identifiers, not passwords):
 | `AWS_REGION` | `us-east-1` |
 | `DEPLOY_INSTANCE_ID` | `<INSTANCE_ID>` |
 
+> **The `<...>` in this guide are placeholders — don't paste them in.**
+> Enter the value with no angle brackets: `arn:aws:iam::731872836427:role/...`,
+> not `arn:aws:iam::<731872836427>:role/...`. With the brackets the ARN is
+> malformed and the AWS credentials step fails (this happened).
+>
+> The workflow must pass the ARN to `aws-actions/configure-aws-credentials`
+> as **`role-to-assume`**. `role-to-arn` is not a real input — GitHub
+> Actions only *warns* on unknown inputs rather than failing, so the typo
+> silently hid the misconfiguration until the credentials step ran.
+
 **On every future re-launch** (each time a box gets terminated and a new
 one launched — including October, if the test-day box was torn down),
 this step repeats: the policy is scoped to one instance ARN, so a new
@@ -218,8 +235,17 @@ machine instead, without GitHub: `aws sso login` then
 `INSTANCE_ID=<INSTANCE_ID> bash scripts/ssm-deploy.sh`. If a run fails,
 the Action log shows the server's stderr — common causes are `git pull`
 refusing because someone hand-edited a tracked file on the box (it uses
-`--ff-only`, never overwrites), or `ubuntu` not yet in the `docker` group
-(fixed in B3 below). The Action log is public on a public repo; the
+`--ff-only`, never overwrites — this includes a bare file-mode change like
+`chmod +x` on `scripts/fetch-mattermost-secrets.sh`, which git counts as
+a modification; check with `git status` / `git diff` on the box, and if
+`main` already has the same change, discard the local one with
+`git checkout -- <file>`), or `ubuntu` not yet in the `docker` group
+(fixed in B3 below).
+
+**This workflow only deploys the backend, and only when you click Run
+workflow** (`workflow_dispatch`) — a push to `main` does *not* trigger it.
+The frontend deploys separately (B5): Cloudflare builds it from GitHub on
+its own. The Action log is public on a public repo; the
 script only prints the last 60 lines and never echoes `.env` values.
 
 ### B3. One-time OS-level bootstrap
@@ -279,6 +305,14 @@ never touching port 22:
    unzip naviq-src.zip -d ~/siftpipe/naviq-src/naviq
    rm naviq-src.zip
    ```
+   A zip made on Windows can extract directories *without* the execute
+   bit (mode `664` instead of `775`). A directory you can't "execute" can't
+   be entered, even by its owner, so NaViQ's pages that render templates
+   from those folders return a 500 (`PermissionError` in the container
+   log) — while the crawler still reports "complete". `docker-compose.yml`'s
+   `init-permissions` service now repairs this on every `deploy.sh up`; to
+   check by hand: `find ~/siftpipe/naviq-src/naviq -type d ! -perm -u+x | wc -l`
+   should print `0`.
 4. Back in the Console: select the S3 object → **Delete** — it's private
    third-party source with no redistribution rights, don't leave a copy
    sitting in S3 after this.
@@ -293,7 +327,12 @@ nano .env
 
 Paste in the non-secret keys from `.env.example` (`MM_ADMIN_EMAIL`,
 `MM_URL=http://mattermost:8065`, `MM_TEAM`, `MM_USERNAME`, `MM_CHANNEL`,
-`MM_SEED_USERNAME`, `NAVIQ_URL=http://naviq:8001`, `NAVIQ_USERNAME`), plus
+`MM_SEED_USERNAME`, `NAVIQ_URL=http://naviq:8001`, `NAVIQ_USERNAME`) — note
+`MM_USERNAME`, `MM_SEED_USERNAME`, `MM_TEAM` and `MM_CHANNEL` are what
+`seed.py` creates the test user/team/channel from, and B4 logs in with the
+same `MM_USERNAME` (email) + `MM_PASSWORD` (SSM), so they must describe the
+account that actually exists; a wrong `MM_USERNAME` shows up as a B4 login
+timeout, not as an obvious "bad credentials" — plus
 these lines — **all of these vary per-deployment, re-check every time**,
 not just the first:
 
@@ -302,19 +341,22 @@ SIFTPIPE_SSM_PATH=/siftpipe/
 AWS_REGION=us-east-1
 AWS_DEFAULT_REGION=us-east-1
 NAVIQ_PASSWORD=<same value as the /siftpipe/NAVIQ_PASSWORD SSM parameter>
-FRONTEND_ORIGIN=<the frontend's actual current URL, e.g. https://main-siftpipe.<account>.workers.dev>
-SITE_ADDRESS=<this instance's public DNS hostname, e.g. ec2-XX-XX-XX-XX.compute-1.amazonaws.com>
+FRONTEND_ORIGIN=https://siftpipe.com
+SITE_ADDRESS=api.siftpipe.com
 ```
 
 `AWS_REGION`/`AWS_DEFAULT_REGION` stay `us-east-1` as long as everything
 else does too. `NAVIQ_PASSWORD` only changes if the SSM parameter's value
-ever does. `FRONTEND_ORIGIN` and `SITE_ADDRESS` change **every single
-deployment** — the test day's Cloudflare URL and EC2 hostname are both
-temporary, and October's real ones will be different again.
+ever does. `FRONTEND_ORIGIN` and `SITE_ADDRESS` are now stable, since they
+sit on the permanent `siftpipe.com` domain — re-check them only if the
+domain or frontend URL changes.
 `FRONTEND_ORIGIN` is what switches the session cookie to
 `SameSite=None`+`Secure` and enables CORS for that exact origin, so a
 stale value here silently breaks cross-origin login rather than erroring
-loudly. **Put `SITE_ADDRESS` in `.env` itself, not a shell prefix on
+loudly. **It must include the scheme** (`https://siftpipe.com`, not
+`siftpipe.com`): CORS matches the `Origin` header by exact string, and
+browsers always send the scheme, so a bare hostname never matches and the
+preflight fails silently (this happened). **Put `SITE_ADDRESS` in `.env` itself, not a shell prefix on
 `./deploy.sh up`** — `docker-compose.yml` reads it the same way it reads
 `NAVIQ_PASSWORD`, straight from this file, so it's not something that can
 be silently lost by forgetting to repeat a shell prefix on a later
@@ -340,6 +382,16 @@ existing either way.
 
 ### B4. Bring it up
 
+**First, DNS.** In Cloudflare → `siftpipe.com` → DNS, add an `A` record:
+name `api`, content = the Elastic IP from B1. The live setup has it
+**proxied** (orange cloud). That works: Cloudflare's edge presents its own
+certificate to browsers and forwards to Caddy (requests arrive with a
+`via: 1.1 Caddy` header). Trade-off to know about: a proxied request that
+takes longer than about **100 seconds** is cut off by Cloudflare and the
+browser gets a **524**, even though the origin is fine — relevant for
+long pipeline calls in B6. A DNS-only (grey cloud) record avoids that
+limit, but then Caddy's own Let's Encrypt cert is what browsers see.
+
 `SITE_ADDRESS` is already in `.env` from B3 above, so just:
 
 ```bash
@@ -347,22 +399,32 @@ existing either way.
 curl -sk https://localhost/api/health
 ```
 
-Caddy issues the Let's Encrypt certificate automatically against that
-hostname — no `certbot` step, unlike the pre-containerization plan.
+Caddy requests its Let's Encrypt certificate automatically for
+`api.siftpipe.com` — no `certbot` step, unlike the pre-containerization
+plan. (This needs the DNS record above to exist first, and ports 80/443
+open from B1.)
 
 ### B5. Deploy the frontend
 
-Cloudflare Pages → connect this GitHub repo → build env var
-`VITE_API_BASE=https://<ec2-public-dns-hostname>` → deploy. This repo
-already has the Cloudflare plugin wired in (`ui/wrangler.jsonc`).
+This is a Cloudflare **Worker** (static assets, configured by
+`ui/wrangler.jsonc`), not a Pages project. Cloudflare → Workers & Pages →
+connect this GitHub repo → build env var
+`VITE_API_BASE=https://api.siftpipe.com` → deploy.
 
-For the disposable test day, this is a **temporary** Pages project,
-deleted in B7. For October, this is the real one, kept.
+- **Custom domain:** on the Worker → Settings → Domains & Routes, add
+  `siftpipe.com` as a custom domain (Production).
+- **`workers.dev` URL:** stays reachable unless you disable it in the same
+  settings page; disable it (and the Preview toggle) if you don't want two
+  public URLs. Changing the `name` in `wrangler.jsonc` creates a *new*
+  Worker, and `workers.dev` has to be re-enabled on it.
+- **Auto-deploy:** Cloudflare builds from GitHub on its own; confirm the
+  branch under Settings → Builds. `VITE_API_BASE` is baked in at build
+  time, so changing it needs a rebuild.
 
 ### B6. Go-live check
 
-- `https://<ec2-public-dns-hostname>/api/health` → 200
-- Log in through the actual Cloudflare Pages URL (not `localhost`) — this
+- `https://api.siftpipe.com/api/health` → 200
+- Log in through the actual frontend URL, `https://siftpipe.com` (not `localhost`) — this
   is the one thing that structurally can't be checked before real AWS
   exists: confirms the cross-origin `SameSite=None`+`Secure` cookie
   actually survives a genuinely different domain, not just being
@@ -373,9 +435,12 @@ deleted in B7. For October, this is the real one, kept.
 
 ### B7. Afterward
 
-**Test day (today):** terminate the EC2 instance, release the Elastic IP,
-delete the temporary Cloudflare Pages project. Leave Part A (OIDC
-provider, SSM parameters, budget) untouched — reused as-is in October.
+**Test day (today):** terminate the EC2 instance and release the Elastic
+IP. Leave Part A (OIDC provider, SSM parameters, budget) untouched —
+reused as-is in October. **Don't delete the Cloudflare Worker** — it now
+has the permanent `siftpipe.com` domain attached; decide what stays before
+removing anything there. If the EIP is released, the `api` `A` record
+must be updated to the new IP on the next launch.
 
 **October (real deploy):** no teardown. `aws ec2 stop-instances` only if
 you need to pause and resume later without losing state; full `terminate`
