@@ -251,6 +251,14 @@ export const en: Strings = {
     description: "Your session expired. Log in again to keep going.",
     cta: "Log in again",
   },
+  rootErrors: {
+    errorTitle: "This page didn't load",
+    errorDescription: "Something went wrong on our end. You can try refreshing or head back home.",
+    tryAgain: "Try again",
+    notFoundTitle: "Page not found",
+    notFoundDescription: "The page you're looking for doesn't exist or has been moved.",
+    goHome: "Go home",
+  },
   login: {
     title: "PRIVATE ACCESS",
     subtitle:

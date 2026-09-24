@@ -7,7 +7,7 @@ An LLM-driven pipeline for automated web application security assessment.
 </div>
 
 <div align="center">
-Visit: [siftpipe.com](https://siftpipe.com)
+Visit: https://siftpipe.com
 </div>
 
 ---

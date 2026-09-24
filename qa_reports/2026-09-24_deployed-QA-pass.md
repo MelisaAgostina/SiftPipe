@@ -12,7 +12,7 @@ This pass closes those gaps by testing the **deployed** stack end to end.
 
 ## 2. Methodology and environment
 
-- **Date:** 2026-09-24. **Code under test:** `dev-beta` at `f66205b` (latest commit at the time).
+- **Date:** 2026-09-24. **Code under test:** `main` (latest commit at the time).
 - **Backend:** EC2 `t3.medium`, `us-east-1`, running the Docker Compose stack behind Caddy at `https://api.siftpipe.com`.
 - **Frontend:** Cloudflare-hosted, `https://siftpipe.com`. Deployed independently of the box (Cloudflare builds it from GitHub).
 - **Access path:** the real one — browser → Cloudflare frontend → Caddy (HTTPS) → `siftpipe-api`. No tunnel or direct-to-EC2 shortcut.
