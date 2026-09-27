@@ -414,7 +414,7 @@ connect this GitHub repo → build env var
 
 ### B6. Go-live check
 
-- `https://api.siftpipe.com/api/health` → 200
+- `curl -sk --resolve api.siftpipe.com:443:127.0.0.1 https://api.siftpipe.com/api/health` → 200
 - Log in through the actual frontend URL, `https://siftpipe.com` (not `localhost`) — this
   is the one thing that structurally can't be checked before real AWS
   exists: confirms the cross-origin `SameSite=None`+`Secure` cookie
@@ -440,3 +440,17 @@ only if you need to pause and resume later without losing state; full
 also removes whatever run history/evidence it accumulated (see
 `db_backups/` handling
 if that needs preserving first).
+
+# Coming back at the end of October
+Start instance, and wait about a minute.
+Open a session (Session Manager), switch to the right user, and run:
+
+- sudo su - ubuntu
+- cd ~/siftpipe
+- ./deploy.sh ps
+
+- The containers use restart: unless-stopped, so they should already be back up. If they aren't, run ./deploy.sh up.
+
+- Check https://api.siftpipe.com/api/health in your browser.
+
+- Log in through https://siftpipe.com.
