@@ -29,6 +29,85 @@ Visit: https://siftpipe.com
 
 ---
 
+## Architecture
+
+**Runtime topology** — how the deployed system fits together:
+
+```mermaid
+flowchart LR
+    user([Browser])
+
+    subgraph cf[Cloudflare]
+        ui["React dashboard<br/>(TanStack Start)"]
+    end
+
+    subgraph ec2["AWS EC2 — Docker Compose"]
+        caddy["Caddy<br/>auto-HTTPS :443"]
+        api["siftpipe-api<br/>FastAPI + pipeline blocks"]
+        sidecar["sidecar<br/>Docker control service"]
+        subgraph targets[Targets under test]
+            mm["Mattermost + Postgres"]
+            naviq["NaViQ"]
+        end
+        db[("SQLite<br/>run history")]
+        fs[("results/ + evidence/")]
+    end
+
+    claude{{"Anthropic Claude API"}}
+    ssm[("AWS SSM<br/>Parameter Store")]
+    gha["GitHub Actions<br/>manual deploy"]
+
+    user --> ui
+    ui -->|"HTTPS, session cookie + CSRF header"| caddy
+    caddy -->|"reverse proxy :8000"| api
+    api -->|"static analysis, payloads,<br/>result analysis, correlation"| claude
+    api -->|"Playwright crawl + attacks"| mm
+    api -->|"Playwright crawl + attacks"| naviq
+    api -->|"reset / start / stop requests"| sidecar
+    sidecar -->|"docker.sock: fresh reset"| mm
+    sidecar -->|"docker.sock: fresh reset"| naviq
+    api --> db
+    api --> fs
+    gha -->|"OIDC, SSM Run Command"| ec2
+    ssm -.->|"secrets at deploy"| api
+```
+
+**Pipeline data flow** — what each block reads and produces:
+
+```mermaid
+flowchart TD
+    B1["B1 Environment prep<br/>fresh reset + seed"]
+    src[/"Target source<br/>mattermost-src, naviq-src"/]
+    B3["B3 Static analysis<br/>LLM, OWASP/CWE tagged"]
+    B4["B4 Dynamic discovery<br/>Playwright BFS crawl"]
+    B5["B5 Payload generation<br/>LLM"]
+    B6{"B6 Human review<br/>approve / filter"}
+    B7["B7 Attack execution<br/>Playwright"]
+    ev[/"Screenshots + video"/]
+    B8["B8 Results analysis<br/>LLM: confirmed / possible / discarded"]
+    B9["B9 Correlation + scoring<br/>CWE match, LLM judge, OWASP, text fallback"]
+    B10["B10 PDF report<br/>bilingual, grouped by CWE"]
+    hist[("Run history")]
+
+    B1 --> B3
+    B1 --> B4
+    src --> B3
+    B3 -->|static findings| B5
+    B4 -->|forms + inputs| B5
+    B5 -->|candidate payloads| B6
+    B6 -->|validated payloads| B7
+    B7 --> ev
+    B7 -->|attempts + responses| B8
+    B8 -->|classified attempts| B9
+    B3 -->|static findings| B9
+    B9 -->|scored findings| B10
+    B9 --> hist
+```
+
+Every block is exposed through `api.py` (`/api/run`, `/api/results/{block}`, …) and can also be run from the console via `main.py`. Per-target configuration (selectors, credentials, scan scope) lives in `blocks/targets.py`.
+
+---
+
 ## Stack
 
 - **Backend:** Python, FastAPI, Anthropic Claude (`claude-haiku-4-5`), Playwright, SQLite (run history)

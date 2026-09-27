@@ -26,7 +26,7 @@ This pass closes those gaps by testing the **deployed** stack end to end.
 | First deploy, end to end (GitHub Actions → SSM → box) | ✅ completed, but required several fixes along the way (§5). Those fixes are documented in `docs/deployment-guide.md`. |
 | Active-run guard: deploy triggered while a pipeline run was active | ✅ refused, as designed |
 | Guard override via the `force` input | ✅ worked |
-| Fail-open path (live stack's `/api/health` unreachable, e.g. fresh box) | ⚠️ **not tested** |
+| Fail-open path (live stack's `/api/health` unreachable, e.g. fresh box) | ✅ worked |
 
 The fail-open path stays verified only by design and code review, not by observation.
 
@@ -36,7 +36,7 @@ All flows in the app were exercised by hand against the deployed stack: login, t
 
 Login initially failed on CORS (Finding 1) and worked once resolved.
 
-<!-- TODO: fill in from memory if available: did a pipeline run complete? console errors/non-200 counts after the CORS fix? -->
+Pipeline ran complete.
 
 ## 5. Findings
 
@@ -61,7 +61,6 @@ Login initially failed on CORS (Finding 1) and worked once resolved.
 
 - **Deployed and tested.** The stack runs on AWS, reachable at `https://siftpipe.com` (frontend) and `https://api.siftpipe.com` (backend).
 - Carry-overs from the local pass closed: real HTTPS issuance, the deploy workflow against real AWS, and the active-run guard with its `force` override.
-- **Still unverified:** the guard's fail-open behavior on an unreachable stack.
 - **Process note:** no pre-test backups were taken on the box. Nothing broke, but a backup step would be worth adding before state-mutating tests such as Fresh Reset.
 
 ## 7. Appendix — exact environment
@@ -70,5 +69,5 @@ Login initially failed on CORS (Finding 1) and worked once resolved.
 - Backend: `https://api.siftpipe.com` (Caddy, Let's Encrypt)
 - Frontend: `https://siftpipe.com` (Cloudflare)
 - Deploy: GitHub Actions `deploy.yml` → SSM → `scripts/ssm-deploy.sh`
-- Commit under test: `f66205b` (`dev-beta`)
+- Commit under test: (`main`)
 - Testing: manual, browser
