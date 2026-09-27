@@ -39,6 +39,7 @@ flowchart LR
 
     subgraph cf[Cloudflare]
         ui["React dashboard<br/>(TanStack Start)"]
+        edge["Cloudflare proxy<br/>api.siftpipe.com"]
     end
 
     subgraph ec2["AWS EC2 — Docker Compose"]
@@ -58,8 +59,9 @@ flowchart LR
     gha["GitHub Actions<br/>manual deploy"]
 
     user --> ui
-    ui -->|"HTTPS, session cookie + CSRF header"| caddy
-    caddy -->|"reverse proxy :8000"| api
+    ui -->|"HTTPS, session cookie + CSRF header"| edge
+    edge -->|"HTTPS, real client IP in CF-Connecting-IP"| caddy
+    caddy -->|"reverse proxy :8000<br/>X-Forwarded-For = real client IP"| api
     api -->|"static analysis, payloads,<br/>result analysis, correlation"| claude
     api -->|"Playwright crawl + attacks"| mm
     api -->|"Playwright crawl + attacks"| naviq
