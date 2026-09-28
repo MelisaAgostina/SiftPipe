@@ -70,6 +70,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // so this alone rules it out — with no new server-side state needed.
   headers.set("X-Requested-With", "XMLHttpRequest");
 
+  // credentials: "include" only pulls from a *browser's* cookie jar - during
+  // SSR (this app runs on a Cloudflare Worker via TanStack Start) there is
+  // no cookie jar, so a server-rendered call like routes/app.tsx's
+  // beforeLoad -> checkSession() always looked logged out regardless of the
+  // real session, bouncing any direct navigation or refresh of /app back to
+  // /login. Forwarding the incoming request's own Cookie header fixes that;
+  // it's a no-op client-side, where this function never runs.
+  if (typeof window === "undefined") {
+    const { getRequestHeader } = await import("@tanstack/react-start/server");
+    const cookie = getRequestHeader("cookie");
+    if (cookie) headers.set("Cookie", cookie);
+  }
+
   // credentials: "include" so the session cookie set by POST /api/login
   // rides along on every later request — without it, the browser sends
   // requests as if logged out even right after a successful login.

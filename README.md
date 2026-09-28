@@ -115,8 +115,8 @@ Every block is exposed through `api.py` (`/api/run`, `/api/results/{block}`, …
 - **Backend:** Python, FastAPI, Anthropic Claude (`claude-haiku-4-5`), Playwright, SQLite (run history)
 - **Frontend:** React 19, TanStack Start/Router, TypeScript, Tailwind, Radix UI
 - **Infrastructure:** Docker Compose (`siftpipe-api`, `sidecar`, `naviq`, `mattermost`, `postgres`, `caddy`), Caddy (automatic HTTPS), AWS EC2 + SSM Parameter Store for secrets, Cloudflare (frontend hosting)
-- **Testing:** 430+ backend tests (`unittest`), 200+ frontend tests (Vitest)
-- **CI/Security:** GitHub Actions (lint/test, Docker smoke test, manual SSM deploy with an active-run guard), CodeQL, Dependabot, secret scanning + push protection
+- **Testing:** 460+ backend tests (`unittest`), 210+ frontend tests (Vitest)
+- **CI/Security:** GitHub Actions (lint/test/format check, dependency audit, Docker smoke test, manual SSM deploy with an active-run guard), CodeQL, Dependabot, secret scanning + push protection
 
 ---
 
