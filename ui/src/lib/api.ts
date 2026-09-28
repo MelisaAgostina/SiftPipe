@@ -1,3 +1,4 @@
+import { createIsomorphicFn } from "@tanstack/react-start";
 import type {
   ActiveTarget,
   BlockId,
@@ -61,6 +62,19 @@ async function parseDetail(res: Response): Promise<string | undefined> {
   }
 }
 
+// A plain `typeof window` guard around a dynamic import of
+// "@tanstack/react-start/server" isn't enough - TanStack Start's build
+// statically forbids that specifier from any file reachable by the client
+// bundle (see request() below), regardless of runtime conditionals.
+// createIsomorphicFn is the framework's sanctioned escape hatch: its build
+// plugin strips the .server() branch from the client bundle entirely.
+const getForwardedCookieHeader = createIsomorphicFn()
+  .server(async () => {
+    const { getRequestHeader } = await import("@tanstack/react-start/server");
+    return getRequestHeader("cookie");
+  })
+  .client(async () => undefined);
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   // Required by api.py's require_csrf_header on every protected route: a
@@ -77,11 +91,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // real session, bouncing any direct navigation or refresh of /app back to
   // /login. Forwarding the incoming request's own Cookie header fixes that;
   // it's a no-op client-side, where this function never runs.
-  if (typeof window === "undefined") {
-    const { getRequestHeader } = await import("@tanstack/react-start/server");
-    const cookie = getRequestHeader("cookie");
-    if (cookie) headers.set("Cookie", cookie);
-  }
+  const cookie = await getForwardedCookieHeader();
+  if (cookie) headers.set("Cookie", cookie);
 
   // credentials: "include" so the session cookie set by POST /api/login
   // rides along on every later request — without it, the browser sends
