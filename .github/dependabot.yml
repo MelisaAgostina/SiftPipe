@@ -1,6 +1,11 @@
-# Scheduled version-update PRs. (Security alerts and security-update PRs are
-# switched on in the repo's GitHub settings and need no file.) The
-# github-actions entry also keeps the commit-SHA pins in .github/workflows/
+# Scheduled version-update PRs, limited to minor and patch releases. Major
+# versions are ignored on purpose: each one can break the build or the deploy
+# path (the AWS auth action, the Anthropic SDK) and needs a deliberate, tested
+# upgrade rather than a weekly PR. Security alerts and security-update PRs are
+# switched on in the repo's GitHub settings and are not affected by this file,
+# so a vulnerable dependency still gets a PR even across a major version.
+#
+# The github-actions entry also keeps the commit-SHA pins in .github/workflows/
 # fresh: Dependabot understands the `@<sha> # vX.Y.Z` form and bumps both.
 #
 # sidecar/requirements.txt is deliberately not listed yet - it is tracked
@@ -10,7 +15,11 @@ updates:
   - package-ecosystem: pip
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       python-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -18,7 +27,11 @@ updates:
   - package-ecosystem: npm
     directory: "/ui"
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -26,4 +39,8 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
