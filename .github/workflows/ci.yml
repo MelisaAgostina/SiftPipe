@@ -11,9 +11,9 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
 
@@ -23,10 +23,8 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
-      # ruff format --check is deliberately not wired in yet - it would
-      # currently fail on 31/34 files that predate the formatter being
-      # configured. Add this step once that one-time bulk reformat is done
-      # (see next-steps-before-deployment.md).
+      - name: Format check (ruff)
+        run: ruff format --check .
 
       - name: Test (unittest)
         run: python -m unittest discover -s tests
@@ -37,9 +35,9 @@ jobs:
       run:
         working-directory: ui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -47,7 +45,44 @@ jobs:
 
       - run: npm ci
       - run: npm run lint
+      # `vite build` strips types without checking them, so this is the only
+      # step that would catch a type error before it merges.
+      - run: npm run typecheck
+      - run: npm test
       - run: npm run build
+
+  audit:
+    # Known-vulnerability scan of the dependencies, separate from lint/test so
+    # a newly published advisory (which can appear any day with no code change)
+    # is a distinct red job rather than a confusing failure in the test jobs.
+    # Python is pinned in requirements.txt but has no lockfile for transitive
+    # packages, so this is also the only thing that looks at those.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Audit Python dependencies (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      # Gated at "critical" for now: as of 2026-09-28 the tree has 10 "high"
+      # findings, all in the Cloudflare/wrangler build tooling (undici), whose
+      # only auto-fix is a pre-release miniflare that breaks `npm ci`. Lower
+      # this to "high" once wrangler ships a stable release with the fix.
+      - name: Audit frontend dependencies (npm audit)
+        working-directory: ui
+        run: npm audit --audit-level=critical
 
   docker-smoke:
     # Boots the *entire* compose stack (mattermost, postgres, naviq,
@@ -68,7 +103,7 @@ jobs:
       # would leave siftpipe-api's `COPY mattermost-src/ ./mattermost-src/`
       # copying an empty directory - exactly the class of build-context bug
       # this job exists to catch, so it can't skip fetching it.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           submodules: true
 

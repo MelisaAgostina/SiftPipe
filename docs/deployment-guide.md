@@ -50,8 +50,8 @@ Console → **IAM → Identity providers → Add provider** → OpenID Connect:
 Two separate pieces, because they're resolved at two different times:
 
 **Root `.env` secrets are already handled in code** — `blocks/aws_secrets.py`
-(`load_aws_secrets()`, wired into `blocks/pipeline.py` right after
-`load_dotenv()`) backfills `os.environ` inside the `siftpipe-api` container
+(`load_aws_secrets()`, called from `load_environment()` in `blocks/bootstrap.py`
+right after `load_dotenv()`, which `api.py` runs at startup) backfills `os.environ` inside the `siftpipe-api` container
 at startup, straight from SSM, and never touches disk. No new script
 needed here. Create one SecureString parameter **per key**, flat, directly
 under `/siftpipe/` (non-recursive fetch — nothing nested under it):

@@ -1,11 +1,14 @@
-import os
 import json
+import os
 import re
 from urllib.parse import urlsplit
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
+
+from blocks.crawler import is_same_origin
 from blocks.mattermost_auth import find_working_selector
 from blocks.targets import MATTERMOST, evidence_dir, result_path
-from blocks.crawler import is_same_origin
 from blocks.taxonomy import infer_taxonomy
 
 PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
@@ -16,7 +19,15 @@ PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true
 # alternation scanned once per response (_scan_response_body_markers) -
 # marker text/behavior is unchanged, only how many times `bl` gets walked.
 _SQLI_BODY_MARKERS = ("syntax error", "sqlstate", "sql error", "database error")
-_COMMAND_INJECTION_BODY_MARKERS = ("command not found", "sh:", "/bin/", "uid=", "root:", "permission denied", "no such file")
+_COMMAND_INJECTION_BODY_MARKERS = (
+    "command not found",
+    "sh:",
+    "/bin/",
+    "uid=",
+    "root:",
+    "permission denied",
+    "no such file",
+)
 _MISCONFIGURATION_BODY_MARKERS = ("traceback", "exception", "stack trace", "ora-", "server error")
 
 _BODY_MARKER_CATEGORY = {
@@ -37,14 +48,27 @@ def _scan_response_body_markers(body_lower):
     of a separate any(...) loop re-scanning the string per category."""
     return {_BODY_MARKER_CATEGORY[match.group()] for match in _BODY_MARKER_PATTERN.finditer(body_lower)}
 
+
 # Response bodies never come from a submission — a stylesheet/script/image
 # fetched incidentally around the same time as the real submit shouldn't be
 # mistaken for it. Kept as a second filter alongside method=="POST" (browsers
 # don't POST to fetch static assets in practice, but defense in depth is
 # cheap here) — MULTI_TARGET_PLAN.md Phase 3, Task 3.2.
 _STATIC_ASSET_EXTENSIONS = (
-    ".css", ".js", ".mjs", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-    ".woff", ".woff2", ".ttf", ".eot", ".map",
+    ".css",
+    ".js",
+    ".mjs",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".map",
 )
 
 # Never auto-filled by _fill_sibling_fields()'s generic text/select handling:
@@ -163,7 +187,7 @@ def _login(page, target=None):
     # Replaces the old target.authenticated_selectors wait, which crashed
     # for any discovered target — that field is always empty.
     page.wait_for_url(lambda url: target.login_path not in url, timeout=15000)
-    print("[B7] Login exitoso.")
+    print("[B7] Login successful.")
 
 
 def _is_submission_response(response, base_url):
@@ -286,11 +310,13 @@ def _fill_sibling_fields(page, input_selector):
                     # an optional one alone. set_input_files() takes an
                     # in-memory buffer directly - no temp file needed.
                     if field.evaluate("el => el.required"):
-                        field.set_input_files({
-                            "name": "test.png",
-                            "mimeType": "image/png",
-                            "buffer": _DUMMY_PNG_BYTES,
-                        })
+                        field.set_input_files(
+                            {
+                                "name": "test.png",
+                                "mimeType": "image/png",
+                                "buffer": _DUMMY_PNG_BYTES,
+                            }
+                        )
                     continue
 
                 if field.input_value():
@@ -321,9 +347,11 @@ def _submit(page, input_selector):
     """
     _disable_client_validation(page, input_selector)
     try:
-        submit_btn = page.locator(input_selector).locator(
-            "xpath=ancestor::form//button[@type='submit'] | ancestor::form//input[@type='submit']"
-        ).first
+        submit_btn = (
+            page.locator(input_selector)
+            .locator("xpath=ancestor::form//button[@type='submit'] | ancestor::form//input[@type='submit']")
+            .first
+        )
         submit_btn.click(timeout=3000)
         return
     except Exception:
@@ -355,13 +383,13 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
     """
     base = evidence_dir(target_profile.name, run_id)
     result = {
-        "payload_id":      pid,
-        "status_code":     None,
-        "response_body":   "",
-        "content_type":    "",
+        "payload_id": pid,
+        "status_code": None,
+        "response_body": "",
+        "content_type": "",
         "screenshot_path": f"{base}/dynamic/screenshot_{pid}.png",
-        "video_path":      None,
-        "error":           None,
+        "video_path": None,
+        "error": None,
     }
 
     context = browser.new_context(storage_state=storage_state, record_video_dir=f"{base}/videos/")
@@ -378,7 +406,9 @@ def _execute_one(browser, storage_state, page_url, input_selector, payload, pid,
         _fill_sibling_fields(page, input_selector)
 
         try:
-            with page.expect_response(lambda r: _is_submission_response(r, target_profile.base_url), timeout=8000) as response_info:
+            with page.expect_response(
+                lambda r: _is_submission_response(r, target_profile.base_url), timeout=8000
+            ) as response_info:
                 _submit(page, input_selector)
             response = response_info.value
             result["status_code"] = response.status
@@ -465,10 +495,10 @@ def _check_action_link(browser, link_url, pid, target_profile, run_id):
     """
     base = evidence_dir(target_profile.name, run_id)
     result = {
-        "status_code":     None,
-        "final_url":       None,
+        "status_code": None,
+        "final_url": None,
         "screenshot_path": f"{base}/dynamic/screenshot_{pid}.png",
-        "error":           None,
+        "error": None,
     }
     context = browser.new_context()
     page = context.new_page()
@@ -569,7 +599,7 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
     if not os.path.exists(validated_payloads_path):
         raise FileNotFoundError(f"Not found: {validated_payloads_path}")
 
-    with open(validated_payloads_path, "r", encoding="utf-8") as f:
+    with open(validated_payloads_path, encoding="utf-8") as f:
         raw = json.load(f)
 
     # Support both {payloads: [...]} wrapper and a direct list
@@ -581,8 +611,8 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
     base = evidence_dir(target_profile.name, run_id)
     os.makedirs(f"{base}/dynamic", exist_ok=True)
 
-    findings  = []
-    total     = 0
+    findings = []
+    total = 0
     anomalies = 0
 
     os.makedirs(f"{base}/videos", exist_ok=True)
@@ -602,22 +632,23 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
             login_context.close()
 
             for idx, item in enumerate(validated, start=1):
-
                 # ── FIX: guard against flat string items (B6 format mismatch) ──
                 if not isinstance(item, dict):
-                    print(f"[B7] Advertencia: ítem {idx} es string, no dict. Se omite. "
-                          f"Verifica el formato de {validated_payloads_path}.")
+                    print(
+                        f"[B7] Warning: item {idx} is a string, not a dict. Skipping it. "
+                        f"Check the format of {validated_payloads_path}."
+                    )
                     continue
 
-                page_url     = item.get("page_url") or item.get("action") or item.get("target") or ""
-                target       = item.get("target")   or page_url
-                field_id     = item.get("field_id")
-                field_name   = item.get("field_name")
+                page_url = item.get("page_url") or item.get("action") or item.get("target") or ""
+                target = item.get("target") or page_url
+                field_id = item.get("field_id")
+                field_name = item.get("field_name")
                 payload_list = item.get("payloads") or []
 
                 # ── Skip file inputs — needs set_input_files(), deferred to later sprint ──
                 if field_id == "fileUploadInput":
-                    print(f"[B7] Saltando fileUploadInput en {page_url} (requiere set_input_files)")
+                    print(f"[B7] Skipping fileUploadInput at {page_url} (requires set_input_files)")
                     continue
 
                 selector = _build_selector(field_id, field_name)
@@ -645,21 +676,21 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                     anomalies += 1
                     vuln_taxonomy = infer_taxonomy({"vulnerability": "Broken_Access_Control"})
                     anon_finding = {
-                        "payload_id":       anon_pid,
-                        "target":           target,
-                        "endpoint":         page_url,
-                        "field_id":         field_id,
-                        "payload":          "siftpipe_probe",
-                        "vulnerability":    "Broken_Access_Control",
-                        "cwe_id":           vuln_taxonomy["cwe_id"],
-                        "owasp_category":   vuln_taxonomy["owasp_category"],
-                        "status_code":      anon_status,
+                        "payload_id": anon_pid,
+                        "target": target,
+                        "endpoint": page_url,
+                        "field_id": field_id,
+                        "payload": "siftpipe_probe",
+                        "vulnerability": "Broken_Access_Control",
+                        "cwe_id": vuln_taxonomy["cwe_id"],
+                        "owasp_category": vuln_taxonomy["owasp_category"],
+                        "status_code": anon_status,
                         "anomaly_detected": True,
-                        "detections":       ["Broken_Access_Control"],
-                        "evidence":         f"Submission succeeded (HTTP {anon_status}) with no authenticated session at all",
-                        "screenshot_path":  anon_r.get("screenshot_path"),
-                        "video_path":       anon_r.get("video_path"),
-                        "error":            anon_r.get("error"),
+                        "detections": ["Broken_Access_Control"],
+                        "evidence": f"Submission succeeded (HTTP {anon_status}) with no authenticated session at all",
+                        "screenshot_path": anon_r.get("screenshot_path"),
+                        "video_path": anon_r.get("video_path"),
+                        "error": anon_r.get("error"),
                     }
                     findings.append(anon_finding)
                     with open(f"{base}/dynamic/b7_{anon_pid}.json", "w", encoding="utf-8") as fh:
@@ -673,21 +704,24 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                     pid = f"{idx}_{subidx}"
                     print(f"[B7] [{pid}] {field_id or selector} @ {page_url} | {repr(payload)[:60]}")
 
-                    raw_r = _execute_one(browser, storage_state, page_url, selector, payload, pid, target_profile, run_id)
+                    raw_r = _execute_one(
+                        browser, storage_state, page_url, selector, payload, pid, target_profile, run_id
+                    )
 
                     # ── Detection rules ──
-                    detections   = []
-                    body         = raw_r.get("response_body", "") or ""
-                    status       = raw_r.get("status_code")
+                    detections = []
+                    body = raw_r.get("response_body", "") or ""
+                    status = raw_r.get("status_code")
                     content_type = raw_r.get("content_type", "")
-                    bl           = body.lower()
+                    bl = body.lower()
                     body_markers = _scan_response_body_markers(bl)
 
                     if status == 500 or "sqli" in body_markers:
                         detections.append("SQLi")
 
                     if (
-                        payload and payload in body
+                        payload
+                        and payload in body
                         and _looks_like_xss_payload(payload)
                         and _looks_like_html_response(content_type, body)
                     ):
@@ -762,27 +796,27 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                         evidence = "HTTP 500 returned by target"
                     elif "syntax error" in bl:
                         i = bl.find("syntax error")
-                        evidence = body[max(0, i - 80): i + 200]
+                        evidence = body[max(0, i - 80) : i + 200]
                     elif body:
                         evidence = body[:200]
 
                     finding = {
-                        "payload_id":       pid,
-                        "target":           target,
-                        "endpoint":         page_url,
-                        "field_id":         field_id,
-                        "payload":          payload,
-                        "vulnerability":    vuln,
-                        "cwe_id":           vuln_taxonomy["cwe_id"],
-                        "owasp_category":   vuln_taxonomy["owasp_category"],
-                        "status_code":      status,
+                        "payload_id": pid,
+                        "target": target,
+                        "endpoint": page_url,
+                        "field_id": field_id,
+                        "payload": payload,
+                        "vulnerability": vuln,
+                        "cwe_id": vuln_taxonomy["cwe_id"],
+                        "owasp_category": vuln_taxonomy["owasp_category"],
+                        "status_code": status,
                         "anomaly_detected": bool(detections),
-                        "detections":       detections,
-                        "evidence":         evidence,
-                        "inconclusive":     inconclusive,
-                        "screenshot_path":  raw_r.get("screenshot_path"),
-                        "video_path":       raw_r.get("video_path"),
-                        "error":            raw_r.get("error"),
+                        "detections": detections,
+                        "evidence": evidence,
+                        "inconclusive": inconclusive,
+                        "screenshot_path": raw_r.get("screenshot_path"),
+                        "video_path": raw_r.get("video_path"),
+                        "error": raw_r.get("error"),
                     }
 
                     findings.append(finding)
@@ -803,7 +837,7 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
             attack_surface_path = result_path(target_profile.name, "attack_surface.json")
             action_links = []
             if os.path.exists(attack_surface_path):
-                with open(attack_surface_path, "r", encoding="utf-8") as f:
+                with open(attack_surface_path, encoding="utf-8") as f:
                     action_links = json.load(f).get("action_links", [])
 
             for link_idx, link_url in enumerate(action_links, start=1):
@@ -817,21 +851,21 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
                     anomalies += 1
                     vuln_taxonomy = infer_taxonomy({"vulnerability": "Broken_Access_Control"})
                     link_finding = {
-                        "payload_id":       link_pid,
-                        "target":           link_url,
-                        "endpoint":         link_url,
-                        "field_id":         None,
-                        "payload":          None,
-                        "vulnerability":    "Broken_Access_Control",
-                        "cwe_id":           vuln_taxonomy["cwe_id"],
-                        "owasp_category":   vuln_taxonomy["owasp_category"],
-                        "status_code":      link_status,
+                        "payload_id": link_pid,
+                        "target": link_url,
+                        "endpoint": link_url,
+                        "field_id": None,
+                        "payload": None,
+                        "vulnerability": "Broken_Access_Control",
+                        "cwe_id": vuln_taxonomy["cwe_id"],
+                        "owasp_category": vuln_taxonomy["owasp_category"],
+                        "status_code": link_status,
                         "anomaly_detected": True,
-                        "detections":       ["Broken_Access_Control"],
-                        "evidence":         f"GET {link_url} succeeded (HTTP {link_status}) with no authenticated session at all",
-                        "screenshot_path":  link_r.get("screenshot_path"),
-                        "video_path":       None,
-                        "error":            link_r.get("error"),
+                        "detections": ["Broken_Access_Control"],
+                        "evidence": f"GET {link_url} succeeded (HTTP {link_status}) with no authenticated session at all",
+                        "screenshot_path": link_r.get("screenshot_path"),
+                        "video_path": None,
+                        "error": link_r.get("error"),
                     }
                     findings.append(link_finding)
                     with open(f"{base}/dynamic/b7_{link_pid}.json", "w", encoding="utf-8") as fh:
@@ -846,10 +880,10 @@ def run_payloads(validated_payloads_path, pipeline_results, target_profile=None,
             browser.close()
 
     final = {
-        "status":          "complete",
-        "total_executed":  total,
+        "status": "complete",
+        "total_executed": total,
         "anomalies_found": anomalies,
-        "findings":        findings,
+        "findings": findings,
     }
 
     pipeline_results["B7"] = final

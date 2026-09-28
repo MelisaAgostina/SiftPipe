@@ -53,7 +53,6 @@ class _MediaTestCase(unittest.TestCase):
 
 
 class TestMediaRouteAuth(_MediaTestCase):
-
     def test_unauthenticated_request_is_rejected(self):
         os.makedirs("results", exist_ok=True)
         Path("results/naviq_B3_static.json").write_text('{"hello": "world"}')

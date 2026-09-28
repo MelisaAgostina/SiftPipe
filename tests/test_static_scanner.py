@@ -21,7 +21,6 @@ from blocks.static_scanner import (
 
 
 class TestScanAndSaveFiles(unittest.TestCase):
-
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.source_dir = Path(self._tmp.name)
@@ -156,7 +155,6 @@ class TestScanAndSaveFiles(unittest.TestCase):
 
 
 class TestLoadFilesList(unittest.TestCase):
-
     def test_returns_none_when_file_missing(self):
         self.assertIsNone(load_files_list("this/path/does/not/exist.txt"))
 
@@ -168,7 +166,6 @@ class TestLoadFilesList(unittest.TestCase):
 
 
 class TestGetAnalysisPrompt(unittest.TestCase):
-
     def test_prompt_embeds_file_content_and_owasp_scope(self):
         prompt = get_analysis_prompt("os.system(user_input)")
         self.assertIn("os.system(user_input)", prompt)
@@ -282,9 +279,15 @@ class TestRankBySecurityRelevance(unittest.TestCase):
         would still crowd it out without this dedup (what this test covers).
         """
         files = [
-            "blog/admin.py", "contact/admin.py", "evaluation/admin.py",
-            "home/admin.py", "navitools/admin.py", "portfolio/admin.py",
-            "users/admin.py", "navitools/decorators.py", "misc/notes.py",
+            "blog/admin.py",
+            "contact/admin.py",
+            "evaluation/admin.py",
+            "home/admin.py",
+            "navitools/admin.py",
+            "portfolio/admin.py",
+            "users/admin.py",
+            "navitools/decorators.py",
+            "misc/notes.py",
         ]
 
         ranked = rank_by_security_relevance(files)
@@ -299,7 +302,7 @@ class TestRankBySecurityRelevance(unittest.TestCase):
         self.assertLess(ranked.index("contact/admin.py"), ranked.index("misc/notes.py"))
 
 
-REALISTIC_BODY = "\n".join(f"x{i} = {i}" for i in range(40))   # comfortably above MIN_MEANINGFUL_CHARS
+REALISTIC_BODY = "\n".join(f"x{i} = {i}" for i in range(40))  # comfortably above MIN_MEANINGFUL_CHARS
 
 
 def _reader(contents):
@@ -308,7 +311,6 @@ def _reader(contents):
 
 
 class TestContentSignals(unittest.TestCase):
-
     def names(self, text):
         return {name for name, _ in content_signals(text)}
 
@@ -321,7 +323,7 @@ class TestContentSignals(unittest.TestCase):
         self.assertTrue({"request_input", "access_control"} <= self.names(code))
 
     def test_go_handler_signals(self):
-        code = 'func h(c *Context, w http.ResponseWriter, r *http.Request) {\n  id := c.Params.UserId\n  c.RequireUserId()\n}'
+        code = "func h(c *Context, w http.ResponseWriter, r *http.Request) {\n  id := c.Params.UserId\n  c.RequireUserId()\n}"
 
         self.assertTrue({"request_input", "access_control"} <= self.names(code))
 
@@ -349,7 +351,6 @@ class TestContentSignals(unittest.TestCase):
 
 
 class TestPathPenalty(unittest.TestCase):
-
     def test_ordinary_application_file_has_no_penalty(self):
         self.assertEqual(path_penalty("src/api4/post.go"), 0.0)
 
@@ -393,7 +394,8 @@ class TestRankByContent(unittest.TestCase):
         contents = {
             "blog/admin.py": "from django.contrib import admin\nadmin.site.register(Post)\n",
             "manage.py": "import os\nos.environ.setdefault('X', 'y')\n" + REALISTIC_BODY,
-            "users/views.py": "@login_required\ndef profile(request):\n    return render(request.GET['next'])\n" + REALISTIC_BODY,
+            "users/views.py": "@login_required\ndef profile(request):\n    return render(request.GET['next'])\n"
+            + REALISTIC_BODY,
         }
 
         ranked = self.rank(contents)
@@ -432,7 +434,8 @@ class TestRankByContent(unittest.TestCase):
     def test_a_small_file_whose_path_signals_security_still_beats_unrelated_code(self):
         # navitools/decorators.py is 400 bytes but is NaViQ's staff-only gate.
         contents = {
-            "navitools/decorators.py": "def staff_only(view):\n    if not request.user.is_staff:\n        raise PermissionDenied\n" + "# pad\n" * 15,
+            "navitools/decorators.py": "def staff_only(view):\n    if not request.user.is_staff:\n        raise PermissionDenied\n"
+            + "# pad\n" * 15,
             "misc/report.py": REALISTIC_BODY,
         }
 
@@ -455,7 +458,7 @@ class TestRankByContent(unittest.TestCase):
     def test_results_carry_the_score_and_the_signals_behind_it(self):
         contents = {"api/views.py": "request.GET\nlogin_required\n" + REALISTIC_BODY}
 
-        (path, score, signals), = rank_by_content(list(contents), _reader(contents))
+        ((path, score, signals),) = rank_by_content(list(contents), _reader(contents))
 
         self.assertEqual(path, "api/views.py")
         self.assertEqual(sorted(signals), ["access_control", "request_input"])

@@ -20,18 +20,18 @@ DYNAMIC_RESULT_WEIGHTS = {
     "confirmed": 0.9,
     "possible": 0.5,
     "discarded": 0.1,
-    "untested": 0.3,   # static-only finding: dynamic testing never ran against it
+    "untested": 0.3,  # static-only finding: dynamic testing never ran against it
 }
 
 DYNAMIC_CONFIDENCE_MULTIPLIERS = {"high": 1.0, "medium": 0.85, "low": 0.7}
 
 # How the static/dynamic sides were tied together during correlation.
 MATCH_TIER_WEIGHTS = {
-    "cwe": 1.0,     # exact CWE-ID match
-    "judge": 0.8,   # LLM judged them the same underlying issue
-    "owasp": 0.6,   # same OWASP category only, unresolved by judge
-    "text": 0.5,    # legacy free-text substring match (no taxonomy available)
-    "none": 0.4,    # no counterpart on the other side to corroborate with
+    "cwe": 1.0,  # exact CWE-ID match
+    "judge": 0.8,  # LLM judged them the same underlying issue
+    "owasp": 0.6,  # same OWASP category only, unresolved by judge
+    "text": 0.5,  # legacy free-text substring match (no taxonomy available)
+    "none": 0.4,  # no counterpart on the other side to corroborate with
 }
 
 WEIGHTS = {"dynamic": 0.50, "static": 0.25, "match": 0.25}
@@ -73,11 +73,11 @@ def severity_for_score(score):
 # already used in the score formula above, just read as a standalone label
 # for the ambiguous (POSSIBLE) cases where it actually adds information.
 CONFIDENCE_FOR_MATCH_TIER = {
-    "cwe": "REALLY HIGH",    # exact CWE-ID match between the static and dynamic evidence
-    "judge": "HIGH",         # LLM judged both sides to describe the same underlying issue
-    "owasp": "MEDIUM",       # same OWASP category only, not confirmed as the same specific issue
-    "text": "LOW",           # legacy free-text match, no real taxonomy agreement
-    "none": "LOW",           # nothing on the other side corroborates this at all
+    "cwe": "REALLY HIGH",  # exact CWE-ID match between the static and dynamic evidence
+    "judge": "HIGH",  # LLM judged both sides to describe the same underlying issue
+    "owasp": "MEDIUM",  # same OWASP category only, not confirmed as the same specific issue
+    "text": "LOW",  # legacy free-text match, no real taxonomy agreement
+    "none": "LOW",  # nothing on the other side corroborates this at all
 }
 
 

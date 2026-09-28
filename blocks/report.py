@@ -28,8 +28,8 @@ REPORT_STRINGS = {
         "eyebrow_cover": "SiftPipe · Automated Security Assessment",
         "title": "Security Assessment Report",
         "lede": "Combined static and dynamic analysis for this target, with "
-                "findings correlated by CWE/OWASP taxonomy and classified "
-                "against live exploitation evidence.",
+        "findings correlated by CWE/OWASP taxonomy and classified "
+        "against live exploitation evidence.",
         "meta_generated": "Report generated",
         "meta_mode": "Pipeline mode",
         "meta_started": "Run started",
@@ -77,8 +77,7 @@ REPORT_STRINGS = {
         "possible_pattern_lead": "Pattern detected in code:",
         "remaining_heading": "Discarded findings",
         "rest_note": (
-            "These were tested and ruled out with evidence — not a "
-            "security concern, listed here for completeness."
+            "These were tested and ruled out with evidence — not a security concern, listed here for completeness."
         ),
         "col_vulnerability": "Vulnerability",
         "col_file": "File / Target",
@@ -124,8 +123,8 @@ REPORT_STRINGS = {
         "eyebrow_cover": "SiftPipe · Evaluación de Seguridad Automatizada",
         "title": "Informe de Evaluación de Seguridad",
         "lede": "Análisis estático y dinámico combinado para este entorno, "
-                "con hallazgos correlacionados según la taxonomía CWE/OWASP y "
-                "clasificados a partir de evidencia de explotación real.",
+        "con hallazgos correlacionados según la taxonomía CWE/OWASP y "
+        "clasificados a partir de evidencia de explotación real.",
         "meta_generated": "Informe generado",
         "meta_mode": "Modo de ejecución",
         "meta_started": "Corrida iniciada",
@@ -229,38 +228,70 @@ REPORT_STRINGS = {
 # Spanish name/description for blocks/taxonomy.py's CWE_CATALOG entries.
 # Kept separate from taxonomy.py on purpose — see module docstring.
 CWE_ES = {
-    "CWE-89":   {"name": "Inyección SQL",
-                 "description": "El producto construye la totalidad o parte de un comando SQL usando entradas influenciadas externamente, pero no neutraliza (o neutraliza incorrectamente) los elementos especiales que podrían modificar el comando SQL previsto."},
-    "CWE-78":   {"name": "Inyección de Comandos del Sistema Operativo",
-                 "description": "El producto construye la totalidad o parte de un comando del sistema operativo usando entradas influenciadas externamente, pero no neutraliza (o neutraliza incorrectamente) los elementos especiales que podrían modificar el comando previsto."},
-    "CWE-79":   {"name": "Cross-Site Scripting (XSS)",
-                 "description": "El producto no neutraliza, o neutraliza incorrectamente, la entrada controlable por el usuario antes de incluirla en una salida usada como página web servida a otros usuarios."},
-    "CWE-22":   {"name": "Path Traversal",
-                 "description": "El producto usa una entrada externa para construir una ruta de archivo o directorio dentro de un directorio padre restringido, pero no neutraliza correctamente los elementos especiales que pueden hacer que esa ruta resuelva a una ubicación fuera del directorio restringido."},
-    "CWE-284":  {"name": "Control de Acceso Inadecuado",
-                 "description": "El producto no restringe, o restringe incorrectamente, el acceso a un recurso por parte de un actor no autorizado."},
-    "CWE-862":  {"name": "Falta de Autorización",
-                 "description": "El producto no realiza una verificación de autorización cuando un actor intenta acceder a un recurso o realizar una acción."},
-    "CWE-918":  {"name": "Server-Side Request Forgery (SSRF)",
-                 "description": "El servidor web recibe una URL u otra solicitud similar desde un componente previo y recupera el contenido de esa URL, pero no garantiza suficientemente que la solicitud se envíe al destino esperado."},
-    "CWE-798":  {"name": "Uso de Credenciales Embebidas en el Código",
-                 "description": "El producto contiene credenciales embebidas en el código, como una contraseña o una clave criptográfica."},
-    "CWE-259":  {"name": "Uso de Contraseña Embebida en el Código",
-                 "description": "El producto contiene una contraseña embebida en el código, que usa para su propia autenticación de entrada o para comunicación saliente con componentes externos."},
-    "CWE-16":   {"name": "Configuración de Seguridad Incorrecta",
-                 "description": "Las debilidades de esta categoría se introducen típicamente durante la configuración del software."},
-    "CWE-200":  {"name": "Divulgación de Información",
-                 "description": "El producto expone información sensible a un actor que no está explícitamente autorizado a tener acceso a esa información."},
-    "CWE-287":  {"name": "Autenticación Inadecuada",
-                 "description": "Cuando un actor afirma tener una identidad determinada, el producto no verifica, o verifica de forma insuficiente, que esa afirmación sea correcta."},
-    "CWE-613":  {"name": "Expiración de Sesión Insuficiente",
-                 "description": "La expiración insuficiente de sesión ocurre cuando un sitio web permite que un atacante reutilice credenciales de sesión o IDs de sesión antiguos para autorizarse."},
-    "CWE-1104": {"name": "Uso de Componentes de Terceros sin Mantenimiento",
-                 "description": "El producto depende de componentes de terceros que ya no reciben soporte o mantenimiento activo por parte del desarrollador original o un proxy de confianza."},
-    "CWE-209":  {"name": "Exposición de Información a través de un Mensaje de Error",
-                 "description": "El producto genera un mensaje de error que incluye información sensible sobre su entorno, sus usuarios o los datos asociados."},
-    "CWE-755":  {"name": "Manejo Inadecuado de Condiciones Excepcionales",
-                 "description": "El producto no maneja, o maneja incorrectamente, una condición excepcional."},
+    "CWE-89": {
+        "name": "Inyección SQL",
+        "description": "El producto construye la totalidad o parte de un comando SQL usando entradas influenciadas externamente, pero no neutraliza (o neutraliza incorrectamente) los elementos especiales que podrían modificar el comando SQL previsto.",
+    },
+    "CWE-78": {
+        "name": "Inyección de Comandos del Sistema Operativo",
+        "description": "El producto construye la totalidad o parte de un comando del sistema operativo usando entradas influenciadas externamente, pero no neutraliza (o neutraliza incorrectamente) los elementos especiales que podrían modificar el comando previsto.",
+    },
+    "CWE-79": {
+        "name": "Cross-Site Scripting (XSS)",
+        "description": "El producto no neutraliza, o neutraliza incorrectamente, la entrada controlable por el usuario antes de incluirla en una salida usada como página web servida a otros usuarios.",
+    },
+    "CWE-22": {
+        "name": "Path Traversal",
+        "description": "El producto usa una entrada externa para construir una ruta de archivo o directorio dentro de un directorio padre restringido, pero no neutraliza correctamente los elementos especiales que pueden hacer que esa ruta resuelva a una ubicación fuera del directorio restringido.",
+    },
+    "CWE-284": {
+        "name": "Control de Acceso Inadecuado",
+        "description": "El producto no restringe, o restringe incorrectamente, el acceso a un recurso por parte de un actor no autorizado.",
+    },
+    "CWE-862": {
+        "name": "Falta de Autorización",
+        "description": "El producto no realiza una verificación de autorización cuando un actor intenta acceder a un recurso o realizar una acción.",
+    },
+    "CWE-918": {
+        "name": "Server-Side Request Forgery (SSRF)",
+        "description": "El servidor web recibe una URL u otra solicitud similar desde un componente previo y recupera el contenido de esa URL, pero no garantiza suficientemente que la solicitud se envíe al destino esperado.",
+    },
+    "CWE-798": {
+        "name": "Uso de Credenciales Embebidas en el Código",
+        "description": "El producto contiene credenciales embebidas en el código, como una contraseña o una clave criptográfica.",
+    },
+    "CWE-259": {
+        "name": "Uso de Contraseña Embebida en el Código",
+        "description": "El producto contiene una contraseña embebida en el código, que usa para su propia autenticación de entrada o para comunicación saliente con componentes externos.",
+    },
+    "CWE-16": {
+        "name": "Configuración de Seguridad Incorrecta",
+        "description": "Las debilidades de esta categoría se introducen típicamente durante la configuración del software.",
+    },
+    "CWE-200": {
+        "name": "Divulgación de Información",
+        "description": "El producto expone información sensible a un actor que no está explícitamente autorizado a tener acceso a esa información.",
+    },
+    "CWE-287": {
+        "name": "Autenticación Inadecuada",
+        "description": "Cuando un actor afirma tener una identidad determinada, el producto no verifica, o verifica de forma insuficiente, que esa afirmación sea correcta.",
+    },
+    "CWE-613": {
+        "name": "Expiración de Sesión Insuficiente",
+        "description": "La expiración insuficiente de sesión ocurre cuando un sitio web permite que un atacante reutilice credenciales de sesión o IDs de sesión antiguos para autorizarse.",
+    },
+    "CWE-1104": {
+        "name": "Uso de Componentes de Terceros sin Mantenimiento",
+        "description": "El producto depende de componentes de terceros que ya no reciben soporte o mantenimiento activo por parte del desarrollador original o un proxy de confianza.",
+    },
+    "CWE-209": {
+        "name": "Exposición de Información a través de un Mensaje de Error",
+        "description": "El producto genera un mensaje de error que incluye información sensible sobre su entorno, sus usuarios o los datos asociados.",
+    },
+    "CWE-755": {
+        "name": "Manejo Inadecuado de Condiciones Excepcionales",
+        "description": "El producto no maneja, o maneja incorrectamente, una condición excepcional.",
+    },
 }
 
 # Supplemental CWE name/description for ids that appear in real B9 output
@@ -269,20 +300,32 @@ CWE_ES = {
 # report.py for the same reason CWE_ES is — a presentation-only concern,
 # not the B9 LLM judge's grounding text.
 _EXTRA_CWE_CATALOG = {
-    "CWE-426": {"name": "Untrusted Search Path",
-                "description": "The product searches for critical resources using an externally-influenced search path that can point to resources that are not under the product's direct control."},
-    "CWE-276": {"name": "Incorrect Default Permissions",
-                "description": "During installation, installed file permissions are set to allow anyone to modify those files."},
-    "CWE-377": {"name": "Insecure Temporary File",
-                "description": "Creating and using insecure temporary files can leave application and system data vulnerable to attack."},
+    "CWE-426": {
+        "name": "Untrusted Search Path",
+        "description": "The product searches for critical resources using an externally-influenced search path that can point to resources that are not under the product's direct control.",
+    },
+    "CWE-276": {
+        "name": "Incorrect Default Permissions",
+        "description": "During installation, installed file permissions are set to allow anyone to modify those files.",
+    },
+    "CWE-377": {
+        "name": "Insecure Temporary File",
+        "description": "Creating and using insecure temporary files can leave application and system data vulnerable to attack.",
+    },
 }
 _EXTRA_CWE_ES = {
-    "CWE-426": {"name": "Ruta de Búsqueda No Confiable",
-                "description": "El producto busca recursos críticos usando una ruta de búsqueda influenciada externamente que puede apuntar a recursos que no están bajo el control directo del producto."},
-    "CWE-276": {"name": "Permisos Predeterminados Incorrectos",
-                "description": "Durante la instalación, los permisos de los archivos instalados se configuran de forma que cualquiera puede modificarlos."},
-    "CWE-377": {"name": "Archivo Temporal Inseguro",
-                "description": "Crear y usar archivos temporales inseguros puede dejar los datos de la aplicación y del sistema vulnerables a ataques."},
+    "CWE-426": {
+        "name": "Ruta de Búsqueda No Confiable",
+        "description": "El producto busca recursos críticos usando una ruta de búsqueda influenciada externamente que puede apuntar a recursos que no están bajo el control directo del producto.",
+    },
+    "CWE-276": {
+        "name": "Permisos Predeterminados Incorrectos",
+        "description": "Durante la instalación, los permisos de los archivos instalados se configuran de forma que cualquiera puede modificarlos.",
+    },
+    "CWE-377": {
+        "name": "Archivo Temporal Inseguro",
+        "description": "Crear y usar archivos temporales inseguros puede dejar los datos de la aplicación y del sistema vulnerables a ataques.",
+    },
 }
 
 # One-line, actionable remediation per CWE class for the Recommendations
@@ -366,6 +409,7 @@ def _format_timestamp(iso_string):
     if not iso_string:
         return None
     from datetime import datetime
+
     try:
         dt = datetime.fromisoformat(iso_string)
     except ValueError:
@@ -439,6 +483,7 @@ def _screenshot_data_uri(screenshot_path):
     if not path.exists() or not path.is_file():
         return None
     import base64
+
     try:
         data = path.read_bytes()
     except OSError:
@@ -472,7 +517,9 @@ def _finding_chips(entry, lang, include_classification=True):
     if entry.get("cwe_id"):
         chips.append(f'<span class="chip cwe">{_esc(entry["cwe_id"])}</span>')
     if include_classification:
-        chips.append(f'<span class="chip {chip_class}">{_esc(_classification_label(entry.get("classification"), lang))}</span>')
+        chips.append(
+            f'<span class="chip {chip_class}">{_esc(_classification_label(entry.get("classification"), lang))}</span>'
+        )
     chips.append(f'<span class="chip sev-{sev_class[4:]}">{_esc(_severity_label(entry.get("severity"), lang))}</span>')
     return "".join(chips)
 
@@ -498,10 +545,10 @@ def _finding_card_html(entry, lang):
 
     evidence = entry.get("evidence") or ""
     rationale = entry.get("match_rationale") or (
-        f'{strings["no_dynamic_yet"]}' if entry.get("match_tier") == "none" else ""
+        f"{strings['no_dynamic_yet']}" if entry.get("match_tier") == "none" else ""
     )
     score = entry.get("score")
-    score_html = f' {strings["score_label"]} {score:.2f}.' if isinstance(score, (int, float)) else ""
+    score_html = f" {strings['score_label']} {score:.2f}." if isinstance(score, (int, float)) else ""
 
     # B3's own reasoning for why the flagged code is exploitable - absent on
     # findings with no matched static origin, or from a run predating this
@@ -559,7 +606,7 @@ def _possible_item_html(entry, lang):
         sentences.append(_esc(explanation))
     snippet = _clean_evidence_snippet(entry.get("evidence"))
     if snippet:
-        sentences.append(f'{_esc(strings["possible_pattern_lead"])} <code>{_esc(snippet)}</code>.')
+        sentences.append(f"{_esc(strings['possible_pattern_lead'])} <code>{_esc(snippet)}</code>.")
     rationale = entry.get("match_rationale")
     if rationale:
         sentences.append(_esc(rationale))
@@ -589,8 +636,8 @@ def _possible_list_html(entries, lang):
 
 def _finding_count_label(n, lang):
     if lang == "es":
-        return f'{n} hallazgo' if n == 1 else f'{n} hallazgos'
-    return f'{n} finding' if n == 1 else f'{n} findings'
+        return f"{n} hallazgo" if n == 1 else f"{n} hallazgos"
+    return f"{n} finding" if n == 1 else f"{n} findings"
 
 
 def _recommendation_groups(results):
@@ -620,7 +667,7 @@ def _recommendation_locations(entries):
         if matched and matched.get("file"):
             loc = matched["file"]
             if matched.get("line"):
-                loc = f'{loc}:{matched["line"]}'
+                loc = f"{loc}:{matched['line']}"
         else:
             loc = e.get("target") or "—"
         if loc not in locations:
@@ -639,12 +686,12 @@ def _recommendations_html(results, lang):
     for group in groups:
         cwe_id = group["cwe_id"]
         cwe = _cwe_display(cwe_id, lang) if cwe_id else None
-        title = f'{_esc(cwe_id)} — {_esc(cwe["name"])}' if cwe else _esc(group["vulnerability"] or "—")
+        title = f"{_esc(cwe_id)} — {_esc(cwe['name'])}" if cwe else _esc(group["vulnerability"] or "—")
         locations_html = "<br>".join(_esc(loc) for loc in _recommendation_locations(group["entries"]))
 
         fix_text = remediations.get(cwe_id) if cwe_id else None
         if fix_text:
-            fix_html = f'<strong>{_esc(strings["reco_guidance_label"])}</strong> {_esc(fix_text)}'
+            fix_html = f"<strong>{_esc(strings['reco_guidance_label'])}</strong> {_esc(fix_text)}"
         else:
             fix_html = _esc(strings["reco_fallback"])
 
@@ -659,7 +706,7 @@ def _recommendations_html(results, lang):
   <div class="eyebrow">{_esc(strings["eyebrow_recommendations"])}</div>
   <h2>{_esc(strings["recommendations_heading"])}</h2>
   <p class="lede">{_esc(strings["recommendations_lede"])}</p>
-  {''.join(blocks)}"""
+  {"".join(blocks)}"""
 
 
 def _rest_table_html(entries, lang):
@@ -668,17 +715,17 @@ def _rest_table_html(entries, lang):
     for entry in entries:
         rows.append(
             "<tr>"
-            f'<td>{_esc(entry.get("vulnerability") or "Unknown")}</td>'
+            f"<td>{_esc(entry.get('vulnerability') or 'Unknown')}</td>"
             f'<td class="mono">{_esc(entry.get("cwe_id") or "—")}</td>'
             f'<td class="mono">{_esc(entry.get("target") or "—")}</td>'
-            f'<td>{_esc(_classification_label(entry.get("classification"), lang))}</td>'
+            f"<td>{_esc(_classification_label(entry.get('classification'), lang))}</td>"
             "</tr>"
         )
     return f"""
   <h3>{_esc(strings["remaining_heading"])}</h3>
   <table class="rest-table">
     <thead><tr><th>{_esc(strings["col_vulnerability"])}</th><th>CWE</th><th>{_esc(strings["col_file"])}</th><th>{_esc(strings["col_class"])}</th></tr></thead>
-    <tbody>{''.join(rows)}</tbody>
+    <tbody>{"".join(rows)}</tbody>
   </table>
   <div class="rest-note">{_esc(strings["rest_note"])}</div>"""
 
@@ -745,6 +792,7 @@ def build_report_html(run: dict, lang: str = "en") -> str:
     generated_at = os.environ.get("SIFTPIPE_REPORT_TIME")  # test hook; real calls fall through
     if not generated_at:
         from datetime import datetime, timezone
+
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d · %H:%M UTC")
 
     watermark_uri = _watermark_data_uri()
@@ -794,17 +842,17 @@ def build_report_html(run: dict, lang: str = "en") -> str:
 
   <h3>{_esc(strings["severity_heading"])}</h3>
   <div class="sev-bar">
-    <span class="high" style="width: {sev_counts['HIGH'] / sev_total * 100:.1f}%;"></span>
-    <span class="medium" style="width: {sev_counts['MEDIUM'] / sev_total * 100:.1f}%;"></span>
-    <span class="low" style="width: {sev_counts['LOW'] / sev_total * 100:.1f}%;"></span>
+    <span class="high" style="width: {sev_counts["HIGH"] / sev_total * 100:.1f}%;"></span>
+    <span class="medium" style="width: {sev_counts["MEDIUM"] / sev_total * 100:.1f}%;"></span>
+    <span class="low" style="width: {sev_counts["LOW"] / sev_total * 100:.1f}%;"></span>
   </div>
   <div class="legend">
-    <span><span class="dot high"></span>{_esc(strings["severity"]["HIGH"])} &middot; {sev_counts['HIGH']}</span>
-    <span><span class="dot medium"></span>{_esc(strings["severity"]["MEDIUM"])} &middot; {sev_counts['MEDIUM']}</span>
-    <span><span class="dot low"></span>{_esc(strings["severity"]["LOW"])} &middot; {sev_counts['LOW']}</span>
+    <span><span class="dot high"></span>{_esc(strings["severity"]["HIGH"])} &middot; {sev_counts["HIGH"]}</span>
+    <span><span class="dot medium"></span>{_esc(strings["severity"]["MEDIUM"])} &middot; {sev_counts["MEDIUM"]}</span>
+    <span><span class="dot low"></span>{_esc(strings["severity"]["LOW"])} &middot; {sev_counts["LOW"]}</span>
   </div>
 
-  {'<div class="owasp-list"><h3>' + _esc(strings["owasp_heading"]) + '</h3>' + owasp_html + '</div>' if owasp_rows else ''}
+  {'<div class="owasp-list"><h3>' + _esc(strings["owasp_heading"]) + "</h3>" + owasp_html + "</div>" if owasp_rows else ""}
 
   <p class="muted how-to-read">
     <strong>{_esc(strings["how_to_read_label"])}</strong>
@@ -820,7 +868,7 @@ def build_report_html(run: dict, lang: str = "en") -> str:
   </div>
   {findings_html}
 
-  {'<div class="section-break"></div>' + recommendations_html if recommendations_html else ''}
+  {'<div class="section-break"></div>' + recommendations_html if recommendations_html else ""}
 
   <div class="section-break"></div>
 
@@ -850,7 +898,7 @@ def _cwe_appendix_html(results, lang):
         entries.append(
             f'<div class="cwe-entry"><span class="cwe-id">{_esc(cwe_id)}</span>'
             f'<span class="cwe-name">{_esc(info["name"])}</span>'
-            f'<p>{_esc(desc)}</p></div>'
+            f"<p>{_esc(desc)}</p></div>"
         )
     return f'<div class="cwe-list">{"".join(entries)}</div>'
 

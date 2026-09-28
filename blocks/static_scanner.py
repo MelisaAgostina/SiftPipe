@@ -1,16 +1,17 @@
+import json
 import logging
 import os
-import json
 import re
 from pathlib import Path
 
+from blocks.llm import is_llm_error
 from blocks.targets import MATTERMOST, result_path
 from blocks.taxonomy import OWASP_TOP10_2025
 
 logger = logging.getLogger("siftpipe")
 
-#block 3 static code analysis with LLM
-# Definición del alcance técnico basado en el estándar OWASP Top 10:2025 para el Bloque 3.
+# block 3 static code analysis with LLM
+# Technical scope for Block 3, based on the OWASP Top 10:2025 standard.
 # NOTE: these codes went through two corrections on 2026-07-31. First to fix
 # a swap relative to OWASP Top 10 2021 (Injection was tagged "A05", Security
 # Misconfiguration "A02"). Then, on realizing OWASP Top 10:2025 was already
@@ -27,8 +28,7 @@ _OWASP_SCOPE_DESCRIPTIONS = {
     "A07": "Review session management for missing inactivity timeouts. Check for improper validation of authentication tokens (like JWTs) or insecure Single Sign-On (SSO) implementations, and ensure sessions are actively destroyed upon logout. ALSO look for: missing rate-limiting or account lockout on login/password-reset endpoints (allowing unlimited brute-force attempts); a password-reset or email-verification token generated with a non-cryptographic random source (math/rand in Go, Python's random module, JavaScript's Math.random()) instead of a CSPRNG, making it guessable; a password-reset token that never expires or isn't invalidated after first use; and passwords stored in plaintext or hashed with a broken/fast algorithm (MD5, SHA-1, unsalted hashes) instead of bcrypt/argon2/scrypt.",
 }
 OWASP_SCOPE = {
-    code: f"{OWASP_TOP10_2025[code]}: {description}"
-    for code, description in _OWASP_SCOPE_DESCRIPTIONS.items()
+    code: f"{OWASP_TOP10_2025[code]}: {description}" for code, description in _OWASP_SCOPE_DESCRIPTIONS.items()
 }
 
 # Mattermost's own values - kept as this function's defaults so any caller
@@ -101,9 +101,9 @@ def scan_and_save_files(
                 if relevant_dirs is None or any(part in relevant_dirs for part in Path(root).parts):
                     source_files.append(os.path.join(root, file))
 
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         for path in source_files:
-            f.write(path + '\n')
+            f.write(path + "\n")
 
     return source_files
 
@@ -112,8 +112,8 @@ def load_files_list(file_path):
     """Load the list of files saved to disk if it exists."""
     if not os.path.exists(file_path):
         return None
-    
-    with open(file_path, 'r', encoding='utf-8') as f:
+
+    with open(file_path, encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
 
 
@@ -192,9 +192,26 @@ MAX_FILES = 10  # could scan more but it would consume a lot of tokens during de
 # (access_control_test.go, ai_bridge_test_helper.go, ...), not on anything
 # chosen for being likely to contain a real vulnerability.
 SECURITY_RELEVANT_KEYWORDS = (
-    "auth", "permission", "session", "login", "password", "token", "admin",
-    "upload", "download", "payment", "webhook", "exec", "sql", "inject",
-    "crypto", "secret", "access_control", "sanitiz", "validat", "escape",
+    "auth",
+    "permission",
+    "session",
+    "login",
+    "password",
+    "token",
+    "admin",
+    "upload",
+    "download",
+    "payment",
+    "webhook",
+    "exec",
+    "sql",
+    "inject",
+    "crypto",
+    "secret",
+    "access_control",
+    "sanitiz",
+    "validat",
+    "escape",
     # "decorator" added 2026-09-06: real gap found live against NaViQ -
     # Django's convention puts view-wrapping access-control gates (e.g.
     # navitools/decorators.py's `not settings.NAVITOOLS_LIVE and not
@@ -258,8 +275,8 @@ def _path_tiers(files):
 # with cheap regexes on the same first SCAN_HEAD_CHARS characters B3 would send. This
 # only decides *which* files win the limited slots; the LLM still makes every judgment.
 SCAN_HEAD_CHARS = 15000
-MIN_MEANINGFUL_CHARS = 150      # below this a file can't hold real logic (empty __init__.py, one-line urls.py)
-TINY_FILE_PENALTY = 3.0         # larger than any path bonus, so trivia never outranks a real file
+MIN_MEANINGFUL_CHARS = 150  # below this a file can't hold real logic (empty __init__.py, one-line urls.py)
+TINY_FILE_PENALTY = 3.0  # larger than any path bonus, so trivia never outranks a real file
 UNIQUE_RELEVANT_PATH_BONUS = 2.5
 REPEATED_RELEVANT_PATH_BONUS = 0.5
 
@@ -273,37 +290,176 @@ REPEATED_RELEVANT_PATH_BONUS = 0.5
 # to look for inside the scanned source (e.g. "eval("); nothing here is ever executed.
 CONTENT_SIGNALS = (
     # A05 injection: raw SQL and command execution
-    ("injection_sinks", 3,
-     ("cursor.execute", ".raw(", ".extra(", "RawSQL", "subprocess.", "os.system", "os.popen", "exec.Command",
-      "child_process", "shell=True", "Runtime.getRuntime", "execSync"), ()),
+    (
+        "injection_sinks",
+        3,
+        (
+            "cursor.execute",
+            ".raw(",
+            ".extra(",
+            "RawSQL",
+            "subprocess.",
+            "os.system",
+            "os.popen",
+            "exec.Command",
+            "child_process",
+            "shell=True",
+            "Runtime.getRuntime",
+            "execSync",
+        ),
+        (),
+    ),
     # A05 injection: unsafe deserialization/eval and unescaped output (XSS, template injection)
-    ("unsafe_eval_or_output", 2,
-     ("eval(", "pickle.load", "yaml.load(", "marshal.loads", "unserialize", "ObjectInputStream", "mark_safe", "|safe",
-      "innerHTML", "dangerouslySetInnerHTML", "template.HTML(", "Markup(", "autoescape off", "document.write"), ()),
+    (
+        "unsafe_eval_or_output",
+        2,
+        (
+            "eval(",
+            "pickle.load",
+            "yaml.load(",
+            "marshal.loads",
+            "unserialize",
+            "ObjectInputStream",
+            "mark_safe",
+            "|safe",
+            "innerHTML",
+            "dangerouslySetInnerHTML",
+            "template.HTML(",
+            "Markup(",
+            "autoescape off",
+            "document.write",
+        ),
+        (),
+    ),
     # attack surface: code that reads attacker-controlled input or defines routes
-    ("request_input", 3,
-     ("request.GET", "request.POST", "request.FILES", "request.body", "request.data", "request.args", "request.form",
-      "request.json", "request.COOKIES", "request.META", "request.query_params", "r.FormValue", "r.URL.Query",
-      "r.Body", "c.Query(", "c.Param(", "c.PostForm", "c.Params.", "getParameter", "req.body", "req.query", "req.params",
-      "mux.Vars", "@app.route", "@api_view", "HandleFunc"), ()),
+    (
+        "request_input",
+        3,
+        (
+            "request.GET",
+            "request.POST",
+            "request.FILES",
+            "request.body",
+            "request.data",
+            "request.args",
+            "request.form",
+            "request.json",
+            "request.COOKIES",
+            "request.META",
+            "request.query_params",
+            "r.FormValue",
+            "r.URL.Query",
+            "r.Body",
+            "c.Query(",
+            "c.Param(",
+            "c.PostForm",
+            "c.Params.",
+            "getParameter",
+            "req.body",
+            "req.query",
+            "req.params",
+            "mux.Vars",
+            "@app.route",
+            "@api_view",
+            "HandleFunc",
+        ),
+        (),
+    ),
     # A01 access control: authorization decorators and permission checks
-    ("access_control", 3,
-     ("login_required", "permission_required", "is_staff", "is_superuser", "has_perm", "HasPermission", "IsAuthenticated",
-      "AllowAny", "csrf_exempt", "get_object_or_404", "Authorize(", "user_passes_test", "RequireUserId"), ("rbac",)),
+    (
+        "access_control",
+        3,
+        (
+            "login_required",
+            "permission_required",
+            "is_staff",
+            "is_superuser",
+            "has_perm",
+            "HasPermission",
+            "IsAuthenticated",
+            "AllowAny",
+            "csrf_exempt",
+            "get_object_or_404",
+            "Authorize(",
+            "user_passes_test",
+            "RequireUserId",
+        ),
+        ("rbac",),
+    ),
     # path traversal / SSRF / open redirect / uploads
-    ("file_and_network", 2,
-     ("open(", "os.path.join", "send_file", "FileResponse", "os.Open", "ioutil.", "filepath.Join", "requests.get(",
-      "requests.post(", "requests.put(", "requests.request(", "urlopen(", "http.Get(", "http.Post(", "redirect(",
-      "HttpResponseRedirect", "shutil.", "tempfile."), ("upload",)),
+    (
+        "file_and_network",
+        2,
+        (
+            "open(",
+            "os.path.join",
+            "send_file",
+            "FileResponse",
+            "os.Open",
+            "ioutil.",
+            "filepath.Join",
+            "requests.get(",
+            "requests.post(",
+            "requests.put(",
+            "requests.request(",
+            "urlopen(",
+            "http.Get(",
+            "http.Post(",
+            "redirect(",
+            "HttpResponseRedirect",
+            "shutil.",
+            "tempfile.",
+        ),
+        ("upload",),
+    ),
     # A02 misconfiguration and hardcoded secrets
-    ("secrets_and_config", 2, (),
-     ("secret", "api_key", "apikey", "passwd", "credential", "debug = true", "debug=true", "allowed_hosts", "verify=false",
-      "verify = false", "insecureskipverify", "cors_allow_all", "cors_origin", "secure_ssl", "secure_hsts", "secure_proxy",
-      "x_frame")),
+    (
+        "secrets_and_config",
+        2,
+        (),
+        (
+            "secret",
+            "api_key",
+            "apikey",
+            "passwd",
+            "credential",
+            "debug = true",
+            "debug=true",
+            "allowed_hosts",
+            "verify=false",
+            "verify = false",
+            "insecureskipverify",
+            "cors_allow_all",
+            "cors_origin",
+            "secure_ssl",
+            "secure_hsts",
+            "secure_proxy",
+            "x_frame",
+        ),
+    ),
     # A07 authentication, sessions, tokens and weak crypto
-    ("auth_and_crypto", 2, (),
-     ("check_password", "set_password", "authenticate(", "jwt", "bearer", "session", "make_password", "md5", "sha1", "rc4",
-      "math/rand", "math.random", "random.randint", "random.choice", "random.random")),
+    (
+        "auth_and_crypto",
+        2,
+        (),
+        (
+            "check_password",
+            "set_password",
+            "authenticate(",
+            "jwt",
+            "bearer",
+            "session",
+            "make_password",
+            "md5",
+            "sha1",
+            "rc4",
+            "math/rand",
+            "math.random",
+            "random.randint",
+            "random.choice",
+            "random.random",
+        ),
+    ),
 )
 
 # SQL assembled from pieces (the actual injection pattern), as opposed to merely running SQL.
@@ -331,8 +487,27 @@ def content_signals(content):
 # outrank the real handlers; tooling directories (scripts/, migrations/) are one-off code.
 TEST_PATH_PENALTY = 3.0
 TOOLING_PATH_PENALTY = 1.5
-_TEST_DIRS = frozenset({"test", "tests", "testing", "testdata", "testutil", "testutils", "testlib", "storetest",
-                        "mocks", "mock", "fixtures", "fixture", "e2e", "cypress", "spec", "specs", "__tests__"})
+_TEST_DIRS = frozenset(
+    {
+        "test",
+        "tests",
+        "testing",
+        "testdata",
+        "testutil",
+        "testutils",
+        "testlib",
+        "storetest",
+        "mocks",
+        "mock",
+        "fixtures",
+        "fixture",
+        "e2e",
+        "cypress",
+        "spec",
+        "specs",
+        "__tests__",
+    }
+)
 _TOOLING_DIRS = frozenset({"scripts", "tools", "examples", "migrations", "demo", "docs"})
 
 
@@ -347,7 +522,9 @@ def path_penalty(path, root=None):
         any(part in _TEST_DIRS for part in directories)
         or stem.startswith("test_")
         or stem.endswith(("_test", "_tests", "_mock", "_mocks"))
-        or "testutil" in stem or "test_util" in stem or "test_helper" in stem
+        or "testutil" in stem
+        or "test_util" in stem
+        or "test_helper" in stem
     ):
         return TEST_PATH_PENALTY
     if any(part in _TOOLING_DIRS for part in directories):
@@ -357,7 +534,7 @@ def path_penalty(path, root=None):
 
 def _read_head(file_path):
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
             return f.read(SCAN_HEAD_CHARS)
     except OSError:
         return None
@@ -394,6 +571,22 @@ def rank_by_content(files, read_head=_read_head, root=None):
     return [(path, score, signals) for path, score, signals, _, _ in scored]
 
 
+# At or above this share of failed files, B3's result is "error" rather than
+# "partial": a scan where half the files were never analyzed can't be trusted
+# to say the code is clean.
+B3_ERROR_FAILURE_RATIO = 0.5
+
+
+def scan_status(failed, total):
+    """ "complete" when every file was analyzed, "error" when the failure share
+    reaches B3_ERROR_FAILURE_RATIO, "partial" in between."""
+    if failed == 0:
+        return "complete"
+    if failed / total >= B3_ERROR_FAILURE_RATIO:
+        return "error"
+    return "partial"
+
+
 def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
     """
     B3's scan loop, LLM calls, and result-filtering - moved here from
@@ -425,30 +618,42 @@ def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
     ranked = rank_by_content(files, root=target_profile.source_dir)[:MAX_FILES]
     logger.info(
         "B3 file selection (score, signals): "
-        + "; ".join(f"{os.path.basename(path)} ({score:g}: {', '.join(signals) or 'none'})" for path, score, signals in ranked)
+        + "; ".join(
+            f"{os.path.basename(path)} ({score:g}: {', '.join(signals) or 'none'})" for path, score, signals in ranked
+        )
     )
 
     results = []
+    # Files that produced no usable analysis (LLM call failed, unparsable or
+    # wrongly-shaped answer, unreadable file). Tracked separately from `results`
+    # because "0 findings" and "0 files were actually analyzed" mean opposite
+    # things, and the saved status has to tell them apart.
+    failed_files = []
 
     files_to_scan = [path for path, _, _ in ranked]
     total_files = len(files_to_scan)
     for index, file_path in enumerate(files_to_scan, start=1):
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()[:SCAN_HEAD_CHARS]  # Truncamiento de seguridad
+            with open(file_path, encoding="utf-8", errors="ignore") as f:
+                content = f.read()[:SCAN_HEAD_CHARS]  # safety truncation
 
-            logger.info(f"Analizando ({index}/{total_files}): {os.path.basename(file_path)}...")
+            logger.info(f"Analyzing ({index}/{total_files}): {os.path.basename(file_path)}...")
             prompt = get_analysis_prompt(number_lines(content))
             llm_response = ask_llm(prompt)
             logger.debug(f"RAW LLM RESPONSE: {llm_response}")
 
-            # Validamos que sea una lista (array) como pedimos en el prompt
+            if is_llm_error(llm_response):
+                reason = f"{llm_response['vulnerability']}: {llm_response.get('evidence', '')}"
+                logger.error(f"[-] LLM call failed for {file_path} - {reason}")
+                failed_files.append({"file": file_path, "reason": reason})
+                continue
+
+            # It must be a list (array), as the prompt asks
             if isinstance(llm_response, list):
                 for finding in llm_response:
-                    # Filtro 1: Que haya detectado una vulnerabilidad válida
+                    # Filter 1: a valid vulnerability was detected
                     if finding.get("vulnerability") not in ["None", "None/Detected", None]:
-
-                        # Filtro 1b: a genuine finding always cites a real line number
+                        # Filter 1b: a genuine finding always cites a real line number
                         # (the prompt's own format spec requires it). "line": 0/missing
                         # means the model fabricated a "not found" placeholder entry
                         # instead of omitting the category, despite the prompt saying
@@ -461,7 +666,7 @@ def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
                             logger.debug(f"[-] Skipped placeholder 'not found' entry: {finding.get('vulnerability')}")
                             continue
 
-                        # Filtro 2: Solo guardar confidence 'high' o 'medium'
+                        # Filter 2: only keep confidence 'high' or 'medium'
                         confianza = finding.get("confidence", "").lower()
                         if confianza in ["high", "medium"]:
                             finding["file"] = file_path
@@ -469,20 +674,31 @@ def run_static_analysis(pipeline_results, ask_llm, target_profile=None):
                             logger.info(f"[+] Saved: {finding.get('vulnerability')} ({confianza})")
             else:
                 logger.warning(f"[-] Unexpected format from LLM for {file_path}")
+                failed_files.append({"file": file_path, "reason": "unexpected response format from LLM"})
 
         except Exception as e:
             logger.error(f"Error processing {file_path}: {e}")
+            failed_files.append({"file": file_path, "reason": str(e)})
 
-    # Guardar en diccionario central
+    status = scan_status(len(failed_files), total_files)
+    if status != "complete":
+        logger.warning(f"B3 {status}: {len(failed_files)} of {total_files} files could not be analyzed.")
+
+    # Store in the central results dict
     pipeline_results["B3"] = {
-        "status": "complete",
+        "status": status,
         "total_scanned": total_files,
-        "findings": results
+        "failed_files": len(failed_files),
+        "failures": failed_files,
+        "findings": results,
     }
 
-    # Persistir output JSON en /results para la UI (Streamlit)
+    # Persist the JSON output to /results for the UI
     os.makedirs("results", exist_ok=True)
     with open(result_path(target_profile.name, "B3_static.json"), "w", encoding="utf-8") as f:
         json.dump(pipeline_results["B3"], f, indent=4)
 
     logger.info(f"B3 finalized. Findings detected: {len(results)}")
+    # Returned so api.py's step loop can stop the run on status "error" instead
+    # of carrying an empty result on into the paid B5-B9 blocks.
+    return pipeline_results["B3"]

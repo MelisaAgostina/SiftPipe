@@ -30,23 +30,25 @@ def save_validated_payloads(target_profile, payloads, comment=""):
 
 def run_human_review(pipeline_results, target_profile=None):
     target_profile = target_profile or MATTERMOST
-    print("\n[B6] REVISIÓN DE PAYLOADS - Pausa intencional del sistema.")
+    print("\n[B6] PAYLOAD REVIEW - intentional pause.")
 
-    # Ruta donde B5 dejó los payloads y donde B6 espera los validados
+    # Where B5 left the payloads and where B6 expects the validated ones
     b5_output = result_path(target_profile.name, "B5_payloads.json")
     b6_input = result_path(target_profile.name, "validated_payloads.json")
 
-    # Simulación de la espera del frontend en consola
-    input(f"-> Por favor, revisa {b5_output}, filtra los ataques que consideres necesarios, guárdalos como {b6_input} y presiona Enter para continuar...")
+    # Console stand-in for the frontend's review step
+    input(
+        f"-> Please review {b5_output}, filter out any attacks you do not want, save the rest as {b6_input} and press Enter to continue..."
+    )
 
     if not os.path.exists(b6_input):
-        print(f"[-] Error: No se encontró {b6_input}. Debes crearlo para avanzar.")
+        print(f"[-] Error: {b6_input} not found. Create it to continue.")
         return
 
-    with open(b6_input, "r", encoding="utf-8") as f:
+    with open(b6_input, encoding="utf-8") as f:
         validated_payloads = json.load(f)
 
-    # Guardar en el diccionario central
+    # Store in the central results dict
     pipeline_results["B6"] = build_b6_result(validated_payloads)
 
-    print(f"[+] B6 completado. Payloads listos para atacar: {len(validated_payloads)}\n")
+    print(f"[+] B6 complete. Payloads ready to attack: {len(validated_payloads)}\n")

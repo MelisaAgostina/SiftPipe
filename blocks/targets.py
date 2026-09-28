@@ -15,8 +15,8 @@ here (Task 1.2) just loads the right data, it doesn't change block behavior
 yet.
 """
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
@@ -42,26 +42,29 @@ class TargetProfile:
     most-specific/current first, same convention find_working_selector()
     already uses for Mattermost.
     """
+
     name: str
-    display_name: str        # human-readable, for the frontend's target picker (Phase 5)
-    stack_label: str         # short "what's running" subtitle shown next to display_name
+    display_name: str  # human-readable, for the frontend's target picker (Phase 5)
+    stack_label: str  # short "what's running" subtitle shown next to display_name
     base_url_env: str
     base_url_default: str
     login_path: str
     login_id_selectors: list
     password_selectors: list
-    submit_selectors: list        # tried in order; last resort is "Enter" on the password field
+    submit_selectors: list  # tried in order; last resort is "Enter" on the password field
     username_env: str
     username_default: str
     password_env: str
     password_default: str
     authenticated_selectors: list  # any one present on the page = login succeeded
-    supports_fresh_reset: bool     # can B1 wipe+reseed this target's data store?
-    extra_denylist: list           # path substrings B4's crawler (blocks/crawler.py) skips, on top of the generic set
-    source_dir: str                # local checkout B3 (blocks/static_scanner.py) scans
-    source_extensions: tuple       # file extensions to include - target's real tech stack, not a generic guess
+    supports_fresh_reset: bool  # can B1 wipe+reseed this target's data store?
+    extra_denylist: list  # path substrings B4's crawler (blocks/crawler.py) skips, on top of the generic set
+    source_dir: str  # local checkout B3 (blocks/static_scanner.py) scans
+    source_extensions: tuple  # file extensions to include - target's real tech stack, not a generic guess
     source_exclude_dirs: frozenset  # directory names never walked at all (deps, migrations, vcs)
-    source_relevant_dirs: frozenset  # None = no directory-name filter; otherwise only files under one of these dir names are included
+    source_relevant_dirs: (
+        frozenset  # None = no directory-name filter; otherwise only files under one of these dir names are included
+    )
     # Filename suffixes skipped regardless of directory - source_exclude_dirs
     # can't catch these because they're colocated with real application code,
     # not sitting in their own directory: Go's *_test.go convention and
@@ -129,23 +132,62 @@ MATTERMOST = TargetProfile(
     # exist in mattermost-src's tree, not a generic starter list.
     source_dir="mattermost-src/mattermost",
     source_extensions=(".go", ".ts", ".tsx", ".js", ".jsx"),
-    source_exclude_dirs=frozenset({
-        "node_modules", "vendor", "tests", ".git",
-        "e2e-tests", "api", "tools", "testlib", "manualtesting", ".github", "dist",
-        "build", "bin", "cmd", "scripts", "eslint-plugin",
-        "i18n", "fonts", "images", "sounds", "sass",
-    }),
-    source_relevant_dirs=frozenset({
-        # server/channels/* - the real Go backend logic
-        "api4", "app", "store", "web", "wsapi", "audit", "db", "jobs",
-        # server/public/*, server/platform/* - shared models/services
-        # (role.go, the CVE-2025-3611 root cause investigated this session,
-        # lives under server/public/model/)
-        "model", "plugin", "pluginapi", "shared", "utils", "services",
-        # webapp/channels/src/*, webapp/platform/* - the React frontend,
-        # barely reachable at all before this fix
-        "components", "actions", "client", "selectors", "reducers", "hooks", "plugins",
-    }),
+    source_exclude_dirs=frozenset(
+        {
+            "node_modules",
+            "vendor",
+            "tests",
+            ".git",
+            "e2e-tests",
+            "api",
+            "tools",
+            "testlib",
+            "manualtesting",
+            ".github",
+            "dist",
+            "build",
+            "bin",
+            "cmd",
+            "scripts",
+            "eslint-plugin",
+            "i18n",
+            "fonts",
+            "images",
+            "sounds",
+            "sass",
+        }
+    ),
+    source_relevant_dirs=frozenset(
+        {
+            # server/channels/* - the real Go backend logic
+            "api4",
+            "app",
+            "store",
+            "web",
+            "wsapi",
+            "audit",
+            "db",
+            "jobs",
+            # server/public/*, server/platform/* - shared models/services
+            # (role.go, the CVE-2025-3611 root cause investigated this session,
+            # lives under server/public/model/)
+            "model",
+            "plugin",
+            "pluginapi",
+            "shared",
+            "utils",
+            "services",
+            # webapp/channels/src/*, webapp/platform/* - the React frontend,
+            # barely reachable at all before this fix
+            "components",
+            "actions",
+            "client",
+            "selectors",
+            "reducers",
+            "hooks",
+            "plugins",
+        }
+    ),
     # Go and the webapp's Jest/RTL setup both colocate test files with
     # production code (foo.go + foo_test.go, foo.tsx + foo.test.tsx) rather
     # than putting them in their own directory - source_exclude_dirs above
@@ -217,7 +259,9 @@ NAVIQ = TargetProfile(
     # covered since there's no allowlist, just this excludelist.
     source_dir="naviq-src/naviq",
     source_extensions=(".py",),
-    source_exclude_dirs=frozenset({"node_modules", "vendor", "tests", ".git", ".venv310", "__pycache__", "migrations", "downloads"}),
+    source_exclude_dirs=frozenset(
+        {"node_modules", "vendor", "tests", ".git", ".venv310", "__pycache__", "migrations", "downloads"}
+    ),
     source_relevant_dirs=None,
     # Django puts each app's tests in a bare tests.py file right next to its
     # real views/models (blog/tests.py, users/tests.py, ...), not inside a
@@ -244,7 +288,7 @@ def get_target(name: str = DEFAULT_TARGET) -> TargetProfile:
     try:
         return TARGETS[name]
     except KeyError:
-        raise ValueError(f"Unknown target {name!r}. Available: {', '.join(sorted(TARGETS))}")
+        raise ValueError(f"Unknown target {name!r}. Available: {', '.join(sorted(TARGETS))}") from None
 
 
 def result_path(target_name: str, filename: str) -> str:

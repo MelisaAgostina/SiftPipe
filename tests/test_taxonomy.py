@@ -13,7 +13,6 @@ from blocks.taxonomy import (
 
 
 class TestNormalizeLabel(unittest.TestCase):
-
     def test_underscores_become_spaces_and_lowercased(self):
         self.assertEqual(normalize_label("Command_Injection"), "command injection")
 
@@ -22,7 +21,6 @@ class TestNormalizeLabel(unittest.TestCase):
 
 
 class TestCweInfoAndOwaspName(unittest.TestCase):
-
     def test_known_cwe_returns_info(self):
         info = cwe_info("CWE-89")
         self.assertEqual(info["owasp"], "A05")

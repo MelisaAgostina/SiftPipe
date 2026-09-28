@@ -6,6 +6,7 @@ defaults to "naviq_ai.settings") and layers ALLOWED_HOSTS += ["naviq"] on top,
 so this only needs to be a real, working Django settings module - nothing here
 needs to match real NaViQ's actual settings beyond that contract.
 """
+
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent

@@ -5,8 +5,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from blocks.dynamic_analysis import (
-    build_attack_surface_records, _determine_status, _login_stuck_message, _server_error_message,
-    dedupe_forms, dedupe_inputs,
+    _determine_status,
+    _login_stuck_message,
+    _server_error_message,
+    build_attack_surface_records,
+    dedupe_forms,
+    dedupe_inputs,
 )
 
 
@@ -20,12 +24,14 @@ class TestBuildAttackSurfaceRecords(unittest.TestCase):
 
     def test_form_with_id_uses_id_not_name(self):
         attack_surface = {
-            "forms": [{
-                "form_id": "login-form",
-                "form_name": "unknown",
-                "action": "http://x/login",
-                "fields": [{"id": "input_loginId", "name": "loginId", "type": "text"}],
-            }],
+            "forms": [
+                {
+                    "form_id": "login-form",
+                    "form_name": "unknown",
+                    "action": "http://x/login",
+                    "fields": [{"id": "input_loginId", "name": "loginId", "type": "text"}],
+                }
+            ],
             "endpoints": [],
             "inputs": [],
         }
@@ -117,10 +123,18 @@ class TestDedupeForms(unittest.TestCase):
 
     def test_forms_with_different_fields_stay_distinct(self):
         forms = [
-            {"action": "/contact/", "method": "post", "submit_buttons": [],
-             "fields": [{"tag": "input", "name": "email", "type": "email"}]},
-            {"action": "/contact/", "method": "post", "submit_buttons": [],
-             "fields": [{"tag": "input", "name": "message", "type": "text"}]},
+            {
+                "action": "/contact/",
+                "method": "post",
+                "submit_buttons": [],
+                "fields": [{"tag": "input", "name": "email", "type": "email"}],
+            },
+            {
+                "action": "/contact/",
+                "method": "post",
+                "submit_buttons": [],
+                "fields": [{"tag": "input", "name": "message", "type": "text"}],
+            },
         ]
 
         deduped = dedupe_forms(forms)
@@ -195,7 +209,7 @@ class TestLoginStuckMessage(unittest.TestCase):
 
     PLAYWRIGHT_TIMEOUT = (
         "Timeout 15000ms exceeded.\n=========================== logs ===========================\n"
-        'waiting for navigation to "<function wrapper_func at 0x1>" until \'load\'\n'
+        "waiting for navigation to \"<function wrapper_func at 0x1>\" until 'load'\n"
     )
 
     def test_names_the_login_path_the_wait_and_the_likely_cause(self):

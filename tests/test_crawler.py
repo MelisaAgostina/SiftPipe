@@ -17,7 +17,6 @@ from blocks.targets import NAVIQ
 
 
 class TestIsSameOrigin(unittest.TestCase):
-
     def test_same_scheme_and_host_is_same_origin(self):
         self.assertTrue(is_same_origin("http://x.com/a", "http://x.com/b"))
 
@@ -32,7 +31,6 @@ class TestIsSameOrigin(unittest.TestCase):
 
 
 class TestIsDenylisted(unittest.TestCase):
-
     def test_matches_generic_logout_pattern(self):
         self.assertTrue(is_denylisted("http://x.com/logout", GENERIC_DENYLIST))
 
@@ -67,7 +65,6 @@ class TestIsDenylisted(unittest.TestCase):
 
 
 class TestNormalizeUrl(unittest.TestCase):
-
     def test_strips_fragment(self):
         self.assertEqual(normalize_url("http://x.com/a#section"), "http://x.com/a")
 
@@ -76,46 +73,69 @@ class TestNormalizeUrl(unittest.TestCase):
 
 
 class TestSelectLinksToVisit(unittest.TestCase):
-
     def test_resolves_relative_hrefs_against_current_url(self):
         selected = select_links_to_visit(
-            ["/b"], "http://x.com/a", "http://x.com", visited=set(),
-            denylist=[], budget=10,
+            ["/b"],
+            "http://x.com/a",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=10,
         )
         self.assertEqual(selected, ["http://x.com/b"])
 
     def test_skips_cross_origin_links(self):
         selected = select_links_to_visit(
-            ["http://evil.com/a"], "http://x.com/a", "http://x.com", visited=set(),
-            denylist=[], budget=10,
+            ["http://evil.com/a"],
+            "http://x.com/a",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=10,
         )
         self.assertEqual(selected, [])
 
     def test_skips_denylisted_links(self):
         selected = select_links_to_visit(
-            ["/logout", "/dashboard"], "http://x.com/a", "http://x.com", visited=set(),
-            denylist=GENERIC_DENYLIST, budget=10,
+            ["/logout", "/dashboard"],
+            "http://x.com/a",
+            "http://x.com",
+            visited=set(),
+            denylist=GENERIC_DENYLIST,
+            budget=10,
         )
         self.assertEqual(selected, ["http://x.com/dashboard"])
 
     def test_skips_already_visited_links(self):
         selected = select_links_to_visit(
-            ["/a", "/b"], "http://x.com", "http://x.com", visited={"http://x.com/a"},
-            denylist=[], budget=10,
+            ["/a", "/b"],
+            "http://x.com",
+            "http://x.com",
+            visited={"http://x.com/a"},
+            denylist=[],
+            budget=10,
         )
         self.assertEqual(selected, ["http://x.com/b"])
 
     def test_skips_fragment_only_and_non_http_hrefs(self):
         selected = select_links_to_visit(
             ["#top", "mailto:a@x.com", "javascript:void(0)", "tel:12345", "/real"],
-            "http://x.com", "http://x.com", visited=set(), denylist=[], budget=10,
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=10,
         )
         self.assertEqual(selected, ["http://x.com/real"])
 
     def test_dedupes_within_the_same_page(self):
         selected = select_links_to_visit(
-            ["/a", "/a#frag"], "http://x.com", "http://x.com", visited=set(),
-            denylist=[], budget=10,
+            ["/a", "/a#frag"],
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=10,
         )
         self.assertEqual(selected, ["http://x.com/a"])
 
@@ -124,22 +144,34 @@ class TestSelectLinksToVisit(unittest.TestCase):
         # here — a page offering more links than the remaining budget only
         # yields `budget` of them.
         selected = select_links_to_visit(
-            ["/a", "/b", "/c"], "http://x.com", "http://x.com", visited=set(),
-            denylist=[], budget=2,
+            ["/a", "/b", "/c"],
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=2,
         )
         self.assertEqual(selected, ["http://x.com/a", "http://x.com/b"])
 
     def test_zero_budget_yields_nothing(self):
         selected = select_links_to_visit(
-            ["/a"], "http://x.com", "http://x.com", visited=set(),
-            denylist=[], budget=0,
+            ["/a"],
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=0,
         )
         self.assertEqual(selected, [])
 
     def test_earlier_links_win_when_budget_is_tight(self):
         selected = select_links_to_visit(
-            ["/first", "/second"], "http://x.com", "http://x.com", visited=set(),
-            denylist=[], budget=1,
+            ["/first", "/second"],
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=1,
         )
         self.assertEqual(selected, ["http://x.com/first"])
 
@@ -151,7 +183,11 @@ class TestSelectLinksToVisit(unittest.TestCase):
         # ran out first.
         selected = select_links_to_visit(
             ["/blog", "/docs", "/portfolio", "/navitools/doctor"],
-            "http://x.com", "http://x.com", visited=set(), denylist=[], budget=1,
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=1,
             priority_paths=("/navitools/",),
         )
         self.assertEqual(selected, ["http://x.com/navitools/doctor"])
@@ -170,7 +206,11 @@ class TestSelectLinksToVisit(unittest.TestCase):
         """
         selected = select_links_to_visit(
             ["/blog", "/navitools/doctor"],
-            "http://x.com", "http://x.com", visited=set(), denylist=[], budget=0,
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=0,
             priority_paths=("/navitools/",),
         )
         self.assertEqual(selected, ["http://x.com/navitools/doctor"])
@@ -178,24 +218,36 @@ class TestSelectLinksToVisit(unittest.TestCase):
     def test_priority_ordering_still_respects_dom_order_within_each_group(self):
         selected = select_links_to_visit(
             ["/navitools/b", "/blog", "/navitools/a", "/docs"],
-            "http://x.com", "http://x.com", visited=set(), denylist=[], budget=10,
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=10,
             priority_paths=("/navitools/",),
         )
-        self.assertEqual(selected, [
-            "http://x.com/navitools/b", "http://x.com/navitools/a",
-            "http://x.com/blog", "http://x.com/docs",
-        ])
+        self.assertEqual(
+            selected,
+            [
+                "http://x.com/navitools/b",
+                "http://x.com/navitools/a",
+                "http://x.com/blog",
+                "http://x.com/docs",
+            ],
+        )
 
     def test_no_priority_paths_behaves_exactly_as_before(self):
         selected = select_links_to_visit(
-            ["/a", "/b", "/c"], "http://x.com", "http://x.com", visited=set(),
-            denylist=[], budget=2,
+            ["/a", "/b", "/c"],
+            "http://x.com",
+            "http://x.com",
+            visited=set(),
+            denylist=[],
+            budget=2,
         )
         self.assertEqual(selected, ["http://x.com/a", "http://x.com/b"])
 
 
 class TestLooksLikeActionLink(unittest.TestCase):
-
     def test_numeric_path_segment_looks_like_an_action(self):
         self.assertTrue(looks_like_action_link("http://x.com/consultas/leido/5"))
 
@@ -212,24 +264,30 @@ class TestLooksLikeActionLink(unittest.TestCase):
 
 
 class TestSelectActionLinks(unittest.TestCase):
-
     def test_picks_out_the_action_shaped_link_only(self):
         selected = select_action_links(
             ["/consultas/leido/5", "/faq", "/productos"],
-            "http://x.com", "http://x.com", denylist=[],
+            "http://x.com",
+            "http://x.com",
+            denylist=[],
         )
         self.assertEqual(selected, ["http://x.com/consultas/leido/5"])
 
     def test_skips_cross_origin_action_links(self):
         selected = select_action_links(
-            ["http://evil.com/steal/5"], "http://x.com", "http://x.com", denylist=[],
+            ["http://evil.com/steal/5"],
+            "http://x.com",
+            "http://x.com",
+            denylist=[],
         )
         self.assertEqual(selected, [])
 
     def test_skips_denylisted_action_links(self):
         # /delete/5 is action-shaped but already covered by GENERIC_DENYLIST.
         selected = select_action_links(
-            ["/productos/delete/5"], "http://x.com", "http://x.com",
+            ["/productos/delete/5"],
+            "http://x.com",
+            "http://x.com",
             denylist=GENERIC_DENYLIST,
         )
         self.assertEqual(selected, [])
@@ -238,7 +296,10 @@ class TestSelectActionLinks(unittest.TestCase):
         # Unlike select_links_to_visit, this isn't a crawl-queue decision —
         # a link is still worth auth-probing regardless of visited/budget.
         selected = select_action_links(
-            ["/consultas/leido/5"], "http://x.com", "http://x.com", denylist=[],
+            ["/consultas/leido/5"],
+            "http://x.com",
+            "http://x.com",
+            denylist=[],
         )
         self.assertEqual(selected, ["http://x.com/consultas/leido/5"])
 

@@ -19,7 +19,7 @@ from blocks.targets import DEFAULT_TARGET
 
 DB_PATH = os.getenv("SIFTPIPE_HISTORY_DB", "siftpipe_history.db")
 
-# _snapshot_new_result_files (below) compares a result file's mtime against
+# snapshot_new_result_files (below) compares a result file's mtime against
 # the run's own started_at to reject leftover files from an earlier run —
 # see that function's docstring. started_at is captured via Python's
 # datetime.now() at start_run() time; a file's mtime comes back from the OS
@@ -125,7 +125,7 @@ def _b9_summary(results_dir, prefix=""):
     return total, confirmed
 
 
-def _snapshot_new_result_files(run_id, target, results_dir="results"):
+def snapshot_new_result_files(run_id, target, results_dir="results"):
     """
     Inserts one run_blocks row per result file for `target` that isn't
     already snapshotted for `run_id`. Safe to call more than once for the
@@ -155,17 +155,14 @@ def _snapshot_new_result_files(run_id, target, results_dir="results"):
         started_at_epoch = datetime.fromisoformat(run_row[0]).timestamp()
 
         already = {
-            row[0]
-            for row in conn.execute(
-                "SELECT block_name FROM run_blocks WHERE run_id = ?", (run_id,)
-            ).fetchall()
+            row[0] for row in conn.execute("SELECT block_name FROM run_blocks WHERE run_id = ?", (run_id,)).fetchall()
         }
         prefix = f"{target}_" if target else ""
         pattern = f"{prefix}*.json" if prefix else "*.json"
         for path in sorted(Path(results_dir).glob(pattern)):
             if path.stat().st_mtime < started_at_epoch - _MTIME_SKEW_TOLERANCE:
                 continue
-            block_name = path.stem[len(prefix):] if prefix else path.stem
+            block_name = path.stem[len(prefix) :] if prefix else path.stem
             if block_name in already:
                 continue
             try:
@@ -186,7 +183,7 @@ def finish_run(run_id, status, results_dir="results"):
     """
     Call once a run reaches a terminal state (completed or error). Updates
     the run's own row, then snapshots any result files not already captured
-    by an earlier incremental _snapshot_new_result_files call — see that
+    by an earlier incremental snapshot_new_result_files call — see that
     function's docstring for why target-scoping and idempotency matter.
     """
     conn = _connect()
@@ -210,7 +207,7 @@ def finish_run(run_id, status, results_dir="results"):
     finally:
         conn.close()
 
-    _snapshot_new_result_files(run_id, target, results_dir)
+    snapshot_new_result_files(run_id, target, results_dir)
 
 
 def get_latest_run(target):
@@ -249,7 +246,7 @@ def dismiss_resume(target):
     errored or stopped. A no-op if the latest run isn't in one of those
     states, or there is none — called when Fresh Reset means "start over,"
     not "resume." A user-stopped run is exactly as resumable as a crashed
-    one (see docs/superpowers/specs/2026-09-09-pipeline-stop-design.md) so
+    one (a stop only skips the remaining blocks) so
     it's dismissed the same way."""
     conn = _connect()
     try:
@@ -310,9 +307,7 @@ def get_run(run_id):
         if run_row is None:
             return None
 
-        block_rows = conn.execute(
-            "SELECT block_name, data FROM run_blocks WHERE run_id = ?", (run_id,)
-        ).fetchall()
+        block_rows = conn.execute("SELECT block_name, data FROM run_blocks WHERE run_id = ?", (run_id,)).fetchall()
     finally:
         conn.close()
 
@@ -334,9 +329,7 @@ def set_archived(run_id, archived):
     """Marks a run archived/unarchived. Returns False if run_id doesn't exist."""
     conn = _connect()
     try:
-        cur = conn.execute(
-            "UPDATE runs SET archived = ? WHERE id = ?", (1 if archived else 0, run_id)
-        )
+        cur = conn.execute("UPDATE runs SET archived = ? WHERE id = ?", (1 if archived else 0, run_id))
         conn.commit()
         return cur.rowcount > 0
     finally:

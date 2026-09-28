@@ -142,52 +142,91 @@ def box(ax, x, y, w, h, text, colors=PLAIN, dashed=False, title_size=8.6, sub_si
     fill, edge = colors
     ax.add_patch(
         FancyBboxPatch(
-            (x, y), w, h,
+            (x, y),
+            w,
+            h,
             boxstyle="round,pad=0,rounding_size=1.2",
-            fc=fill, ec=edge, lw=1.3, ls="--" if dashed else "-", zorder=3,
+            fc=fill,
+            ec=edge,
+            lw=1.3,
+            ls="--" if dashed else "-",
+            zorder=3,
         )
     )
     title, sub = text
     cx, cy = x + w / 2, y + h / 2
     if sub:
-        ax.text(cx, cy + h * 0.17, title, ha="center", va="center", fontsize=title_size,
-                fontweight="bold", color=INK, zorder=4)
-        ax.text(cx, cy - h * 0.2, sub, ha="center", va="center", fontsize=sub_size,
-                color=MUTED, zorder=4, linespacing=1.15)
+        ax.text(
+            cx,
+            cy + h * 0.17,
+            title,
+            ha="center",
+            va="center",
+            fontsize=title_size,
+            fontweight="bold",
+            color=INK,
+            zorder=4,
+        )
+        ax.text(
+            cx, cy - h * 0.2, sub, ha="center", va="center", fontsize=sub_size, color=MUTED, zorder=4, linespacing=1.15
+        )
     else:
-        ax.text(cx, cy, title, ha="center", va="center", fontsize=title_size,
-                fontweight="bold", color=INK, zorder=4)
+        ax.text(cx, cy, title, ha="center", va="center", fontsize=title_size, fontweight="bold", color=INK, zorder=4)
 
 
 def zone(ax, x, y, w, h, label, fill, edge, label_dy=-2.6):
     ax.add_patch(
         FancyBboxPatch(
-            (x, y), w, h, boxstyle="round,pad=0,rounding_size=1.5",
-            fc=fill, ec=edge, lw=1.2, ls="--", zorder=1,
+            (x, y),
+            w,
+            h,
+            boxstyle="round,pad=0,rounding_size=1.5",
+            fc=fill,
+            ec=edge,
+            lw=1.2,
+            ls="--",
+            zorder=1,
         )
     )
-    ax.text(x + 2, y + h + label_dy, label, ha="left", va="center", fontsize=8,
-            fontweight="bold", color=edge, zorder=2)
+    ax.text(x + 2, y + h + label_dy, label, ha="left", va="center", fontsize=8, fontweight="bold", color=edge, zorder=2)
 
 
 def arrow(ax, pts, dashed=False, color="#3e4c59"):
     """Orthogonal polyline; the arrowhead sits on the last point."""
-    xs, ys = zip(*pts[:-1])
-    ax.plot(xs, ys, color=color, lw=1.4, ls="--" if dashed else "-", zorder=2,
-            solid_capstyle="butt")
+    xs, ys = zip(*pts[:-1], strict=True)
+    ax.plot(xs, ys, color=color, lw=1.4, ls="--" if dashed else "-", zorder=2, solid_capstyle="butt")
     ax.annotate(
-        "", xy=pts[-1], xytext=pts[-2], zorder=2,
-        arrowprops=dict(arrowstyle="-|>", color=color, lw=1.4, shrinkA=0, shrinkB=0,
-                        mutation_scale=11, ls="-"),
+        "",
+        xy=pts[-1],
+        xytext=pts[-2],
+        zorder=2,
+        arrowprops=dict(arrowstyle="-|>", color=color, lw=1.4, shrinkA=0, shrinkB=0, mutation_scale=11, ls="-"),
     )
     # plot() above stops one point short of the last segment's end; draw its shaft too
-    ax.plot([pts[-2][0], pts[-1][0]], [pts[-2][1], pts[-1][1]], color=color, lw=1.4,
-            ls="--" if dashed else "-", zorder=2, solid_capstyle="butt")
+    ax.plot(
+        [pts[-2][0], pts[-1][0]],
+        [pts[-2][1], pts[-1][1]],
+        color=color,
+        lw=1.4,
+        ls="--" if dashed else "-",
+        zorder=2,
+        solid_capstyle="butt",
+    )
 
 
 def label(ax, x, y, text, ha="center", va="center", bg=BG, size=7.2):
-    ax.text(x, y, text, ha=ha, va=va, fontsize=size, color=INK, zorder=5, linespacing=1.15,
-            bbox=dict(fc=bg, ec="none", pad=1.0) if bg else None)
+    ax.text(
+        x,
+        y,
+        text,
+        ha=ha,
+        va=va,
+        fontsize=size,
+        color=INK,
+        zorder=5,
+        linespacing=1.15,
+        bbox=dict(fc=bg, ec="none", pad=1.0) if bg else None,
+    )
 
 
 def new_canvas(title):
@@ -197,8 +236,7 @@ def new_canvas(title):
     ax.axis("off")
     fig.patch.set_facecolor(BG)
     fig.subplots_adjust(0.01, 0.01, 0.99, 0.99)
-    ax.text(W / 2, 93.6, title, ha="center", va="center", fontsize=14, fontweight="bold",
-            color=INK)
+    ax.text(W / 2, 93.6, title, ha="center", va="center", fontsize=14, fontweight="bold", color=INK)
     return fig, ax
 
 
@@ -255,7 +293,7 @@ def topology(t):
 
 def flow(t):
     fig, ax = new_canvas(t["flow_title"])
-    C1, C2, C3 = 16, 60, 104          # column centres
+    C1, C2, C3 = 16, 60, 104  # column centres
     R1, R2, R3, R4, R5 = 83, 68, 53, 38, 22  # row centres
     BW, BH = 28, 10
 
@@ -276,38 +314,47 @@ def flow(t):
     node(C2, 8, "hist", DATA, dashed=True, h=8)
 
     top = BH / 2  # half box height
-    arrow(ax, [(12, R1 - top), (12, R2 + top)])                        # source -> B3
+    arrow(ax, [(12, R1 - top), (12, R2 + top)])  # source -> B3
     mid = (R1 - top + R2 + top) / 2
     arrow(ax, [(50, R1 - top), (50, mid), (28, mid), (28, R2 + top)])  # B1 -> B3
-    arrow(ax, [(66, R1 - top), (66, R2 + top)])                        # B1 -> B4
-    arrow(ax, [(20, R2 - top), (20, R3), (C2 - BW / 2, R3)])           # B3 -> B5
+    arrow(ax, [(66, R1 - top), (66, R2 + top)])  # B1 -> B4
+    arrow(ax, [(20, R2 - top), (20, R3), (C2 - BW / 2, R3)])  # B3 -> B5
     label(ax, 30, R3 + 1.8, t["f_static"], bg=None, va="bottom")
-    arrow(ax, [(C2, R2 - top), (C2, R3 + top)])                        # B4 -> B5
+    arrow(ax, [(C2, R2 - top), (C2, R3 + top)])  # B4 -> B5
     label(ax, C2 + 1.5, (R2 - top + R3 + top) / 2, t["f_forms"], ha="left")
-    arrow(ax, [(C2, R3 - top), (C2, R4 + top)])                        # B5 -> B6
+    arrow(ax, [(C2, R3 - top), (C2, R4 + top)])  # B5 -> B6
     label(ax, C2 + 1.5, (R3 - top + R4 + top) / 2, t["f_cand"], ha="left")
-    arrow(ax, [(C2 + BW / 2, R4), (C3 - BW / 2, R4)])                  # B6 -> B7
+    arrow(ax, [(C2 + BW / 2, R4), (C3 - BW / 2, R4)])  # B6 -> B7
     label(ax, (C2 + C3) / 2, R4 + 1.4, t["f_valid"], va="bottom", bg=None)
-    arrow(ax, [(C3, R4 + top), (C3, R3 - 4)])                          # B7 -> evidence
-    arrow(ax, [(C3, R4 - top), (C3, R5 + top)])                        # B7 -> B8
+    arrow(ax, [(C3, R4 + top), (C3, R3 - 4)])  # B7 -> evidence
+    arrow(ax, [(C3, R4 - top), (C3, R5 + top)])  # B7 -> B8
     label(ax, C3 + 1.5, (R4 - top + R5 + top) / 2, t["f_att"], ha="left")
-    arrow(ax, [(C3 - BW / 2, R5), (C2 + BW / 2, R5)])                  # B8 -> B9
+    arrow(ax, [(C3 - BW / 2, R5), (C2 + BW / 2, R5)])  # B8 -> B9
     label(ax, (C2 + C3) / 2, R5 + 1.4, t["f_class"], va="bottom", bg=None)
     lane = (R4 - top + R5 + top) / 2
-    arrow(ax, [(8, R2 - top), (8, lane), (52, lane), (52, R5 + top)])   # B3 -> B9 (static)
+    arrow(ax, [(8, R2 - top), (8, lane), (52, lane), (52, R5 + top)])  # B3 -> B9 (static)
     label(ax, 9.5, 40, t["f_static"], ha="left")
-    arrow(ax, [(C2 - BW / 2, R5), (C1 + BW / 2, R5)])                  # B9 -> B10
+    arrow(ax, [(C2 - BW / 2, R5), (C1 + BW / 2, R5)])  # B9 -> B10
     label(ax, (C1 + C2) / 2, R5 + 1.4, t["f_scored"], va="bottom", bg=None)
-    arrow(ax, [(C2, R5 - top), (C2, 12)])                              # B9 -> history
+    arrow(ax, [(C2, R5 - top), (C2, 12)])  # B9 -> history
 
     # legend
-    items = [(LLM, "lg_llm", False), (AUTO, "lg_auto", False),
-             (HUMAN, "lg_human", False), (DATA, "lg_data", False)]
+    items = [(LLM, "lg_llm", False), (AUTO, "lg_auto", False), (HUMAN, "lg_human", False), (DATA, "lg_data", False)]
     for i, (colors, key, _) in enumerate(items):
         x = 79 if i < 2 else 102
         y = 11 - (i % 2) * 5.5
-        ax.add_patch(FancyBboxPatch((x, y - 1.3), 3.4, 2.6, boxstyle="round,pad=0,rounding_size=0.5",
-                                    fc=colors[0], ec=colors[1], lw=1.1, zorder=3))
+        ax.add_patch(
+            FancyBboxPatch(
+                (x, y - 1.3),
+                3.4,
+                2.6,
+                boxstyle="round,pad=0,rounding_size=0.5",
+                fc=colors[0],
+                ec=colors[1],
+                lw=1.1,
+                zorder=3,
+            )
+        )
         ax.text(x + 4.6, y, t[key], ha="left", va="center", fontsize=7.4, color=INK)
     return fig
 

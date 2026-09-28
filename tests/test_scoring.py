@@ -8,7 +8,6 @@ from blocks.scoring import compute_score, severity_for_score
 
 
 class TestSeverityForScore(unittest.TestCase):
-
     def test_thresholds(self):
         self.assertEqual(severity_for_score(0.9), "CRITICAL")
         self.assertEqual(severity_for_score(0.75), "CRITICAL")
@@ -19,7 +18,6 @@ class TestSeverityForScore(unittest.TestCase):
 
 
 class TestComputeScore(unittest.TestCase):
-
     def test_score_is_bounded_between_zero_and_one(self):
         score, _ = compute_score("high", "confirmed", "high", "cwe")
         self.assertGreaterEqual(score, 0.0)
@@ -27,15 +25,19 @@ class TestComputeScore(unittest.TestCase):
 
     def test_strongest_case_is_confirmed_high_confidence_exact_cwe_match(self):
         score, severity = compute_score(
-            static_confidence="high", dynamic_result="confirmed",
-            dynamic_confidence="high", match_tier="cwe",
+            static_confidence="high",
+            dynamic_result="confirmed",
+            dynamic_confidence="high",
+            match_tier="cwe",
         )
         self.assertEqual(severity, "CRITICAL")
 
     def test_weakest_case_is_discarded_with_no_correlation(self):
         score, severity = compute_score(
-            static_confidence=None, dynamic_result="discarded",
-            dynamic_confidence="low", match_tier="none",
+            static_confidence=None,
+            dynamic_result="discarded",
+            dynamic_confidence="low",
+            match_tier="none",
         )
         self.assertEqual(severity, "LOW")
 

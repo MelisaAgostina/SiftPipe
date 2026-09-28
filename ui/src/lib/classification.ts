@@ -10,8 +10,8 @@ import type { B9Classification } from "./types";
 //
 // This is deliberately NOT part of the EN/ES useLang() dictionary:
 // CONFIRMED/POSSIBLE/DISCARDED stay English-only regardless of the language
-// toggle, same as B9's other enum/status values (see
-// next-steps-before-deployment.md's i18n scope-boundary decision) - this
+// toggle, same as B9's other enum/status values (AI-generated content stays
+// English-only by design) - this
 // only fixes the one value that was misspelled, not what language it's in.
 export const CLASSIFICATION_DISPLAY_LABELS: Record<B9Classification, string> = {
   CONFIRMED: "CONFIRMED",

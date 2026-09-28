@@ -4,6 +4,7 @@ The naviq container is reached by other containers as http://naviq:8001, and Dja
 400 to any Host header not listed in ALLOWED_HOSTS. NAVIQ_BASE_SETTINGS names the target's real
 settings module (NaViQ's by default).
 """
+
 import importlib
 import os
 

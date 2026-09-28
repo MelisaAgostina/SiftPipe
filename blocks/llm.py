@@ -21,6 +21,25 @@ from anthropic import Anthropic
 
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
+# Labels pipeline.ask_llm() puts in the "vulnerability" field of the
+# placeholder dict it returns when a call fails. Defined once here, not
+# retyped as string literals in each block that needs to recognise a failed
+# call: B8 once compared against a literal that ask_llm had since stopped
+# emitting (a translated string), and nothing noticed because the test used the
+# same stale literal. Import these instead of writing the text out again.
+API_ERROR_LABEL = "API Error"
+PARSE_ERROR_LABEL = "JSON Parse Error"
+# Older spelling of PARSE_ERROR_LABEL. No longer emitted, but B8_dynamic.json
+# files written by earlier runs can still contain it.
+LEGACY_PARSE_ERROR_LABEL = "Error de Parseo JSON"
+LLM_ERROR_LABELS = (API_ERROR_LABEL, PARSE_ERROR_LABEL, LEGACY_PARSE_ERROR_LABEL)
+
+
+def is_llm_error(response):
+    """True if `response` is the placeholder ask_llm() returns for a failed
+    call rather than a real model answer."""
+    return isinstance(response, dict) and response.get("vulnerability") in LLM_ERROR_LABELS
+
 
 def get_default_client():
     return Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))

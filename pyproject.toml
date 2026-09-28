@@ -8,10 +8,17 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-# Start conservative: real bugs (F) and import hygiene (E), not style opinions.
-# Widen this over time (e.g. add "I" for import sorting, "UP" for pyupgrade)
-# once the existing codebase is clean against this baseline.
-select = ["E", "F"]
+# E/F: real bugs and import hygiene. W: whitespace. I: import order. UP:
+# syntax that newer Python spells better. B (flake8-bugbear): bug patterns such
+# as a closure capturing a loop variable or `raise` inside `except` that drops
+# the original error. Deliberately not enabled: SIM, RUF and C4 - they are style
+# opinions with no bug-finding value here.
+select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
     "E501",  # line-length is handled by the line-length setting above, not as a hard error
 ]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection is written as `param = Depends(fn)`, which B008
+# would flag as a function call in a default argument.
+extend-immutable-calls = ["fastapi.Depends"]

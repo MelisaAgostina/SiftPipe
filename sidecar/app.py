@@ -1,15 +1,14 @@
 import os
 
-from fastapi import FastAPI, HTTPException
-
 from docker_ops import (
     compose_down_services,
-    compose_up_services,
     compose_restart_service,
+    compose_up_services,
     delete_host_file,
     truncate_host_file,
     wipe_host_dir,
 )
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 app = FastAPI()

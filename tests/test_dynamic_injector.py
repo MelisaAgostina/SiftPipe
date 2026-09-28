@@ -203,7 +203,6 @@ class FakeSyncPlaywright:
 
 
 class TestRunPayloadsMissingFile(unittest.TestCase):
-
     def test_raises_file_not_found_before_touching_playwright(self):
         with self.assertRaises(FileNotFoundError):
             di.run_payloads("results/does_not_exist.json", {})
@@ -356,9 +355,9 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
 
         body = (
             "<!DOCTYPE html><html><body>"
-            "<input type=\"file\" name=\"image\" required>"
+            '<input type="file" name="image" required>'
             "<span>This field is required.</span>"
-            "<textarea name=\"context\">../../../etc/passwd</textarea>"
+            '<textarea name="context">../../../etc/passwd</textarea>'
             "</body></html>"
         )
         responses = [
@@ -462,9 +461,7 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         body = f'{{"id": "abc123", "message": "{payload}"}}'
         responses = [
             None,  # auth-probe: timeout, not vulnerable
-            FakeResponse(
-                "http://localhost:8065/api/v4/posts", 201, body, content_type="application/json"
-            ),
+            FakeResponse("http://localhost:8065/api/v4/posts", 201, body, content_type="application/json"),
         ]
 
         result = self._run(responses)
@@ -577,7 +574,7 @@ class TestRunPayloadsWithFakeBrowser(unittest.TestCase):
         """Characterizes existing behavior before the single-pass body-marker
         scan refactor - Security_Misconfiguration markers must still fire
         Information_Disclosure alongside it, same as today."""
-        body = "Traceback (most recent call last):\n  File \"app.py\", line 1\nValueError: boom"
+        body = 'Traceback (most recent call last):\n  File "app.py", line 1\nValueError: boom'
         responses = [
             None,  # auth-probe: timeout, not vulnerable
             FakeResponse("http://localhost:8065/town-square", 500, body),
@@ -732,9 +729,7 @@ class TestGuessPlaceholderValue(unittest.TestCase):
         self.assertEqual(di._guess_placeholder_value("text", field_id="user_email"), "test@example.com")
 
     def test_placeholder_keyword_matches_too(self):
-        self.assertEqual(
-            di._guess_placeholder_value("text", placeholder="Enter your company name"), "Test Co"
-        )
+        self.assertEqual(di._guess_placeholder_value("text", placeholder="Enter your company name"), "Test Co")
 
     def test_falls_back_to_html_type_without_a_keyword_match(self):
         self.assertEqual(di._guess_placeholder_value("email", name="field_7"), "test@example.com")

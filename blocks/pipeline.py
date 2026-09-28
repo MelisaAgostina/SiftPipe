@@ -1,8 +1,8 @@
 """
 blocks/pipeline.py
 
-The pipeline's runtime definitions - Anthropic client, structured logging,
-the in-memory pipeline_results store, and the thin per-block entry points
+The pipeline's runtime definitions - the Anthropic client, the in-memory
+pipeline_results store, and the thin per-block entry points
 (run_static_analysis, run_dynamic_discovery, execute_attacks) - separated
 out from main.py's CLI orchestrator script.
 
@@ -12,102 +12,46 @@ main.py's argparse-based CLI entry point as an import-time side effect of
 depending on what was nominally "the CLI script." main.py now imports these
 same definitions from here too, on equal footing with api.py, instead of
 being the thing api.py reaches into.
+
+Importing this module does no start-up work: reading .env, fetching SSM
+secrets and attaching the log handlers are explicit calls in
+blocks/bootstrap.py, made by api.py and main.py. The Anthropic client is built
+on first use (get_client), by which time the environment is loaded.
 """
-
-# ruff: noqa: E402 - load_dotenv() (and load_aws_secrets() right after it)
-# must run before importing blocks/* modules that read env vars at import
-# time (PLAYWRIGHT_HEADLESS, MM_URL, NAVIQ_URL, SIFTPIPE_HISTORY_DB), so the
-# imports below can't all sit above them.
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# Backfills whatever's still missing from an AWS SSM Parameter Store path
-# (a no-op locally - see blocks/aws_secrets.py) - has to run here, not any
-# later, because this same module builds its Anthropic client below at
-# import time; anything that filled in os.environ after that line would
-# already be too late.
-from blocks.aws_secrets import load_aws_secrets
-
-load_aws_secrets()
 
 import json
 import logging
 import os
+from functools import lru_cache
 
 from anthropic import Anthropic
 
 from blocks.dynamic_analysis import discover_attack_surface
 from blocks.dynamic_injector import run_payloads
-from blocks.llm import call_llm_json
+from blocks.llm import API_ERROR_LABEL, PARSE_ERROR_LABEL, call_llm_json
 from blocks.static_scanner import run_static_analysis as _static_scanner_run_static_analysis
 from blocks.targets import DEFAULT_TARGET, MATTERMOST, result_path
 
-REQUIRED_ENV_VARS = ("ANTHROPIC_API_KEY",)
-
-
-class MissingConfigError(RuntimeError):
-    """Raised when a required environment variable is missing.
-
-    A plain RuntimeError, deliberately not SystemExit: api.py's async
-    startup handler needs a normal Exception (raising SystemExit - a
-    BaseException - from inside FastAPI's/anyio's startup task group
-    doesn't propagate cleanly; it surfaces as a CancelledError/
-    BaseExceptionGroup mess instead of a clean failure - confirmed live
-    with a real TestClient before settling on this design). main()'s CLI
-    path catches this and converts it to a clean SystemExit itself, so the
-    CLI UX (a short message, no traceback) is unchanged.
-    """
-
-
-def validate_required_env_vars():
-    """Fail fast on a missing required env var, instead of only surfacing it
-    as a crash on the first LLM call, mid-pipeline. Called explicitly from
-    main() and from api.py's own startup - not at bare import time, so
-    importing this module (e.g. for tests, which mock ask_llm and never need
-    a real key) stays safe."""
-    missing = [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
-    if missing:
-        raise MissingConfigError(
-            f"Missing required environment variable(s): {', '.join(missing)}. "
-            "Set them in .env before running the pipeline."
-        )
-
-
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-# --- Structured logging ---
-# Replaces main.py's scattered print() calls with real levels, written to a
-# file (not just stdout) - matters once this runs headless on an EC2 box
-# nobody is watching live. Logs to logs/, not results/: fresh_reset()/
-# naviq_fresh_reset() wipe results/ wholesale on every environment reset,
-# the same lesson already learned for NaViQ's dev-server log (see
-# MULTI_TARGET_PLAN.md's "NaViQ dev-server automation" section).
-LOG_DIR = "logs"
-os.makedirs(LOG_DIR, exist_ok=True)
-
+# Handlers are attached by blocks.bootstrap.configure_logging(); until an entry
+# point calls it this logger just has none (WARNING and above still reach stderr).
 logger = logging.getLogger("siftpipe")
-logger.setLevel(logging.DEBUG)
-if not logger.handlers:
-    _formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
-    _file_handler = logging.FileHandler(os.path.join(LOG_DIR, "siftpipe.log"), encoding="utf-8")
-    _file_handler.setLevel(logging.DEBUG)
-    _file_handler.setFormatter(_formatter)
 
-    _console_handler = logging.StreamHandler()
-    _console_handler.setLevel(logging.INFO)
-    _console_handler.setFormatter(_formatter)
+@lru_cache(maxsize=1)
+def get_client():
+    """The shared Anthropic client, built on first call rather than at import.
+    Building it at import baked in whatever ANTHROPIC_API_KEY happened to be set
+    at that instant, so anything that filled in the environment later (the SSM
+    backfill) was too late."""
+    return Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-    logger.addHandler(_file_handler)
-    logger.addHandler(_console_handler)
 
-# Repositorio central de resultados
+# Central results store
 pipeline_results = {}
 
 
 def save_result(block_name, data, target_name=None):
-    """Guarda el resultado de un bloque en el diccionario central y en disco,
+    """Saves a block's result to the central dict and to disk,
     scoped to target_name so two targets run back-to-back don't overwrite
     each other's output (see blocks/targets.py's result_path())."""
     target_name = target_name or DEFAULT_TARGET
@@ -116,14 +60,14 @@ def save_result(block_name, data, target_name=None):
         os.makedirs("results")
     with open(result_path(target_name, f"{block_name}.json"), "w") as f:
         json.dump(data, f, indent=4)
-    logger.info(f"-> {block_name} completado y guardado.")
+    logger.info(f"-> {block_name} completed and saved.")
 
 
 def ask_llm(prompt):
     try:
         return call_llm_json(
             prompt,
-            client,
+            get_client(),
             system="You are a security analysis tool. You respond ONLY with valid JSON. No prose, no explanations, no markdown. Only JSON.",
             # Higher temperatures can cause the AI to invent fake CVEs (Common
             # Vulnerabilities and Exposures) or imagine security flaws that do
@@ -132,15 +76,16 @@ def ask_llm(prompt):
             # keeping output focused and deterministic.
         )
     except json.JSONDecodeError as e:
-        return {"vulnerability": "JSON Parse Error", "evidence": e.raw_text[:200]}
+        return {"vulnerability": PARSE_ERROR_LABEL, "evidence": e.raw_text[:200]}
     except Exception as e:
-        return {"vulnerability": "API Error", "evidence": str(e)}
+        return {"vulnerability": API_ERROR_LABEL, "evidence": str(e)}
 
 
 def run_static_analysis(pipeline_results, target_profile=None):
     """Thin wrapper: passes this module's own `ask_llm` (patchable via
     unittest.mock.patch.object(pipeline, "ask_llm", ...)) into
     blocks/static_scanner.py's real implementation."""
+    # Returned (not swallowed) so api.py can react to B3's "error" status.
     return _static_scanner_run_static_analysis(pipeline_results, ask_llm, target_profile)
 
 
@@ -174,11 +119,11 @@ def run_dynamic_discovery(pipeline_results, target=None, run_id=None):
 def execute_attacks(target=None, run_id=None):
     target = target or MATTERMOST
     logger.info("Executing B7: Executing Attacks...")
-    # Cargar los payloads validados por B6 y ejecutar las inyecciones dinámicas
+    # Load the payloads validated in B6 and run the dynamic injections
     validated_path = result_path(target.name, "validated_payloads.json")
     try:
         b7 = run_payloads(validated_path, pipeline_results, target, run_id)
-        # Guardar el objeto completo retornado por run_payloads para que B9 pueda correlacionar
+        # Save the full object run_payloads returns so B9 can correlate it
         save_result("B7_dynamic_attacks", b7, target.name)
     except FileNotFoundError as e:
         logger.warning(f"[-] B7 canceled: {e}")

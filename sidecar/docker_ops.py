@@ -26,10 +26,15 @@ def compose_restart_service(repo_root: str, compose_files: list[str], service: s
 
 def wipe_host_dir(host_path: str) -> None:
     cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{host_path}:/target",
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        f"{host_path}:/target",
         "alpine:3.20",
-        "sh", "-c", "rm -rf /target/* /target/..?* /target/.[!.]* 2>/dev/null; true",
+        "sh",
+        "-c",
+        "rm -rf /target/* /target/..?* /target/.[!.]* 2>/dev/null; true",
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
@@ -41,10 +46,15 @@ def truncate_host_file(host_path: str) -> None:
     parent_dir = os.path.dirname(host_path)
     filename = os.path.basename(host_path)
     cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{parent_dir}:/target",
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        f"{parent_dir}:/target",
         "alpine:3.20",
-        "sh", "-c", f"test -f /target/{filename} && : > /target/{filename}",
+        "sh",
+        "-c",
+        f"test -f /target/{filename} && : > /target/{filename}",
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
@@ -56,9 +66,14 @@ def delete_host_file(host_path: str) -> None:
     parent_dir = os.path.dirname(host_path)
     filename = os.path.basename(host_path)
     cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{parent_dir}:/target",
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        f"{parent_dir}:/target",
         "alpine:3.20",
-        "sh", "-c", f"rm -f /target/{filename}",
+        "sh",
+        "-c",
+        f"rm -f /target/{filename}",
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True)

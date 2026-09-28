@@ -4,8 +4,7 @@
 //
 // Scope boundary: `vulnerability`, `evidence`, `rationale`, `category` etc.
 // below are AI-generated text from B3/B5/B8/B9 and stay English-only by
-// design (see next-steps-before-deployment.md's i18n scope-boundary
-// decision) — only the static UI chrome mixed in around them (labels like
+// design (a deliberate i18n scope boundary) — only the static UI chrome mixed in around them (labels like
 // "FORM"/"INPUT", the " — inputs via " connector, "unknown target") is
 // translated here.
 import type {

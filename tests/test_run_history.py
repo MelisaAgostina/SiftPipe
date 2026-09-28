@@ -47,11 +47,13 @@ class TestRunHistory(unittest.TestCase):
 
     def test_finish_run_updates_status_and_computes_b9_summary(self):
         run_id = run_history.start_run(mode="restore")
-        self._write_b9([
-            {"classification": "CONFIRMED"},
-            {"classification": "CONFIRMED"},
-            {"classification": "POSSIBLE"},
-        ])
+        self._write_b9(
+            [
+                {"classification": "CONFIRMED"},
+                {"classification": "CONFIRMED"},
+                {"classification": "POSSIBLE"},
+            ]
+        )
 
         run_history.finish_run(run_id, "completed")
         runs = run_history.list_runs()
@@ -145,9 +147,7 @@ class TestRunHistory(unittest.TestCase):
             )
             """
         )
-        conn.execute(
-            "INSERT INTO runs (started_at, mode, status) VALUES ('2026-01-01T00:00:00', 'fresh', 'completed')"
-        )
+        conn.execute("INSERT INTO runs (started_at, mode, status) VALUES ('2026-01-01T00:00:00', 'fresh', 'completed')")
         conn.commit()
         conn.close()
 
@@ -180,9 +180,11 @@ class TestRunHistory(unittest.TestCase):
 
     def test_compare_with_no_previous_run_treats_every_finding_as_new(self):
         run_id = run_history.start_run(mode="fresh", target="mattermost")
-        self._write_b9([
-            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH"},
-        ])
+        self._write_b9(
+            [
+                {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH"},
+            ]
+        )
         run_history.finish_run(run_id, "completed")
 
         comparison = run_history.compare_with_previous(run_id)
@@ -204,17 +206,45 @@ class TestRunHistory(unittest.TestCase):
         gained a new path-traversal finding in upload.go (new).
         """
         first = run_history.start_run(mode="fresh", target="mattermost")
-        self._write_b9([
-            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "HIGH", "source": "Hybrid (Static + Dynamic)"},
-            {"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "view.go", "severity": "MEDIUM", "source": "Dynamic"},
-        ])
+        self._write_b9(
+            [
+                {
+                    "vulnerability": "Injection",
+                    "cwe_id": "CWE-89",
+                    "target": "handler.go",
+                    "severity": "HIGH",
+                    "source": "Hybrid (Static + Dynamic)",
+                },
+                {
+                    "vulnerability": "XSS",
+                    "cwe_id": "CWE-79",
+                    "target": "view.go",
+                    "severity": "MEDIUM",
+                    "source": "Dynamic",
+                },
+            ]
+        )
         run_history.finish_run(first, "completed")
 
         second = run_history.start_run(mode="restore", target="mattermost")
-        self._write_b9([
-            {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "handler.go", "severity": "CRITICAL", "source": "Hybrid (Static + Dynamic)"},
-            {"vulnerability": "Path Traversal", "cwe_id": "CWE-22", "target": "upload.go", "severity": "HIGH", "source": "Dynamic"},
-        ])
+        self._write_b9(
+            [
+                {
+                    "vulnerability": "Injection",
+                    "cwe_id": "CWE-89",
+                    "target": "handler.go",
+                    "severity": "CRITICAL",
+                    "source": "Hybrid (Static + Dynamic)",
+                },
+                {
+                    "vulnerability": "Path Traversal",
+                    "cwe_id": "CWE-22",
+                    "target": "upload.go",
+                    "severity": "HIGH",
+                    "source": "Dynamic",
+                },
+            ]
+        )
         run_history.finish_run(second, "completed")
 
         comparison = run_history.compare_with_previous(second)
@@ -238,9 +268,17 @@ class TestRunHistory(unittest.TestCase):
         in unverified_findings instead of resolved_findings.
         """
         first = run_history.start_run(mode="fresh", target="mattermost")
-        self._write_b9([
-            {"vulnerability": "Insecure Random", "cwe_id": "CWE-338", "target": "apitestlib.go", "severity": "MEDIUM", "source": "Static"},
-        ])
+        self._write_b9(
+            [
+                {
+                    "vulnerability": "Insecure Random",
+                    "cwe_id": "CWE-338",
+                    "target": "apitestlib.go",
+                    "severity": "MEDIUM",
+                    "source": "Static",
+                },
+            ]
+        )
         run_history.finish_run(first, "completed")
 
         second = run_history.start_run(mode="restore", target="mattermost")
@@ -262,7 +300,9 @@ class TestRunHistory(unittest.TestCase):
         run_history.finish_run(mm_first, "completed")
 
         naviq_run = run_history.start_run(mode="restore", target="naviq")
-        self._write_b9([{"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "views.py", "severity": "LOW"}], target="naviq")
+        self._write_b9(
+            [{"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "views.py", "severity": "LOW"}], target="naviq"
+        )
         run_history.finish_run(naviq_run, "completed")
 
         mm_errored = run_history.start_run(mode="restore", target="mattermost")
@@ -302,17 +342,17 @@ class TestRunHistory(unittest.TestCase):
         self.assertEqual(detail["blocks"]["B3_static"]["marker"], "naviq-static")
         self.assertNotIn("B7_dynamic_attacks", detail["blocks"])
 
-    def test_snapshot_new_result_files_is_idempotent_across_repeated_calls(self):
+    def testsnapshot_new_result_files_is_idempotent_across_repeated_calls(self):
         run_id = run_history.start_run(mode="fresh", target="mattermost")
         with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"status": "complete", "findings": []}, f)
 
-        run_history._snapshot_new_result_files(run_id, "mattermost")
+        run_history.snapshot_new_result_files(run_id, "mattermost")
         with open("results/mattermost_B4_dynamic.json", "w", encoding="utf-8") as f:
             json.dump({"status": "complete"}, f)
-        run_history._snapshot_new_result_files(run_id, "mattermost")
+        run_history.snapshot_new_result_files(run_id, "mattermost")
         # Calling again with no new files must not duplicate B3/B4's rows.
-        run_history._snapshot_new_result_files(run_id, "mattermost")
+        run_history.snapshot_new_result_files(run_id, "mattermost")
 
         # Verify via the API (deduplicated blocks).
         detail = run_history.get_run(run_id)
@@ -321,9 +361,7 @@ class TestRunHistory(unittest.TestCase):
         # Verify via the raw database that exactly 2 rows exist (not 4 or 6 from duplicates).
         conn = sqlite3.connect(run_history.DB_PATH)
         try:
-            row_count = conn.execute(
-                "SELECT COUNT(*) FROM run_blocks WHERE run_id = ?", (run_id,)
-            ).fetchone()[0]
+            row_count = conn.execute("SELECT COUNT(*) FROM run_blocks WHERE run_id = ?", (run_id,)).fetchone()[0]
         finally:
             conn.close()
         self.assertEqual(row_count, 2)
@@ -403,7 +441,7 @@ class TestRunHistory(unittest.TestCase):
         with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"status": "complete", "findings": []}, f)
 
-        run_history._snapshot_new_result_files(run_id, "mattermost")
+        run_history.snapshot_new_result_files(run_id, "mattermost")
         detail = run_history.get_run(run_id)
 
         self.assertEqual(list(detail["blocks"].keys()), ["B3_static"])
@@ -414,7 +452,7 @@ class TestRunHistory(unittest.TestCase):
         with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
             json.dump({"status": "complete"}, f)
 
-        run_history._snapshot_new_result_files(9999, "mattermost")
+        run_history.snapshot_new_result_files(9999, "mattermost")
 
         self.assertIsNone(run_history.get_run(9999))
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from blocks.report import build_report_html, build_report_filename, REPORT_STRINGS, CWE_ES, REMEDIATIONS
+from blocks.report import CWE_ES, REMEDIATIONS, REPORT_STRINGS, build_report_filename, build_report_html
 from blocks.taxonomy import CWE_CATALOG
 
 
@@ -31,7 +31,7 @@ def _finding(**overrides):
         "severity": "MEDIUM",
         "match_tier": "none",
         "score": 0.48,
-        "evidence": "cursor.execute(f\"SELECT * FROM users WHERE id={user_id}\")",
+        "evidence": 'cursor.execute(f"SELECT * FROM users WHERE id={user_id}")',
         "match_rationale": None,
         "screenshot_path": None,
     }
@@ -40,7 +40,6 @@ def _finding(**overrides):
 
 
 class TestBuildReportHtmlBasics(unittest.TestCase):
-
     def test_english_report_contains_english_chrome(self):
         html = build_report_html(_run([_finding()]), lang="en")
         self.assertIn(REPORT_STRINGS["en"]["title"], html)
@@ -83,7 +82,6 @@ class TestBuildReportHtmlBasics(unittest.TestCase):
 
 
 class TestFilenameBuilding(unittest.TestCase):
-
     def test_filename_matches_the_requested_scheme(self):
         run = _run([_finding()], target="naviq")
         run["id"] = 20
@@ -103,7 +101,6 @@ class TestFilenameBuilding(unittest.TestCase):
 
 
 class TestTimestampFormatting(unittest.TestCase):
-
     def test_run_started_and_finished_are_human_formatted_not_raw_isoformat(self):
         run = _run([_finding()])
         run["started_at"] = "2026-08-19T19:47:21.319593+00:00"
@@ -142,7 +139,6 @@ class TestScreenshotHandling(unittest.TestCase):
 
 
 class TestCweAppendix(unittest.TestCase):
-
     def test_appendix_only_lists_cwes_actually_present_in_results(self):
         html = build_report_html(_run([_finding(cwe_id="CWE-89")]), lang="en")
         self.assertIn(CWE_CATALOG["CWE-89"]["description"], html)
@@ -154,7 +150,6 @@ class TestCweAppendix(unittest.TestCase):
 
 
 class TestPossibleFindingExplanations(unittest.TestCase):
-
     def test_possible_finding_surfaces_evidence_and_rationale_not_just_a_table_row(self):
         # An anchor CONFIRMED/HIGH finding keeps the "always show at least
         # one full card" fallback from promoting the POSSIBLE finding under
@@ -234,7 +229,6 @@ class TestExplanationField(unittest.TestCase):
 
 
 class TestRecommendations(unittest.TestCase):
-
     def test_repeated_findings_in_the_same_file_collapse_into_one_recommendation_group(self):
         results = [
             _finding(vulnerability="Path Traversal A", cwe_id="CWE-22", target="run_batch_evaluations.py"),

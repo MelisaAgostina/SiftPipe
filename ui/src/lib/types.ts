@@ -51,7 +51,17 @@ export type B3Finding = {
   confidence: "high" | "medium";
   file: string;
 };
-export type B3Result = { status: "complete"; total_scanned: number; findings: B3Finding[] };
+// "error" is never seen here: the API stops the run and deletes the file
+// when most files failed (see api.py's _abort_failed_static_analysis).
+// "partial" means a minority of files could not be analyzed.
+export type B3Result = {
+  status: "complete" | "partial" | "error";
+  total_scanned: number;
+  // Absent on results saved before failures were tracked.
+  failed_files?: number;
+  failures?: { file: string; reason: string }[];
+  findings: B3Finding[];
+};
 
 export type B4ErrorEntry = { stage: string; message: string };
 export type B4Status = "failed" | "partial" | "complete";

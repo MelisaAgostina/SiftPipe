@@ -1,7 +1,7 @@
 import json
 import os
 
-from blocks.llm import strip_json_fence
+from blocks.llm import is_llm_error, strip_json_fence
 from blocks.targets import MATTERMOST, result_path
 
 
@@ -11,7 +11,7 @@ def _load_previous_analysis(path):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -38,7 +38,7 @@ def _is_llm_result_usable(entry, target, payload):
     instead of run #8's own navitools/history one)."""
     if not entry:
         return False
-    if entry.get("vulnerability") in ("API Error", "Error de Parseo JSON"):
+    if is_llm_error(entry):
         return False
     if entry.get("target") != target or entry.get("payload") != payload:
         return False
@@ -56,8 +56,8 @@ def analyze_results(pipeline_results, ask_llm, target_profile=None):
     if not b7_results or b7_results.get("status") == "error":
         b7_path = result_path(target_profile.name, "B7_dynamic_attacks.json")
         if os.path.exists(b7_path):
-            print(f"[B8] Cargando B7 desde disco: {b7_path}")
-            with open(b7_path, "r", encoding="utf-8") as f:
+            print(f"[B8] Loading B7 from disk: {b7_path}")
+            with open(b7_path, encoding="utf-8") as f:
                 b7_results = json.load(f)
         else:
             print("[-] Error: could not find the dynamic output from B7.")
@@ -65,7 +65,7 @@ def analyze_results(pipeline_results, ask_llm, target_profile=None):
 
     findings = b7_results.get("findings", [])
     if not findings:
-        print("[-] B8: B7 no tiene findings. Verifica que B7 se ejecutó correctamente.")
+        print("[-] B8: B7 has no findings. Check that B7 ran correctly.")
         pipeline_results["B8"] = {"status": "complete", "total_analyzed": 0, "findings": []}
         return pipeline_results
 
@@ -79,19 +79,19 @@ def analyze_results(pipeline_results, ask_llm, target_profile=None):
     llm_calls = 0
 
     for item in findings:
-        target       = item.get("endpoint") or item.get("target") or "unknown"
-        payload      = item.get("payload", "")
-        vuln         = item.get("vulnerability", "Unknown")
-        evidence     = item.get("evidence", "")
-        status       = item.get("status_code")
-        anomaly      = item.get("anomaly_detected", False)
+        target = item.get("endpoint") or item.get("target") or "unknown"
+        payload = item.get("payload", "")
+        vuln = item.get("vulnerability", "Unknown")
+        evidence = item.get("evidence", "")
+        status = item.get("status_code")
+        anomaly = item.get("anomaly_detected", False)
         inconclusive = item.get("inconclusive", False)
-        detects      = item.get("detections", [])
-        pid          = item.get("payload_id", "?")
-        shot         = item.get("screenshot_path", "")
-        video        = item.get("video_path", "")
-        cwe_id       = item.get("cwe_id")
-        owasp_cat    = item.get("owasp_category")
+        detects = item.get("detections", [])
+        pid = item.get("payload_id", "?")
+        shot = item.get("screenshot_path", "")
+        video = item.get("video_path", "")
+        cwe_id = item.get("cwe_id")
+        owasp_cat = item.get("owasp_category")
 
         # ── Resume support: reuse a prior successful classification instead
         # of spending tokens on it again ──
@@ -205,23 +205,21 @@ Return ONLY a valid JSON object, no markdown, no extra text:
             llm_result["video_path"] = video
 
             analyzed.append(llm_result)
-            print(f"[B8] [{pid}] {target} -> {llm_result.get('result', '?').upper()} ({llm_result.get('confidence', '?')})")
+            print(
+                f"[B8] [{pid}] {target} -> {llm_result.get('result', '?').upper()} ({llm_result.get('confidence', '?')})"
+            )
 
         except Exception as e:
             print(f"[-] Error parsing response for {target}: {e}")
 
-    # 4. Guardar en B8_dynamic_analysis.json
-    final_output = {
-        "status": "complete",
-        "total_analyzed": len(analyzed),
-        "findings": analyzed
-    }
+    # 4. Save to B8_dynamic.json
+    final_output = {"status": "complete", "total_analyzed": len(analyzed), "findings": analyzed}
 
     os.makedirs("results", exist_ok=True)
     with open(b8_output_path, "w", encoding="utf-8") as f:
         json.dump(final_output, f, indent=4)
 
-    # 5. Integración en el diccionario central
+    # 5. Store in the central results dict
     pipeline_results["B8"] = final_output
     print(
         f"B8 finalized. LLM calls: {llm_calls} | reused from previous run: {reused} | "

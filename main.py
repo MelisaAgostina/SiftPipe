@@ -1,33 +1,40 @@
-#Ajustar los indicadores y palabras clave a las respuestas reales de Mattermost si observas falsos positivos/negativos.
+# Tune the indicators and keywords to Mattermost's real responses if you see false positives/negatives.
 
 import argparse
 
 from blocks import run_history
 from blocks.analyze_results import analyze_results
+from blocks.bootstrap import (
+    MissingConfigError,
+    configure_logging,
+    load_environment,
+    validate_required_env_vars,
+)
 from blocks.correlate_results import correlate_results
 from blocks.environment import dispatch_fresh_reset, ensure_naviq_server_running
 from blocks.generate_payloads import generate_payloads
 from blocks.human_review import run_human_review
 from blocks.pipeline import (
-    MissingConfigError,
     ask_llm,
-    client,
     execute_attacks,
+    get_client,
     logger,
     pipeline_results,
     run_dynamic_discovery,
     run_static_analysis,
-    validate_required_env_vars,
 )
 from blocks.targets import get_target
 
-# --- Orquestador Principal ---
+# --- Main orchestrator ---
+
 
 def main():
+    load_environment()
+    configure_logging()
     try:
         validate_required_env_vars()
     except MissingConfigError as e:
-        raise SystemExit(f"[main] {e}")
+        raise SystemExit(f"[main] {e}") from e
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["fresh", "restore"], default="restore")
@@ -37,23 +44,28 @@ def main():
     target = get_target(args.target)
     logger.info(f"Initiating pipeline in mode: {args.mode.upper()} | target: {target.name} ({target.base_url})")
 
-    # Lógica de Inicialización
+    # Initialization
     if args.mode == "fresh":
         try:
             dispatch_fresh_reset(target)
         except ValueError as e:
-            raise SystemExit(f"[main] {e}")
+            raise SystemExit(f"[main] {e}") from e
     else:
         logger.info(f"Restore mode: assuming target={target.name!r} is already up and reachable.")
         if target.name == "naviq":
             ensure_naviq_server_running()
 
-    # Ejecución de bloques
+    # Run the blocks
     run_id = run_history.start_run(mode=args.mode, target=target.name)
     try:
-        run_static_analysis(pipeline_results, target)
+        b3 = run_static_analysis(pipeline_results, target)
+        if b3 and b3.get("status") == "error":
+            raise RuntimeError(
+                f"B3 static analysis failed for {b3['failed_files']} of {b3['total_scanned']} files - "
+                "see logs/siftpipe.log (check the Anthropic API key and credit)."
+            )
         run_dynamic_discovery(pipeline_results, target, run_id)
-        generate_payloads(client=client, target_profile=target)
+        generate_payloads(client=get_client(), target_profile=target)
         run_human_review(pipeline_results, target)
         execute_attacks(target, run_id)
         analyze_results(pipeline_results, ask_llm, target)
@@ -64,6 +76,7 @@ def main():
 
     run_history.finish_run(run_id, "completed")
     logger.info("Pipeline completed. Results available in /results.")
+
 
 if __name__ == "__main__":
     main()

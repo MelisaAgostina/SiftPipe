@@ -19,6 +19,7 @@ class FakeThread:
     B7->B9 (which would hit Playwright + a live Mattermost + Anthropic). Records
     what it was asked to run instead of running it.
     """
+
     started = []
     started_args = []
 
@@ -32,7 +33,6 @@ class FakeThread:
 
 
 class TestApiRoutes(unittest.TestCase):
-
     def setUp(self):
         FakeThread.started = []
         FakeThread.started_args = []
@@ -40,11 +40,19 @@ class TestApiRoutes(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         os.chdir(self._tmp.name)
 
-        api.pipeline_state.update({
-            "running": False, "current_block": None, "waiting_for_human": False,
-            "completed": False, "error": None, "logs": [], "run_id": None,
-            "stop_requested": False, "discard_requested": False,
-        })
+        api.pipeline_state.update(
+            {
+                "running": False,
+                "current_block": None,
+                "waiting_for_human": False,
+                "completed": False,
+                "error": None,
+                "logs": [],
+                "run_id": None,
+                "stop_requested": False,
+                "discard_requested": False,
+            }
+        )
         api.env_state.update({"running": False, "completed": False, "error": None, "logs": []})
         api.pipeline_results.clear()
 
@@ -188,7 +196,9 @@ class TestApiRoutes(unittest.TestCase):
 
         self.assertIn("Validation received", response["message"])
 
-        saved = json.loads(Path(f"results/{api.ACTIVE_TARGET.name}_validated_payloads.json").read_text(encoding="utf-8"))
+        saved = json.loads(
+            Path(f"results/{api.ACTIVE_TARGET.name}_validated_payloads.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(len(saved["payloads"]), 2)
         self.assertEqual({p["target"] for p in saved["payloads"]}, {"a", "c"})
         self.assertEqual(saved["comment"], "ok")
@@ -214,7 +224,9 @@ class TestApiRoutes(unittest.TestCase):
         every other step failure."""
         api.set_active_target(api.SetTargetRequest(name="naviq"))
 
-        with patch.object(api, "ensure_naviq_server_running", side_effect=RuntimeError("dev server exited immediately")):
+        with patch.object(
+            api, "ensure_naviq_server_running", side_effect=RuntimeError("dev server exited immediately")
+        ):
             api._run_fresh_pipeline("fresh")
 
         self.assertFalse(api.pipeline_state["running"])
@@ -226,9 +238,11 @@ class TestApiRoutes(unittest.TestCase):
         and B3 to a spy that must never fire when starting from B4."""
         api.pipeline_state["run_id"] = 1
         b3_called = []
-        with patch.object(api, "run_static_analysis", lambda *a, **k: b3_called.append(True)), \
-             patch.object(api, "run_dynamic_discovery", lambda *a, **k: None), \
-             patch.object(api, "generate_payloads", lambda *a, **k: None):
+        with (
+            patch.object(api, "run_static_analysis", lambda *a, **k: b3_called.append(True)),
+            patch.object(api, "run_dynamic_discovery", lambda *a, **k: None),
+            patch.object(api, "generate_payloads", lambda *a, **k: None),
+        ):
             api._run_pipeline_from(1)  # index 1 == "B4" in PIPELINE_STEPS
 
         self.assertEqual(b3_called, [])
@@ -309,12 +323,27 @@ class TestApiRoutes(unittest.TestCase):
         first = rh.start_run(mode="fresh", target=api.ACTIVE_TARGET.name)
         os.makedirs("results", exist_ok=True)
         with open(f"results/{api.ACTIVE_TARGET.name}_B9_correlation.json", "w", encoding="utf-8") as f:
-            json.dump({"results": [{"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "h.go", "severity": "HIGH", "source": "Dynamic"}]}, f)
+            json.dump(
+                {
+                    "results": [
+                        {
+                            "vulnerability": "Injection",
+                            "cwe_id": "CWE-89",
+                            "target": "h.go",
+                            "severity": "HIGH",
+                            "source": "Dynamic",
+                        }
+                    ]
+                },
+                f,
+            )
         rh.finish_run(first, "completed")
 
         second = rh.start_run(mode="restore", target=api.ACTIVE_TARGET.name)
         with open(f"results/{api.ACTIVE_TARGET.name}_B9_correlation.json", "w", encoding="utf-8") as f:
-            json.dump({"results": [{"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "v.go", "severity": "LOW"}]}, f)
+            json.dump(
+                {"results": [{"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "v.go", "severity": "LOW"}]}, f
+            )
         rh.finish_run(second, "completed")
 
         result = api.get_run_comparison(second)
@@ -443,8 +472,7 @@ class TestApiRoutes(unittest.TestCase):
         self.assertTrue(api.run_history.get_latest_run(api.ACTIVE_TARGET.name)["resumable"])
 
     def test_crash_during_b8_then_resume_reaches_actual_completion(self):
-        """The spec's own headline test (docs/superpowers/specs/2026-09-08-
-        pipeline-resume-design.md, Testing section): a run that crashes
+        """The headline end-to-end resume test: a run that crashes
         partway through, gets resumed, and reaches "completed" with every
         block present exactly once. Every other resume test covers a
         sub-piece (_find_resume_point against hand-placed files,
@@ -461,7 +489,7 @@ class TestApiRoutes(unittest.TestCase):
         for stored_name in ("B3_static", "B4_dynamic", "B5_payloads"):
             with open(f"results/{target_name}_{stored_name}.json", "w", encoding="utf-8") as f:
                 json.dump({"status": "complete"}, f)
-        api.run_history._snapshot_new_result_files(run_id, target_name)
+        api.run_history.snapshot_new_result_files(run_id, target_name)
 
         def _fake_execute_attacks(*a, **k):
             with open(f"results/{target_name}_B7_dynamic_attacks.json", "w", encoding="utf-8") as f:
@@ -484,10 +512,11 @@ class TestApiRoutes(unittest.TestCase):
 
         api.pipeline_state["run_id"] = run_id
 
-        with patch.object(api, "execute_attacks", side_effect=_fake_execute_attacks), \
-             patch.object(api, "analyze_results", side_effect=_fake_analyze_results), \
-             patch.object(api, "correlate_results", side_effect=_fake_correlate_results):
-
+        with (
+            patch.object(api, "execute_attacks", side_effect=_fake_execute_attacks),
+            patch.object(api, "analyze_results", side_effect=_fake_analyze_results),
+            patch.object(api, "correlate_results", side_effect=_fake_correlate_results),
+        ):
             # Crash: B7 (index 3) succeeds, B8 raises on its first call,
             # landing in _fail_pipeline.
             api._run_pipeline_from(3)
@@ -511,8 +540,12 @@ class TestApiRoutes(unittest.TestCase):
         self.assertEqual(
             set(completed_run["blocks"].keys()),
             {
-                "B3_static", "B4_dynamic", "B5_payloads",
-                "B7_dynamic_attacks", "B8_dynamic", "B9_correlation",
+                "B3_static",
+                "B4_dynamic",
+                "B5_payloads",
+                "B7_dynamic_attacks",
+                "B8_dynamic",
+                "B9_correlation",
             },
         )
         self.assertEqual(completed_run["status"], "completed")
@@ -555,8 +588,10 @@ class TestApiRoutes(unittest.TestCase):
             with open(f"results/{target_name}_B3_static.json", "w", encoding="utf-8") as f:
                 json.dump({"status": "complete"}, f)
 
-        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
-             patch.object(api, "run_dynamic_discovery") as mock_b4:
+        with (
+            patch.object(api, "run_static_analysis", side_effect=_fake_b3),
+            patch.object(api, "run_dynamic_discovery") as mock_b4,
+        ):
             api._run_pipeline_from(0)
 
         mock_b4.assert_not_called()
@@ -595,10 +630,12 @@ class TestApiRoutes(unittest.TestCase):
             with open(f"results/{target_name}_B5_payloads.json", "w", encoding="utf-8") as f:
                 json.dump({"status": "complete", "payloads": []}, f)
 
-        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
-             patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4), \
-             patch.object(api, "generate_payloads", side_effect=_fake_b5), \
-             patch.object(api, "execute_attacks") as mock_b7:
+        with (
+            patch.object(api, "run_static_analysis", side_effect=_fake_b3),
+            patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4),
+            patch.object(api, "generate_payloads", side_effect=_fake_b5),
+            patch.object(api, "execute_attacks") as mock_b7,
+        ):
             api._run_pipeline_from(0)
 
         mock_b7.assert_not_called()
@@ -622,7 +659,7 @@ class TestApiRoutes(unittest.TestCase):
         for stored_name in ("B3_static", "B4_dynamic", "B5_payloads", "B7_dynamic_attacks", "B8_dynamic"):
             with open(f"results/{target_name}_{stored_name}.json", "w", encoding="utf-8") as f:
                 json.dump({"status": "complete"}, f)
-        api.run_history._snapshot_new_result_files(run_id, target_name)
+        api.run_history.snapshot_new_result_files(run_id, target_name)
 
         def _fake_b9(*a, **k):
             # Simulates the user clicking Stop while B9 was still running.
@@ -657,15 +694,19 @@ class TestApiRoutes(unittest.TestCase):
             with open(f"results/{target_name}_B4_dynamic.json", "w", encoding="utf-8") as f:
                 json.dump({"status": "complete"}, f)
 
-        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
-             patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4):
+        with (
+            patch.object(api, "run_static_analysis", side_effect=_fake_b3),
+            patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4),
+        ):
             api._run_pipeline_from(0)
 
         resume_point = api._find_resume_point(target_name)
         self.assertEqual(resume_point, (run_id, 1, "B4"))
 
-        with patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4), \
-             patch.object(api, "generate_payloads") as mock_b5:
+        with (
+            patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4),
+            patch.object(api, "generate_payloads") as mock_b5,
+        ):
             api._run_resumed_pipeline(run_id, resume_point[1])
 
         self.assertTrue(api.pipeline_state["waiting_for_human"])  # paused at B6, as designed
@@ -683,6 +724,7 @@ class TestApiRoutes(unittest.TestCase):
     def _fake_b3_writing_result(self, target_name):
         def _fake(*a, **k):
             self._write_result(target_name, "B3_static", {"status": "complete"})
+
         return _fake
 
     def _fake_b4_returning(self, target_name, status, errors=None):
@@ -693,6 +735,7 @@ class TestApiRoutes(unittest.TestCase):
             self._write_result(target_name, "B4_dynamic", summary)
             self._write_result(target_name, "attack_surface", {"status": status})
             return summary
+
         return _fake
 
     def test_failed_b4_ends_the_run_as_error_and_never_reaches_b5(self):
@@ -702,9 +745,13 @@ class TestApiRoutes(unittest.TestCase):
         api.pipeline_state["running"] = True
         login_error = [{"stage": "login", "message": "Login failed: Still on /login 15s after submitting\nlogs..."}]
 
-        with patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)), \
-             patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "failed", login_error)), \
-             patch.object(api, "generate_payloads") as mock_b5:
+        with (
+            patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)),
+            patch.object(
+                api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "failed", login_error)
+            ),
+            patch.object(api, "generate_payloads") as mock_b5,
+        ):
             api._run_pipeline_from(0)
 
         mock_b5.assert_not_called()
@@ -724,9 +771,11 @@ class TestApiRoutes(unittest.TestCase):
         api.pipeline_state["run_id"] = run_id
         api.pipeline_state["running"] = True
 
-        with patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)), \
-             patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "failed")), \
-             patch.object(api, "generate_payloads"):
+        with (
+            patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)),
+            patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "failed")),
+            patch.object(api, "generate_payloads"),
+        ):
             api._run_pipeline_from(0)
 
         self.assertEqual(set(api.run_history.get_run(run_id)["blocks"].keys()), {"B3_static"})
@@ -735,9 +784,11 @@ class TestApiRoutes(unittest.TestCase):
         # Credentials fixed: Resume re-runs B4 only (B3 must not run again) and reaches B6.
         b3_reruns = []
         api.pipeline_state["error"] = None
-        with patch.object(api, "run_static_analysis", side_effect=lambda *a, **k: b3_reruns.append(True)), \
-             patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "complete")), \
-             patch.object(api, "generate_payloads") as mock_b5:
+        with (
+            patch.object(api, "run_static_analysis", side_effect=lambda *a, **k: b3_reruns.append(True)),
+            patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "complete")),
+            patch.object(api, "generate_payloads") as mock_b5,
+        ):
             api._run_resumed_pipeline(run_id, 1)
 
         self.assertEqual(b3_reruns, [])
@@ -748,6 +799,59 @@ class TestApiRoutes(unittest.TestCase):
             {"B3_static", "B4_dynamic", "attack_surface"},
         )
 
+    def _fake_b3_returning(self, target_name, status):
+        """Mimics run_static_analysis: writes B3's result file, returns its summary."""
+        summary = {
+            "status": status,
+            "total_scanned": 4,
+            "failed_files": 4 if status == "error" else 1,
+            "failures": [{"file": "a.go", "reason": "API Error: 401 invalid x-api-key"}],
+            "findings": [],
+        }
+
+        def _fake(*a, **k):
+            self._write_result(target_name, "B3_static", summary)
+            return summary
+
+        return _fake
+
+    def test_failed_b3_ends_the_run_as_error_and_never_reaches_b4(self):
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+
+        with (
+            patch.object(api, "run_static_analysis", side_effect=self._fake_b3_returning(target_name, "error")),
+            patch.object(api, "run_dynamic_discovery") as mock_b4,
+        ):
+            api._run_pipeline_from(0)
+
+        mock_b4.assert_not_called()
+        self.assertFalse(api.pipeline_state["completed"])
+        self.assertIn("B3 static analysis failed for 4 of 4 files", api.pipeline_state["error"])
+        self.assertIn("401 invalid x-api-key", api.pipeline_state["error"])
+        self.assertEqual(api.run_history.get_run(run_id)["status"], "error")
+        # B3's file is removed so Resume re-runs B3 instead of skipping past the empty result.
+        self.assertEqual(api._find_resume_point(target_name), (run_id, 0, "B3"))
+
+    def test_partial_b3_continues_and_logs_a_warning(self):
+        target_name = api.ACTIVE_TARGET.name
+        run_id = api.run_history.start_run(mode="fresh", target=target_name)
+        api.pipeline_state["run_id"] = run_id
+        api.pipeline_state["running"] = True
+        api.pipeline_state["logs"] = []
+
+        with (
+            patch.object(api, "run_static_analysis", side_effect=self._fake_b3_returning(target_name, "partial")),
+            patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "complete")),
+            patch.object(api, "generate_payloads"),
+        ):
+            api._run_pipeline_from(0)
+
+        self.assertTrue(api.pipeline_state["waiting_for_human"])
+        self.assertTrue(any("B3 partial" in line for line in api.pipeline_state["logs"]))
+
     def test_partial_b4_still_continues_to_b5_and_the_b6_pause(self):
         """Only a failed login stops the run - a partial discovery still has usable data."""
         target_name = api.ACTIVE_TARGET.name
@@ -755,9 +859,11 @@ class TestApiRoutes(unittest.TestCase):
         api.pipeline_state["run_id"] = run_id
         api.pipeline_state["running"] = True
 
-        with patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)), \
-             patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "partial")), \
-             patch.object(api, "generate_payloads") as mock_b5:
+        with (
+            patch.object(api, "run_static_analysis", side_effect=self._fake_b3_writing_result(target_name)),
+            patch.object(api, "run_dynamic_discovery", side_effect=self._fake_b4_returning(target_name, "partial")),
+            patch.object(api, "generate_payloads") as mock_b5,
+        ):
             api._run_pipeline_from(0)
 
         mock_b5.assert_called_once()
@@ -825,10 +931,12 @@ class TestApiRoutes(unittest.TestCase):
             with open(f"results/{target_name}_B5_payloads.json", "w", encoding="utf-8") as f:
                 json.dump({"status": "complete", "payloads": []}, f)
 
-        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
-             patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4), \
-             patch.object(api, "generate_payloads", side_effect=_fake_b5), \
-             patch.object(api, "execute_attacks") as mock_b7:
+        with (
+            patch.object(api, "run_static_analysis", side_effect=_fake_b3),
+            patch.object(api, "run_dynamic_discovery", side_effect=_fake_b4),
+            patch.object(api, "generate_payloads", side_effect=_fake_b5),
+            patch.object(api, "execute_attacks") as mock_b7,
+        ):
             api._run_pipeline_from(0)
 
         mock_b7.assert_not_called()
@@ -852,7 +960,7 @@ class TestApiRoutes(unittest.TestCase):
         for stored_name in ("B3_static", "B4_dynamic", "B5_payloads", "B7_dynamic_attacks", "B8_dynamic"):
             with open(f"results/{target_name}_{stored_name}.json", "w", encoding="utf-8") as f:
                 json.dump({"status": "complete"}, f)
-        api.run_history._snapshot_new_result_files(run_id, target_name)
+        api.run_history.snapshot_new_result_files(run_id, target_name)
 
         def _fake_b9(*a, **k):
             # Simulates the user clicking Discard while B9 was still running.
@@ -885,8 +993,10 @@ class TestApiRoutes(unittest.TestCase):
             with open(f"results/{target_name}_B3_static.json", "w", encoding="utf-8") as f:
                 json.dump({"status": "complete"}, f)
 
-        with patch.object(api, "run_static_analysis", side_effect=_fake_b3), \
-             patch.object(api, "run_dynamic_discovery") as mock_b4:
+        with (
+            patch.object(api, "run_static_analysis", side_effect=_fake_b3),
+            patch.object(api, "run_dynamic_discovery") as mock_b4,
+        ):
             api._run_pipeline_from(0)
 
         mock_b4.assert_not_called()

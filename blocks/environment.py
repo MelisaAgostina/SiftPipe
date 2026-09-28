@@ -3,23 +3,24 @@ blocks/environment.py
 Handles Docker lifecycle and environment reset for reproducible pipeline runs.
 """
 
-import subprocess
+import os
 import shutil
+import subprocess
 import sys
 import time
-import os
+
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # --- Configuration ---
-MATTERMOST_DIR = "mattermost"           # folder containing docker-compose.yml
+MATTERMOST_DIR = "mattermost"  # folder containing docker-compose.yml
 MM_URL = os.getenv("MM_URL", "http://localhost:8065")
 MM_PING_URL = f"{MM_URL}/api/v4/system/ping"
-READY_TIMEOUT = 120                      # seconds to wait for Mattermost to boot (first-boot DB migrations can be slow)
-POLL_INTERVAL = 2                        # seconds between readiness checks
-WEBAPP_READY_TIMEOUT = 90                # seconds to wait for the React webapp itself to render (see wait_for_mattermost_webapp)
+READY_TIMEOUT = 120  # seconds to wait for Mattermost to boot (first-boot DB migrations can be slow)
+POLL_INTERVAL = 2  # seconds between readiness checks
+WEBAPP_READY_TIMEOUT = 90  # seconds to wait for the React webapp itself to render (see wait_for_mattermost_webapp)
 
 # mattermost/.env bind-mounts Postgres/Mattermost data to host paths under
 # mattermost/volumes/ (see POSTGRES_DATA_PATH / MATTERMOST_DATA_PATH etc.).
@@ -33,7 +34,7 @@ WEBAPP_READY_TIMEOUT = 90                # seconds to wait for the React webapp 
 # the Docker socket (docs/containerize-siftpipe-design.md §7/§8). The
 # compose file sets SIDECAR_URL for that container only; when it's unset
 # (local dev, CLI runs) every function below behaves exactly as before.
-SIDECAR_REQUEST_TIMEOUT = 180            # seconds for the sidecar to finish a reset call (compose down/wipe/up)
+SIDECAR_REQUEST_TIMEOUT = 180  # seconds for the sidecar to finish a reset call (compose down/wipe/up)
 # The naviq container reinstalls its dependencies, migrates, seeds and
 # recreates the test account on every start (docker/naviq/entrypoint.sh),
 # nothing like the sub-second local dev server the 20s above assumes.
@@ -51,7 +52,7 @@ def _sidecar_post(path):
     try:
         resp = requests.post(url, timeout=SIDECAR_REQUEST_TIMEOUT)
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"[env] Could not reach the reset sidecar at {url}: {e}")
+        raise RuntimeError(f"[env] Could not reach the reset sidecar at {url}: {e}") from e
     if resp.status_code != 200:
         raise RuntimeError(f"[env] Sidecar {path} failed (HTTP {resp.status_code}): {resp.text[:200]}")
 
@@ -61,24 +62,24 @@ def check_docker_available():
     try:
         subprocess.run(["docker", "info"], check=True, capture_output=True, timeout=10)
     except FileNotFoundError:
-        raise RuntimeError("[env] Docker CLI not found. Install Docker Desktop and make sure 'docker' is on PATH.")
+        raise RuntimeError(
+            "[env] Docker CLI not found. Install Docker Desktop and make sure 'docker' is on PATH."
+        ) from None
     except subprocess.CalledProcessError:
-        raise RuntimeError("[env] Docker daemon not reachable. Start Docker Desktop, wait for it to be ready, and try again.")
+        raise RuntimeError(
+            "[env] Docker daemon not reachable. Start Docker Desktop, wait for it to be ready, and try again."
+        ) from None
     except subprocess.TimeoutExpired:
-        raise RuntimeError("[env] Docker did not respond in time. Check that Docker Desktop is running.")
+        raise RuntimeError("[env] Docker did not respond in time. Check that Docker Desktop is running.") from None
 
 
 def docker_down(log_fn=print):
     """Stops and removes the Mattermost container."""
     log_fn("[env] Stopping and removing container...")
     try:
-        subprocess.run(
-            ["docker", "compose", "down", "-v"],
-            cwd=MATTERMOST_DIR,
-            check=True
-        )
+        subprocess.run(["docker", "compose", "down", "-v"], cwd=MATTERMOST_DIR, check=True)
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"[env] 'docker compose down' failed: {e}")
+        raise RuntimeError(f"[env] 'docker compose down' failed: {e}") from e
     log_fn("[env] Container removed.")
 
 
@@ -104,9 +105,15 @@ def wipe_volumes(log_fn=print):
     abs_root = os.path.abspath(volumes_root)
     subprocess.run(
         [
-            "docker", "run", "--rm",
-            "-v", f"{abs_root}:/target",
-            "alpine", "sh", "-c", "rm -rf /target/db /target/app",
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{abs_root}:/target",
+            "alpine",
+            "sh",
+            "-c",
+            "rm -rf /target/db /target/app",
         ],
         check=True,
     )
@@ -117,13 +124,9 @@ def docker_up(log_fn=print):
     """Starts a fresh Mattermost container in detached mode."""
     log_fn("[env] Starting new container...")
     try:
-        subprocess.run(
-            ["docker", "compose", "up", "-d"],
-            cwd=MATTERMOST_DIR,
-            check=True
-        )
+        subprocess.run(["docker", "compose", "up", "-d"], cwd=MATTERMOST_DIR, check=True)
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"[env] 'docker compose up' failed: {e}")
+        raise RuntimeError(f"[env] 'docker compose up' failed: {e}") from e
     log_fn("[env] Container started (detached).")
 
 
@@ -168,6 +171,7 @@ def wait_for_mattermost_webapp(timeout=WEBAPP_READY_TIMEOUT, interval=3, log_fn=
     API ping that says nothing about the frontend.
     """
     from playwright.sync_api import sync_playwright
+
     from blocks.targets import MATTERMOST
 
     log_fn("[env] Waiting for Mattermost's webapp to render...")
@@ -292,10 +296,7 @@ def create_admin_account(log_fn=print, interactive=True):
 def run_seed_script(log_fn=print):
     """Runs seed.py to populate the fresh instance with fictitious test data."""
     log_fn("[env] Running seed.py...")
-    subprocess.run(
-        [sys.executable, "seed.py"],
-        check=True
-    )
+    subprocess.run([sys.executable, "seed.py"], check=True)
     log_fn("[env] Seed completed.")
 
 
@@ -360,10 +361,7 @@ NAVIQ_DIR = os.path.join("naviq-src", "naviq")
 # resulting FileNotFoundError still names a sensible expected path.
 _NAVIQ_VENV_LINUX_PYTHON = os.path.join(NAVIQ_DIR, ".venv310", "bin", "python")
 _NAVIQ_VENV_WINDOWS_PYTHON = os.path.join(NAVIQ_DIR, ".venv310", "Scripts", "python.exe")
-NAVIQ_VENV_PYTHON = (
-    _NAVIQ_VENV_LINUX_PYTHON if os.path.exists(_NAVIQ_VENV_LINUX_PYTHON)
-    else _NAVIQ_VENV_WINDOWS_PYTHON
-)
+NAVIQ_VENV_PYTHON = _NAVIQ_VENV_LINUX_PYTHON if os.path.exists(_NAVIQ_VENV_LINUX_PYTHON) else _NAVIQ_VENV_WINDOWS_PYTHON
 NAVIQ_DB_PATH = os.path.join(NAVIQ_DIR, "db.sqlite3")
 NAVIQ_URL = os.getenv("NAVIQ_URL", "http://127.0.0.1:8001")
 # A local SQLite dev server starts in well under a second once the venv's
@@ -450,9 +448,7 @@ def naviq_create_test_account(log_fn=print):
     username = os.getenv("NAVIQ_USERNAME", "siftpipe_test")
     password = os.getenv("NAVIQ_PASSWORD")
     if not password:
-        raise RuntimeError(
-            "[env] NAVIQ_PASSWORD is not set in .env — cannot create the NaViQ test account."
-        )
+        raise RuntimeError("[env] NAVIQ_PASSWORD is not set in .env — cannot create the NaViQ test account.")
     email = f"{username}@example.local"
 
     script = (
@@ -472,7 +468,9 @@ def naviq_create_test_account(log_fn=print):
     log_fn(f"[env] Creating/resetting NaViQ test account '{username}'...")
     subprocess.run(
         [NAVIQ_VENV_PYTHON, "manage.py", "shell", "-c", script],
-        cwd=NAVIQ_DIR, check=True, env=_naviq_manage_env(),
+        cwd=NAVIQ_DIR,
+        check=True,
+        env=_naviq_manage_env(),
     )
     log_fn(f"[env] NaViQ test account '{username}' ready.")
 
@@ -572,9 +570,7 @@ def ensure_naviq_server_running(log_fn=print, timeout=None):
             )
         time.sleep(1)
 
-    raise TimeoutError(
-        f"[env] NaViQ dev server did not respond within {timeout}s. See {NAVIQ_SERVER_LOG_PATH}."
-    )
+    raise TimeoutError(f"[env] NaViQ dev server did not respond within {timeout}s. See {NAVIQ_SERVER_LOG_PATH}.")
 
 
 def stop_naviq_server(log_fn=print):
@@ -629,7 +625,7 @@ def naviq_fresh_reset(log_fn=print):
             try:
                 subprocess.run(argv, cwd=NAVIQ_DIR, check=True, env=_naviq_manage_env())
             except subprocess.CalledProcessError as e:
-                raise RuntimeError(f"[env] NaViQ step '{step_name}' failed: {e}")
+                raise RuntimeError(f"[env] NaViQ step '{step_name}' failed: {e}") from e
     ensure_naviq_server_running(log_fn=log_fn)
     clear_results_folder(log_fn=log_fn)
     log_fn("=== NAVIQ FRESH RESET COMPLETED ===\n")

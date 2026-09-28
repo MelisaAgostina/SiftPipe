@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -142,7 +143,7 @@ class TestNotFoundPlaceholderIsFiltered(unittest.TestCase):
                 "category": "A05",
                 "cwe_id": "CWE-89",
                 "line": 42,
-                "evidence": "cursor.execute(f\"SELECT * FROM users WHERE id={user_id}\")",
+                "evidence": 'cursor.execute(f"SELECT * FROM users WHERE id={user_id}")',
                 "confidence": "high",
             },
         ]
@@ -152,6 +153,74 @@ class TestNotFoundPlaceholderIsFiltered(unittest.TestCase):
         findings = pipeline.pipeline_results["B3"]["findings"]
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["vulnerability"], "Injection")
+
+
+class TestLlmFailureIsNotReportedAsACleanScan(unittest.TestCase):
+    """
+    Real gap found in the 2026-09-28 tech-debt audit: ask_llm() turns every
+    exception into a placeholder dict, B3 skipped those files with only a log
+    line, and then saved status "complete" - so an expired key or exhausted
+    credit produced a clean-looking scan of a vulnerable codebase.
+    """
+
+    def setUp(self):
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        os.chdir(self._tmp.name)
+        pipeline.pipeline_results.clear()
+        for name in ("a.go", "b.go", "c.go", "d.go"):
+            path = Path(MATTERMOST.source_dir) / "api4" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _run(self, responses):
+        responses = iter(responses)
+        with patch.object(pipeline, "ask_llm", side_effect=lambda prompt: next(responses)):
+            return pipeline.run_static_analysis(pipeline.pipeline_results, MATTERMOST)
+
+    def test_every_call_failing_is_status_error_not_complete(self):
+        failure = {"vulnerability": "API Error", "evidence": "401 invalid x-api-key"}
+
+        result = self._run([failure] * 4)
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["failed_files"], 4)
+        self.assertEqual(result["findings"], [])
+        self.assertIn("401 invalid x-api-key", result["failures"][0]["reason"])
+
+    def test_a_minority_of_failures_is_partial(self):
+        failure = {"vulnerability": "API Error", "evidence": "429"}
+
+        result = self._run([[], [], [], failure])
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["failed_files"], 1)
+
+    def test_all_calls_succeeding_is_complete(self):
+        result = self._run([[]] * 4)
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["failed_files"], 0)
+
+    def test_wrongly_shaped_answer_counts_as_a_failure(self):
+        result = self._run([{"unexpected": "dict"}] * 4)
+
+        self.assertEqual(result["status"], "error")
+
+    def test_status_is_persisted_to_disk_too(self):
+        self._run([{"vulnerability": "API Error", "evidence": "x"}] * 4)
+
+        saved = json.loads(Path(f"results/{MATTERMOST.name}_B3_static.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["status"], "error")
+
+    def test_scan_status_thresholds(self):
+        self.assertEqual(static_scanner.scan_status(0, 0), "complete")
+        self.assertEqual(static_scanner.scan_status(1, 10), "partial")
+        self.assertEqual(static_scanner.scan_status(5, 10), "error")
 
 
 class TestScanBudgetGoesToTheMostPromisingFiles(unittest.TestCase):
@@ -179,11 +248,16 @@ class TestScanBudgetGoesToTheMostPromisingFiles(unittest.TestCase):
     def test_the_single_scan_slot_goes_to_the_view_not_the_admin_registration(self):
         padding = "\n".join(f"value_{i} = {i}" for i in range(30))
         self._write("blog/admin.py", "from django.contrib import admin\nadmin.site.register(Post)\n" + padding)
-        self._write("users/views.py", "MARKER_VIEW\n@login_required\ndef profile(request):\n    return request.GET['next']\n" + padding)
+        self._write(
+            "users/views.py",
+            "MARKER_VIEW\n@login_required\ndef profile(request):\n    return request.GET['next']\n" + padding,
+        )
 
         prompts = []
-        with patch.object(static_scanner, "MAX_FILES", 1), \
-             patch.object(pipeline, "ask_llm", side_effect=lambda prompt: prompts.append(prompt) or []):
+        with (
+            patch.object(static_scanner, "MAX_FILES", 1),
+            patch.object(pipeline, "ask_llm", side_effect=lambda prompt: prompts.append(prompt) or []),
+        ):
             pipeline.run_static_analysis(pipeline.pipeline_results, NAVIQ)
 
         self.assertEqual(pipeline.pipeline_results["B3"]["total_scanned"], 1)

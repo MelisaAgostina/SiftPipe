@@ -167,8 +167,11 @@ SiftPipe/
 
 ```
 blocks/
-├── pipeline.py           # Shared primitives: Anthropic client, ask_llm(), run_static_analysis(),
-│                          #   run_dynamic_discovery(), execute_attacks(), startup env-var validation
+├── pipeline.py           # Shared primitives: lazy Anthropic client, ask_llm(), run_static_analysis(),
+│                          #   run_dynamic_discovery(), execute_attacks() (no import-time side effects)
+├── bootstrap.py           # Explicit start-up: load_environment() (.env + SSM), configure_logging(),
+│                          #   env-var validation - called by api.py and main.py, not on import
+├── pipeline_state.py      # PipelineState: the run's lifecycle flags and their transitions
 ├── llm.py                # Shared Anthropic call shape (JSON verdict, fence-stripping) used by every
 │                          #   LLM-calling block
 ├── targets.py             # TargetProfile — single source of truth per target (selectors,

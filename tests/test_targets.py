@@ -17,19 +17,13 @@ class TestDiscoveryEvidenceDir(unittest.TestCase):
     """
 
     def test_scoped_under_evidence_dir_by_target_and_run(self):
-        self.assertEqual(
-            discovery_evidence_dir("naviq", 23), "evidence/naviq/23/discovery"
-        )
+        self.assertEqual(discovery_evidence_dir("naviq", 23), "evidence/naviq/23/discovery")
 
     def test_different_runs_of_same_target_get_different_dirs(self):
-        self.assertNotEqual(
-            discovery_evidence_dir("naviq", 23), discovery_evidence_dir("naviq", 24)
-        )
+        self.assertNotEqual(discovery_evidence_dir("naviq", 23), discovery_evidence_dir("naviq", 24))
 
     def test_different_targets_get_different_dirs(self):
-        self.assertNotEqual(
-            discovery_evidence_dir("naviq", 23), discovery_evidence_dir("mattermost", 23)
-        )
+        self.assertNotEqual(discovery_evidence_dir("naviq", 23), discovery_evidence_dir("mattermost", 23))
 
 
 if __name__ == "__main__":

@@ -3,24 +3,21 @@ blocks/aws_secrets.py
 
 Backfills whichever of this project's secrets aren't already set in the
 environment by pulling them from an AWS SSM Parameter Store path, instead
-of a hand-edited .env on the deployed box - see
-docs/next-steps-before-deployment.md's "AWS deployment ease" section for
-the full design rationale (SSM over Secrets Manager, the AWS-managed KMS
-key, why this only runs when actually deployed).
+of a hand-edited .env on the deployed box. Design: SSM Parameter Store
+rather than Secrets Manager, encrypted with the AWS-managed KMS key, and it
+only runs when SIFTPIPE_SSM_PATH is set, i.e. when actually deployed.
 
 Deliberately doesn't hardcode which secret names it expects: it just fills
 in os.environ for whatever it finds under SIFTPIPE_SSM_PATH that isn't
-already set. blocks/pipeline.py's and blocks/auth.py's own
+already set. blocks/bootstrap.py's and blocks/auth.py's own
 validate_required_env_vars() are what enforce which specific names are
 actually required, exactly as they already do for a plain .env - so a
 future secret needs no changes here, only an extra parameter under the
 same path.
 
-Must be called from blocks/pipeline.py immediately after its own
-load_dotenv() - that same module builds its Anthropic client at import
-time (`client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))`), so
-anything that fills in os.environ any later than that would be too late:
-the client would already have permanently baked in an empty key.
+Called from blocks/bootstrap.py's load_environment(), immediately after
+load_dotenv() and before anything reads the secrets it provides (the
+Anthropic client, the session secret, the admin password).
 """
 
 import os
@@ -29,7 +26,7 @@ import os
 class SecretsFetchError(RuntimeError):
     """Raised when SIFTPIPE_SSM_PATH is set but fetching from it fails -
     a plain RuntimeError (not SystemExit) for the same reason
-    blocks/pipeline.py's MissingConfigError is one: FastAPI's async startup
+    blocks/bootstrap.py's MissingConfigError is one: FastAPI's async startup
     handler needs a normal Exception to fail cleanly, not a BaseException."""
 
 
