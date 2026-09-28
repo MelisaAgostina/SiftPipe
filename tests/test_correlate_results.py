@@ -8,11 +8,10 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import blocks.correlate_results as cr
-from blocks.correlate_results import correlate_results, _normalize_vuln_label, MAX_JUDGE_CALLS
+from blocks.correlate_results import MAX_JUDGE_CALLS, _normalize_vuln_label, correlate_results
 
 
 class TestNormalizeVulnLabel(unittest.TestCase):
-
     def test_underscores_become_spaces(self):
         self.assertEqual(_normalize_vuln_label("Broken_Access_Control"), "broken access control")
 
@@ -51,16 +50,23 @@ class TestCorrelateResultsMatching(unittest.TestCase):
 
     def test_confirmed_dynamic_matches_related_static_finding_as_hybrid(self):
         pipeline_results = {
-            "B3": {"findings": [
-                # A05 = Injection under OWASP Top 10:2025 (was A03 in 2021)
-                {"vulnerability": "Injection", "category": "A05",
-                 "file": "x.js", "evidence": "eval(userInput)"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Command_Injection", "target": "t",
-                 "result": "confirmed", "evidence": "shell output leaked",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    # A05 = Injection under OWASP Top 10:2025 (was A03 in 2021)
+                    {"vulnerability": "Injection", "category": "A05", "file": "x.js", "evidence": "eval(userInput)"},
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Command_Injection",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "shell output leaked",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
 
         out = correlate_results(pipeline_results)
@@ -72,16 +78,28 @@ class TestCorrelateResultsMatching(unittest.TestCase):
 
     def test_confirmed_dynamic_without_static_match_stays_dynamic_only(self):
         pipeline_results = {
-            "B3": {"findings": [
-                # A04 = Cryptographic Failures under OWASP Top 10:2025 (was A02 in 2021)
-                {"vulnerability": "Hardcoded Secret", "category": "A04",
-                 "file": "x.js", "evidence": "API_KEY = 'abc123'"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Command_Injection", "target": "t",
-                 "result": "confirmed", "evidence": "shell output leaked",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    # A04 = Cryptographic Failures under OWASP Top 10:2025 (was A02 in 2021)
+                    {
+                        "vulnerability": "Hardcoded Secret",
+                        "category": "A04",
+                        "file": "x.js",
+                        "evidence": "API_KEY = 'abc123'",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Command_Injection",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "shell output leaked",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
 
         out = correlate_results(pipeline_results)
@@ -92,15 +110,27 @@ class TestCorrelateResultsMatching(unittest.TestCase):
 
     def test_discarded_dynamic_matching_static_is_flagged_as_false_positive(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Broken Access Control", "category": "A01",
-                 "file": "x.js", "evidence": "missing auth check"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Broken_Access_Control", "target": "t",
-                 "result": "discarded", "evidence": "no anomaly observed",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Broken Access Control",
+                        "category": "A01",
+                        "file": "x.js",
+                        "evidence": "missing auth check",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Broken_Access_Control",
+                        "target": "t",
+                        "result": "discarded",
+                        "evidence": "no anomaly observed",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
 
         out = correlate_results(pipeline_results)
@@ -130,15 +160,30 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_exact_cwe_match_skips_the_judge_entirely(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Custom SQLi Finding", "cwe_id": "CWE-89",
-                 "file": "x.js", "evidence": "raw query built from input", "confidence": "high"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Totally Different Label", "cwe_id": "CWE-89",
-                 "target": "t", "result": "confirmed", "evidence": "syntax error near",
-                 "payload_id": "1_1", "confidence": "high"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Custom SQLi Finding",
+                        "cwe_id": "CWE-89",
+                        "file": "x.js",
+                        "evidence": "raw query built from input",
+                        "confidence": "high",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Totally Different Label",
+                        "cwe_id": "CWE-89",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "syntax error near",
+                        "payload_id": "1_1",
+                        "confidence": "high",
+                    },
+                ]
+            },
         }
 
         def fake_ask_llm(prompt):
@@ -155,15 +200,28 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_ambiguous_pair_judged_yes_is_treated_as_hybrid_match(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Weird Static Label", "category": "A03",
-                 "file": "x.js", "evidence": "concatenated query"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Weird Dynamic Label", "owasp_category": "A03",
-                 "target": "t", "result": "confirmed", "evidence": "database error",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Weird Static Label",
+                        "category": "A03",
+                        "file": "x.js",
+                        "evidence": "concatenated query",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Weird Dynamic Label",
+                        "owasp_category": "A03",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "database error",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
         calls = []
 
@@ -180,15 +238,28 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_ambiguous_pair_judged_no_is_not_treated_as_a_match(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Weird Static Label", "category": "A03",
-                 "file": "x.js", "evidence": "concatenated query"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Weird Dynamic Label", "owasp_category": "A03",
-                 "target": "t", "result": "confirmed", "evidence": "database error",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Weird Static Label",
+                        "category": "A03",
+                        "file": "x.js",
+                        "evidence": "concatenated query",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Weird Dynamic Label",
+                        "owasp_category": "A03",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "database error",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
         calls = []
 
@@ -205,15 +276,28 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_judge_verdict_is_reused_on_a_second_run_without_a_new_llm_call(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Weird Static Label", "category": "A03",
-                 "file": "x.js", "evidence": "concatenated query"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Weird Dynamic Label", "owasp_category": "A03",
-                 "target": "t", "result": "confirmed", "evidence": "database error",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Weird Static Label",
+                        "category": "A03",
+                        "file": "x.js",
+                        "evidence": "concatenated query",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Weird Dynamic Label",
+                        "owasp_category": "A03",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "database error",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
         calls = []
 
@@ -236,8 +320,14 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
             for i in range(MAX_JUDGE_CALLS + 5)
         ]
         b8_findings = [
-            {"vulnerability": f"Dynamic {i}", "owasp_category": "A03", "target": "t",
-             "result": "confirmed", "evidence": "e", "payload_id": f"1_{i}"}
+            {
+                "vulnerability": f"Dynamic {i}",
+                "owasp_category": "A03",
+                "target": "t",
+                "result": "confirmed",
+                "evidence": "e",
+                "payload_id": f"1_{i}",
+            }
             for i in range(MAX_JUDGE_CALLS + 5)
         ]
         pipeline_results = {"B3": {"findings": b3_findings}, "B8": {"findings": b8_findings}}
@@ -253,15 +343,28 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_no_ask_llm_falls_back_to_weak_owasp_match_without_crashing(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Weird Static Label", "category": "A03",
-                 "file": "x.js", "evidence": "concatenated query"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Weird Dynamic Label", "owasp_category": "A03",
-                 "target": "t", "result": "confirmed", "evidence": "database error",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Weird Static Label",
+                        "category": "A03",
+                        "file": "x.js",
+                        "evidence": "concatenated query",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Weird Dynamic Label",
+                        "owasp_category": "A03",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "database error",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
 
         out = correlate_results(pipeline_results)  # no ask_llm passed
@@ -272,11 +375,18 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_static_only_finding_gets_score_and_untested_classification(self):
         pipeline_results = {
-            "B3": {"findings": [
-                # A05 = Injection under OWASP Top 10:2025
-                {"vulnerability": "Injection", "category": "A05",
-                 "file": "x.js", "evidence": "eval(input)", "confidence": "medium"},
-            ]},
+            "B3": {
+                "findings": [
+                    # A05 = Injection under OWASP Top 10:2025
+                    {
+                        "vulnerability": "Injection",
+                        "category": "A05",
+                        "file": "x.js",
+                        "evidence": "eval(input)",
+                        "confidence": "medium",
+                    },
+                ]
+            },
             "B8": {"findings": []},
         }
 
@@ -295,11 +405,18 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_static_only_finding_carries_its_own_explanation_through(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Injection", "category": "A05", "file": "x.js",
-                 "evidence": "eval(input)", "confidence": "medium",
-                 "explanation": "input reaches eval() unsanitized, letting an attacker run arbitrary code."},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Injection",
+                        "category": "A05",
+                        "file": "x.js",
+                        "evidence": "eval(input)",
+                        "confidence": "medium",
+                        "explanation": "input reaches eval() unsanitized, letting an attacker run arbitrary code.",
+                    },
+                ]
+            },
             "B8": {"findings": []},
         }
 
@@ -313,10 +430,17 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
     def test_static_finding_with_no_explanation_field_is_none_not_a_crash(self):
         """Old runs' B3 findings predate the explanation field entirely."""
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Injection", "category": "A05",
-                 "file": "x.js", "evidence": "eval(input)", "confidence": "medium"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Injection",
+                        "category": "A05",
+                        "file": "x.js",
+                        "evidence": "eval(input)",
+                        "confidence": "medium",
+                    },
+                ]
+            },
             "B8": {"findings": []},
         }
 
@@ -326,16 +450,28 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_matched_dynamic_finding_carries_the_matched_static_findings_explanation(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Injection", "category": "A05", "file": "x.js",
-                 "evidence": "eval(userInput)",
-                 "explanation": "userInput is attacker-controlled and reaches eval() directly."},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Command_Injection", "target": "t",
-                 "result": "confirmed", "evidence": "shell output leaked",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Injection",
+                        "category": "A05",
+                        "file": "x.js",
+                        "evidence": "eval(userInput)",
+                        "explanation": "userInput is attacker-controlled and reaches eval() directly.",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Command_Injection",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "shell output leaked",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
 
         out = correlate_results(pipeline_results)
@@ -349,15 +485,27 @@ class TestTaxonomyDrivenCorrelation(unittest.TestCase):
 
     def test_dynamic_only_finding_with_no_static_match_has_no_explanation(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Hardcoded Secret", "category": "A04",
-                 "file": "x.js", "evidence": "API_KEY = 'abc123'"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Command_Injection", "target": "t",
-                 "result": "confirmed", "evidence": "shell output leaked",
-                 "payload_id": "1_1"},
-            ]},
+            "B3": {
+                "findings": [
+                    {
+                        "vulnerability": "Hardcoded Secret",
+                        "category": "A04",
+                        "file": "x.js",
+                        "evidence": "API_KEY = 'abc123'",
+                    },
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Command_Injection",
+                        "target": "t",
+                        "result": "confirmed",
+                        "evidence": "shell output leaked",
+                        "payload_id": "1_1",
+                    },
+                ]
+            },
         }
 
         out = correlate_results(pipeline_results)
@@ -390,18 +538,31 @@ class TestFindMatchTaxonomyCaching(unittest.TestCase):
 
     def test_each_static_findings_taxonomy_is_computed_only_once(self):
         pipeline_results = {
-            "B3": {"findings": [
-                {"vulnerability": "Injection", "cwe_id": "CWE-89", "file": "a.go"},
-                {"vulnerability": "XSS", "cwe_id": "CWE-79", "file": "b.go"},
-            ]},
-            "B8": {"findings": [
-                {"vulnerability": "Injection", "cwe_id": "CWE-89", "target": "t1",
-                 "result": "confirmed", "payload_id": "1_1"},
-                {"vulnerability": "XSS", "cwe_id": "CWE-79", "target": "t2",
-                 "result": "confirmed", "payload_id": "1_2"},
-                {"vulnerability": "Unknown", "target": "t3",
-                 "result": "confirmed", "payload_id": "1_3"},
-            ]},
+            "B3": {
+                "findings": [
+                    {"vulnerability": "Injection", "cwe_id": "CWE-89", "file": "a.go"},
+                    {"vulnerability": "XSS", "cwe_id": "CWE-79", "file": "b.go"},
+                ]
+            },
+            "B8": {
+                "findings": [
+                    {
+                        "vulnerability": "Injection",
+                        "cwe_id": "CWE-89",
+                        "target": "t1",
+                        "result": "confirmed",
+                        "payload_id": "1_1",
+                    },
+                    {
+                        "vulnerability": "XSS",
+                        "cwe_id": "CWE-79",
+                        "target": "t2",
+                        "result": "confirmed",
+                        "payload_id": "1_2",
+                    },
+                    {"vulnerability": "Unknown", "target": "t3", "result": "confirmed", "payload_id": "1_3"},
+                ]
+            },
         }
 
         real_infer_taxonomy = cr.infer_taxonomy

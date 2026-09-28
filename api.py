@@ -1,8 +1,8 @@
 import json
 import os
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 import requests
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -13,22 +13,48 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from blocks import auth, report, run_history
 from blocks.analyze_results import analyze_results
+from blocks.bootstrap import configure_logging, load_environment, validate_required_env_vars
 from blocks.correlate_results import correlate_results
 from blocks.environment import MM_PING_URL, dispatch_fresh_reset, ensure_naviq_server_running, stop_naviq_server
 from blocks.generate_payloads import generate_payloads
 from blocks.human_review import save_validated_payloads
 from blocks.pipeline import (
     ask_llm,
-    client,
     execute_attacks,
+    get_client,
     pipeline_results,
     run_dynamic_discovery,
     run_static_analysis,
-    validate_required_env_vars,
 )
+from blocks.pipeline_state import PipelineState
 from blocks.targets import TARGETS, get_target, result_path
 
-app = FastAPI(title="SiftPipe API")
+# Start-up work, done once here - api.py is the app's composition root - instead
+# of as a side effect of importing blocks.pipeline. Must stay ahead of the
+# module-level env reads below (FRONTEND_ORIGIN, SIFTPIPE_SESSION_SECRET,
+# SIFTPIPE_TARGET).
+load_environment()
+configure_logging()
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    """Startup/shutdown, in FastAPI's current form (replaces the deprecated
+    @app.on_event handlers). Code before `yield` runs at boot, code after it at
+    a clean shutdown."""
+    # Fail fast on a missing required env var (e.g. ANTHROPIC_API_KEY,
+    # SIFTPIPE_ADMIN_PASSWORD) at server boot, before any request - including
+    # /api/run or /api/login - can be accepted, instead of only surfacing it
+    # as a crash on the first LLM call or login attempt.
+    validate_required_env_vars()
+    auth.validate_required_env_vars()
+    yield
+    # Best-effort: don't leave a NaViQ dev server this process spawned
+    # (ensure_naviq_server_running) orphaned after a clean API shutdown.
+    stop_naviq_server()
+
+
+app = FastAPI(title="SiftPipe API", lifespan=lifespan)
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 # Set FRONTEND_ORIGIN in .env once the frontend is deployed (e.g. a Cloudflare
@@ -79,22 +105,6 @@ app.add_middleware(
     https_only=_frontend_is_https,
 )
 
-
-@app.on_event("startup")
-def _on_startup():
-    """Fail fast on a missing required env var (e.g. ANTHROPIC_API_KEY,
-    SIFTPIPE_ADMIN_PASSWORD) at server boot, before any request - including
-    /api/run or /api/login - can be accepted, instead of only surfacing it
-    as a crash on the first LLM call or login attempt."""
-    validate_required_env_vars()
-    auth.validate_required_env_vars()
-
-
-@app.on_event("shutdown")
-def _on_shutdown():
-    """Best-effort: don't leave a NaViQ dev server this process spawned
-    (ensure_naviq_server_running) orphaned after a clean API shutdown."""
-    stop_naviq_server()
 
 # ── Auth: session-cookie login gate ─────────────────────────────────────────
 # Replaces the old require_api_key()/SIFTPIPE_API_KEY stopgap (a key baked
@@ -155,22 +165,14 @@ protected = APIRouter(dependencies=[Depends(require_session), Depends(require_cs
 # without needing a mutable wrapper object.
 ACTIVE_TARGET = get_target(os.getenv("SIFTPIPE_TARGET", "mattermost"))
 
-# ── Estado global del pipeline ─────────────────────────────────────────────────
-pipeline_state = {
-    "running": False,
-    "current_block": None,   # "B3", "B4", ... o None
-    "waiting_for_human": False,
-    "completed": False,
-    "error": None,
-    "logs": [],
-    "run_id": None,          # blocks/run_history.py row for the current/last run
-    "stop_requested": False, # set by POST /api/run/stop, read by _run_pipeline_from's loop
-    "discard_requested": False, # set by POST /api/run/discard, read by _run_pipeline_from's loop
-}
+# ── Global pipeline state ─────────────────────────────────────────────────
+# A dict subclass with named transitions (begin / pause_for_review / end_run /
+# reset) - see blocks/pipeline_state.py for the keys and why.
+pipeline_state = PipelineState()
 
-# Estado del reset de entorno (Docker/Mattermost) — separado de pipeline_state
-# porque es un ciclo de vida distinto (se corre una vez antes del pipeline,
-# no en cada corrida de B3-B9).
+# Environment-reset state (Docker/Mattermost) - kept apart from pipeline_state
+# because it has a different lifecycle (it runs once before the pipeline,
+# not on every B3-B9 run).
 env_state = {
     "running": False,
     "completed": False,
@@ -212,7 +214,7 @@ RESULTS_DIR.mkdir(exist_ok=True)
 EVIDENCE_DIR.mkdir(exist_ok=True)
 
 
-def _safe_file_path(base_dir: Path, file_path: str) -> Optional[Path]:
+def _safe_file_path(base_dir: Path, file_path: str) -> Path | None:
     """
     Resolves `file_path` against `base_dir` and returns the real file's
     absolute path, or None if it doesn't exist, isn't a file, or (via a
@@ -256,23 +258,23 @@ def get_evidence_file(file_path: str, _=Depends(require_session)):
 
 
 def log(message: str):
-    """Agrega una línea al log en memoria."""
+    """Append a line to the in-memory log."""
     print(message)
     pipeline_state["logs"].append(message)
 
 
 def env_log(message: str):
-    """Agrega una línea al log en memoria del reset de entorno."""
+    """Append a line to the in-memory log of the environment reset."""
     print(message)
     env_state["logs"].append(message)
 
 
 def run_environment_reset():
-    """Corre el fresh reset del target activo en background. La rama
-    Mattermost es no interactiva: si la creación automática del admin
-    falla, levanta un error en vez de bloquear el thread esperando un
-    input() que nunca va a llegar desde la API. La rama NaViQ nunca
-    necesitó ese fallback — su creación de cuenta ya es 100% scripted."""
+    """Runs the active target's fresh reset in the background. The Mattermost
+    branch is non-interactive: if the automatic admin creation fails, it
+    raises instead of blocking the thread on an input() that can never
+    arrive from the API. The NaViQ branch never needed that fallback - its
+    account creation is already 100% scripted."""
     env_state["running"] = True
     env_state["completed"] = False
     env_state["error"] = None
@@ -296,11 +298,7 @@ def _fail_pipeline(e):
     full a second time. Each function still needs its own try/except (a
     human-review pause between B6 and B7 splits the run across two separate
     background threads), only the failure handling itself is shared."""
-    pipeline_state["error"] = str(e)
-    pipeline_state["running"] = False
-    pipeline_state["current_block"] = None
-    pipeline_state["stop_requested"] = False
-    pipeline_state["discard_requested"] = False
+    pipeline_state.end_run(error=str(e))
     log(f"ERROR in pipeline: {e}")
     run_history.finish_run(pipeline_state["run_id"], "error")
 
@@ -312,11 +310,36 @@ def _fail_pipeline(e):
 # PIPELINE_STEPS[i+1] and nothing else decides that anymore.
 PIPELINE_STEPS = [
     ("B3", "B3_static", lambda: run_static_analysis(pipeline_results, ACTIVE_TARGET), "B3 - Static analysis started"),
-    ("B4", "B4_dynamic", lambda: run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"]), "B4 - Dynamic discovery started"),
-    ("B5", "B5_payloads", lambda: generate_payloads(client=client, target_profile=ACTIVE_TARGET), "B5 - Payload generation"),
-    ("B7", "B7_dynamic_attacks", lambda: execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"]), "B7 - Attack execution"),
-    ("B8", "B8_dynamic", lambda: analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET), "B8 - Intelligent results analysis"),
-    ("B9", "B9_correlation", lambda: correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET), "B9 - Static + dynamic correlation"),
+    (
+        "B4",
+        "B4_dynamic",
+        lambda: run_dynamic_discovery(pipeline_results, ACTIVE_TARGET, pipeline_state["run_id"]),
+        "B4 - Dynamic discovery started",
+    ),
+    (
+        "B5",
+        "B5_payloads",
+        lambda: generate_payloads(client=get_client(), target_profile=ACTIVE_TARGET),
+        "B5 - Payload generation",
+    ),
+    (
+        "B7",
+        "B7_dynamic_attacks",
+        lambda: execute_attacks(ACTIVE_TARGET, pipeline_state["run_id"]),
+        "B7 - Attack execution",
+    ),
+    (
+        "B8",
+        "B8_dynamic",
+        lambda: analyze_results(pipeline_results, ask_llm, ACTIVE_TARGET),
+        "B8 - Intelligent results analysis",
+    ),
+    (
+        "B9",
+        "B9_correlation",
+        lambda: correlate_results(pipeline_results, ask_llm, ACTIVE_TARGET),
+        "B9 - Static + dynamic correlation",
+    ),
 ]
 
 
@@ -344,8 +367,33 @@ def _abort_failed_discovery(summary):
     first_message = str(errors[0].get("message", "")).strip() if errors else ""
     reason = first_message.splitlines()[0] if first_message else "no details recorded"
     raise RuntimeError(
-        f"B4 dynamic discovery failed ({reason}). "
-        "Fix the cause, then Resume to re-run B4 - B3's results are kept."
+        f"B4 dynamic discovery failed ({reason}). Fix the cause, then Resume to re-run B4 - B3's results are kept."
+    )
+
+
+def _abort_failed_static_analysis(summary):
+    """
+    Ends the run when B3 could not analyze most of its files (status "error",
+    see blocks/static_scanner.py's scan_status): a scan that mostly failed
+    says nothing about whether the code is clean, and letting the run go on
+    would present it as if it did - found in the 2026-09-28 audit, where an
+    expired API key produced a "complete" B3 with zero findings.
+
+    Same mechanism as _abort_failed_discovery: raise into _fail_pipeline (status
+    "error", resumable) after removing B3's result file, so Resume re-runs B3
+    instead of skipping past it with the empty result.
+    """
+    try:
+        os.remove(result_path(ACTIVE_TARGET.name, "B3_static.json"))
+    except FileNotFoundError:
+        pass
+
+    failures = summary.get("failures") or []
+    reason = str(failures[0].get("reason", "")).strip().splitlines()[0] if failures else "no details recorded"
+    raise RuntimeError(
+        f"B3 static analysis failed for {summary.get('failed_files')} of {summary.get('total_scanned')} "
+        f"files (first error: {reason}). Fix the cause (check the Anthropic API key and credit), "
+        "then Resume to re-run B3."
     )
 
 
@@ -365,13 +413,20 @@ def _run_pipeline_from(start_index):
     """
     try:
         with pipeline_results_lock:
-            for state_id, stored_name, step, start_message in PIPELINE_STEPS[start_index:]:
+            for state_id, _stored_name, step, start_message in PIPELINE_STEPS[start_index:]:
                 pipeline_state["current_block"] = state_id
                 log(f">> {start_message}")
                 result = step()
+                if state_id == "B3" and isinstance(result, dict):
+                    if result.get("status") == "error":
+                        _abort_failed_static_analysis(result)
+                    if result.get("status") == "partial":
+                        log(
+                            f"WARNING B3 partial: {result.get('failed_files')} of {result.get('total_scanned')} files could not be analyzed"
+                        )
                 if state_id == "B4" and isinstance(result, dict) and result.get("status") == "failed":
                     _abort_failed_discovery(result)
-                run_history._snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
+                run_history.snapshot_new_result_files(pipeline_state["run_id"], ACTIVE_TARGET.name)
                 log(f"OK {state_id} completed")
 
                 # The B5->B6 human-review pause and the final B9->completed
@@ -380,8 +435,7 @@ def _run_pipeline_from(start_index):
                 # skip the B6 gate (a human never reviewed the payloads B5
                 # just generated), and stopping on the very last step must
                 # not downgrade an otherwise fully-completed run to
-                # "stopped" (see docs/superpowers/specs/2026-09-09-pipeline-
-                # stop-design.md). In both cases the pending stop is simply
+                # "stopped". In both cases the pending stop is simply
                 # absorbed by the pause/completion that was already about to
                 # happen: _run_from_b7 and the "completed" branch below both
                 # reset stop_requested = False, so nothing is left over.
@@ -400,35 +454,24 @@ def _run_pipeline_from(start_index):
                 # for the same reason it does for Stop below: nothing is
                 # left to abandon once B9 has actually finished.
                 if not is_last_step and pipeline_state["discard_requested"]:
-                    pipeline_state["current_block"] = None
-                    pipeline_state["running"] = False
-                    pipeline_state["stop_requested"] = False
-                    pipeline_state["discard_requested"] = False
+                    pipeline_state.end_run()
                     log(f"== Pipeline discarded after {state_id} (user request) ==")
                     run_history.finish_run(pipeline_state["run_id"], "discarded")
                     return
 
                 if not is_last_step and state_id != "B5" and pipeline_state["stop_requested"]:
-                    pipeline_state["current_block"] = None
-                    pipeline_state["running"] = False
-                    pipeline_state["stop_requested"] = False
+                    pipeline_state.end_run()
                     log(f"== Pipeline stopped after {state_id} (user request) ==")
                     run_history.finish_run(pipeline_state["run_id"], "stopped")
                     return
 
                 if state_id == "B5":
                     # Pauses here — the UI shows the payloads for human review
-                    pipeline_state["current_block"] = "B6"
-                    pipeline_state["waiting_for_human"] = True
-                    pipeline_state["running"] = False
+                    pipeline_state.pause_for_review()
                     log("== [B6] HUMAN REVIEW - waiting for validation in the UI ==")
                     return
 
-            pipeline_state["current_block"] = None
-            pipeline_state["running"] = False
-            pipeline_state["completed"] = True
-            pipeline_state["stop_requested"] = False
-            pipeline_state["discard_requested"] = False
+            pipeline_state.end_run(completed=True)
             log("OK Pipeline completed. Results available.")
             run_history.finish_run(pipeline_state["run_id"], "completed")
 
@@ -438,14 +481,7 @@ def _run_pipeline_from(start_index):
 
 def _run_fresh_pipeline(mode="unknown"):
     """Thread target for POST /api/run — starts a brand-new run at B3."""
-    pipeline_state["running"] = True
-    pipeline_state["completed"] = False
-    pipeline_state["error"] = None
-    pipeline_state["logs"] = []
-    pipeline_state["waiting_for_human"] = False
-    pipeline_state["stop_requested"] = False
-    pipeline_state["discard_requested"] = False
-    pipeline_state["run_id"] = run_history.start_run(mode=mode, target=ACTIVE_TARGET.name)
+    pipeline_state.begin(run_id=run_history.start_run(mode=mode, target=ACTIVE_TARGET.name), fresh=True)
 
     # Safety net, not the primary path (that's naviq_fresh_reset() via
     # "Prepare environment") — covers restore mode, or any run started
@@ -472,11 +508,7 @@ def _run_fresh_pipeline(mode="unknown"):
 def _run_from_b7():
     """Thread target for POST /api/validate — continues into B7 after B6
     approval. Index 3 is "B7" in PIPELINE_STEPS."""
-    pipeline_state["running"] = True
-    pipeline_state["waiting_for_human"] = False
-    pipeline_state["error"] = None
-    pipeline_state["stop_requested"] = False
-    pipeline_state["discard_requested"] = False
+    pipeline_state.begin()
     _run_pipeline_from(3)
 
 
@@ -487,8 +519,8 @@ def _find_resume_point(target_name):
     resumable run of `target_name` — or None if there's nothing to resume
     (no runs, the latest one is neither errored nor stopped, or Fresh Reset
     already dismissed it via dismiss_resume()). A user-stopped run is
-    exactly as resumable as a crashed one — see
-    docs/superpowers/specs/2026-09-09-pipeline-stop-design.md.
+    exactly as resumable as a crashed one: a stop only skips the remaining
+    blocks, so every block that finished is already snapshotted.
     """
     latest = run_history.get_latest_run(target_name)
     if latest is None or latest["status"] not in ("error", "stopped") or not latest["resumable"]:
@@ -504,28 +536,22 @@ def _find_resume_point(target_name):
 
 def _run_resumed_pipeline(run_id, start_index):
     """Thread target for POST /api/run/resume."""
-    pipeline_state["running"] = True
-    pipeline_state["completed"] = False
-    pipeline_state["error"] = None
-    pipeline_state["waiting_for_human"] = False
-    pipeline_state["stop_requested"] = False
-    pipeline_state["discard_requested"] = False
-    pipeline_state["run_id"] = run_id
+    pipeline_state.begin(run_id=run_id)
     _run_pipeline_from(start_index)
 
 
 # ── Modelos ────────────────────────────────────────────────────────────────────
 class ValidatePayloadsRequest(BaseModel):
-    approved_indices: list[int]   # índices de los payloads aprobados
+    approved_indices: list[int]  # indices of the approved payloads
     comment: str = ""
 
 
 class SetTargetRequest(BaseModel):
-    name: str   # must match a key in blocks.targets.TARGETS ("mattermost" | "naviq")
+    name: str  # must match a key in blocks.targets.TARGETS ("mattermost" | "naviq")
 
 
 class RunPipelineRequest(BaseModel):
-    mode: str = "unknown"   # "fresh" | "restore", whichever the sidebar toggle had selected
+    mode: str = "unknown"  # "fresh" | "restore", whichever the sidebar toggle had selected
 
 
 class LoginRequest(BaseModel):
@@ -539,6 +565,7 @@ class LoginRequest(BaseModel):
 # /api/health (infra/uptime checks). /api/logout stays reachable the same
 # way so a client with an already-expired/invalid session can still clear
 # it without first needing a valid one.
+
 
 @app.get("/api/health")
 def health():
@@ -590,10 +617,7 @@ def get_active_target():
         "display_name": ACTIVE_TARGET.display_name,
         "stack_label": ACTIVE_TARGET.stack_label,
         "supports_fresh_reset": ACTIVE_TARGET.supports_fresh_reset,
-        "available": [
-            {"name": t.name, "display_name": t.display_name}
-            for t in TARGETS.values()
-        ],
+        "available": [{"name": t.name, "display_name": t.display_name} for t in TARGETS.values()],
     }
 
 
@@ -616,17 +640,9 @@ def set_active_target(body: SetTargetRequest):
     try:
         ACTIVE_TARGET = get_target(body.name)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
-    pipeline_state.update({
-        "running": False,
-        "current_block": None,
-        "waiting_for_human": False,
-        "completed": False,
-        "error": None,
-        "logs": [],
-        "run_id": None,
-    })
+    pipeline_state.reset()
     env_state.update({"running": False, "completed": False, "error": None, "logs": []})
 
     return {
@@ -694,8 +710,8 @@ def environment_logs():
 
 
 @protected.post("/api/run")
-def run_pipeline(body: RunPipelineRequest = RunPipelineRequest()):
-    """Arranca el pipeline desde B3. Rechaza si ya está corriendo."""
+def run_pipeline(body: RunPipelineRequest = RunPipelineRequest()):  # noqa: B008 - a fresh pydantic default per call is safe
+    """Starts the pipeline from B3. Rejects if it is already running."""
     if pipeline_state["running"]:
         raise HTTPException(status_code=409, detail="Pipeline is already running")
     if pipeline_state["waiting_for_human"]:
@@ -728,9 +744,9 @@ def resume_pipeline():
 
 @protected.post("/api/run/stop")
 def stop_pipeline():
-    """Requests a stop after the block currently running finishes — see
-    docs/superpowers/specs/2026-09-09-pipeline-stop-design.md for why this
-    can't interrupt a block mid-way. Rejects if nothing is actually running
+    """Requests a stop after the block currently running finishes. A block
+    can't be interrupted mid-way, so the request is only checked between
+    blocks. Rejects if nothing is actually running
     (a paused-at-B6 run has nothing in-flight to stop)."""
     if not pipeline_state["running"]:
         raise HTTPException(status_code=409, detail="Pipeline is not running")
@@ -805,7 +821,7 @@ def get_results():
     prefix = f"{ACTIVE_TARGET.name}_"
     data = {}
     for file in RESULTS_DIR.glob(f"{prefix}*.json"):
-        block_name = file.stem[len(prefix):]
+        block_name = file.stem[len(prefix) :]
         try:
             with open(file) as f:
                 data[block_name] = json.load(f)
@@ -960,16 +976,7 @@ def reset_pipeline():
     if pipeline_state["running"]:
         raise HTTPException(status_code=409, detail="Cannot reset while running")
 
-    pipeline_state.update({
-        "running": False,
-        "current_block": None,
-        "waiting_for_human": False,
-        "completed": False,
-        "error": None,
-        "logs": [],
-        "stop_requested": False,
-        "discard_requested": False,
-    })
+    pipeline_state.reset()
     return {"message": "State reset"}
 
 

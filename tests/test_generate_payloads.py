@@ -13,24 +13,24 @@ import blocks.generate_payloads as gp
 
 
 class TestNormalizeText(unittest.TestCase):
-
     def test_lowercases_and_collapses_punctuation(self):
         self.assertEqual(gp.normalize_text("Post_Textbox! ID#42"), "post textbox id 42")
 
 
 class TestBuildDynamicTargets(unittest.TestCase):
-
     def test_forms_are_expanded_into_one_target_per_field(self):
         attack_surface = {
-            "forms": [{
-                "page": "home",
-                "action": "http://x/post",
-                "page_url": "http://x/home",
-                "fields": [
-                    {"id": "post_textbox", "name": "unknown", "type": "textarea"},
-                    {"id": None, "name": "search", "type": "text"},
-                ],
-            }],
+            "forms": [
+                {
+                    "page": "home",
+                    "action": "http://x/post",
+                    "page_url": "http://x/home",
+                    "fields": [
+                        {"id": "post_textbox", "name": "unknown", "type": "textarea"},
+                        {"id": None, "name": "search", "type": "text"},
+                    ],
+                }
+            ],
             "inputs": [],
             "endpoints": [],
         }
@@ -51,15 +51,17 @@ class TestBuildDynamicTargets(unittest.TestCase):
         pattern let these crowd out real fields almost entirely.
         """
         attack_surface = {
-            "forms": [{
-                "page": "home",
-                "action": "http://x/contact/send/",
-                "page_url": "http://x/home",
-                "fields": [
-                    {"id": None, "name": "csrfmiddlewaretoken", "type": "hidden"},
-                    {"id": None, "name": "message", "type": "textarea"},
-                ],
-            }],
+            "forms": [
+                {
+                    "page": "home",
+                    "action": "http://x/contact/send/",
+                    "page_url": "http://x/home",
+                    "fields": [
+                        {"id": None, "name": "csrfmiddlewaretoken", "type": "hidden"},
+                        {"id": None, "name": "message", "type": "textarea"},
+                    ],
+                }
+            ],
             "inputs": [],
             "endpoints": [],
         }
@@ -81,16 +83,21 @@ class TestBuildDynamicTargets(unittest.TestCase):
         Playwright error a <select> does.
         """
         attack_surface = {
-            "forms": [{
-                "page": "tool", "action": "http://x/navitools/doctor/", "page_url": "http://x/tool",
-                "fields": [
-                    {"id": "id_image", "name": "image", "type": "file"},
-                    {"id": "opt_a", "name": "audience", "type": "radio"},
-                    {"id": "opt_b", "name": "notify", "type": "checkbox"},
-                    {"id": "id_context", "name": "context", "type": "textarea"},
-                ],
-            }],
-            "inputs": [], "endpoints": [],
+            "forms": [
+                {
+                    "page": "tool",
+                    "action": "http://x/navitools/doctor/",
+                    "page_url": "http://x/tool",
+                    "fields": [
+                        {"id": "id_image", "name": "image", "type": "file"},
+                        {"id": "opt_a", "name": "audience", "type": "radio"},
+                        {"id": "opt_b", "name": "notify", "type": "checkbox"},
+                        {"id": "id_context", "name": "context", "type": "textarea"},
+                    ],
+                }
+            ],
+            "inputs": [],
+            "endpoints": [],
         }
 
         targets = gp.build_dynamic_targets(attack_surface)
@@ -108,16 +115,21 @@ class TestBuildDynamicTargets(unittest.TestCase):
         leaving 4 of 9 navitools tools with zero targets generated.
         """
         attack_surface = {
-            "forms": [{
-                "page": "tool", "action": "http://x/navitools/audience-rewriter/", "page_url": "http://x/tool",
-                "fields": [
-                    {"id": "nt-aud-executives", "name": "audience", "type": "radio"},
-                    {"id": "nt-aud-general", "name": "audience", "type": "radio"},
-                    {"id": "nt-aud-technical", "name": "audience", "type": "radio"},
-                    {"id": "id_context", "name": "context", "type": "textarea"},
-                ],
-            }],
-            "inputs": [], "endpoints": [],
+            "forms": [
+                {
+                    "page": "tool",
+                    "action": "http://x/navitools/audience-rewriter/",
+                    "page_url": "http://x/tool",
+                    "fields": [
+                        {"id": "nt-aud-executives", "name": "audience", "type": "radio"},
+                        {"id": "nt-aud-general", "name": "audience", "type": "radio"},
+                        {"id": "nt-aud-technical", "name": "audience", "type": "radio"},
+                        {"id": "id_context", "name": "context", "type": "textarea"},
+                    ],
+                }
+            ],
+            "inputs": [],
+            "endpoints": [],
         }
 
         targets = gp.build_dynamic_targets(attack_surface)
@@ -127,15 +139,17 @@ class TestBuildDynamicTargets(unittest.TestCase):
 
     def test_form_with_only_hidden_fields_contributes_no_targets(self):
         attack_surface = {
-            "forms": [{
-                "page": "every_page",
-                "action": "http://x/i18n/setlang/",
-                "page_url": "http://x/home",
-                "fields": [
-                    {"id": None, "name": "csrfmiddlewaretoken", "type": "hidden"},
-                    {"id": None, "name": "next", "type": "hidden"},
-                ],
-            }],
+            "forms": [
+                {
+                    "page": "every_page",
+                    "action": "http://x/i18n/setlang/",
+                    "page_url": "http://x/home",
+                    "fields": [
+                        {"id": None, "name": "csrfmiddlewaretoken", "type": "hidden"},
+                        {"id": None, "name": "next", "type": "hidden"},
+                    ],
+                }
+            ],
             "inputs": [],
             "endpoints": [],
         }
@@ -205,12 +219,21 @@ class TestBuildDynamicTargets(unittest.TestCase):
         Mattermost's default) - existing behavior, unaffected."""
         attack_surface = {
             "forms": [
-                {"page": "a", "action": "http://x/contact/send/", "page_url": "http://x/a",
-                 "fields": [{"id": None, "name": "email", "type": "text"}]},
-                {"page": "b", "action": "http://x/navitools/doctor/", "page_url": "http://x/b",
-                 "fields": [{"id": None, "name": "file", "type": "text"}]},
+                {
+                    "page": "a",
+                    "action": "http://x/contact/send/",
+                    "page_url": "http://x/a",
+                    "fields": [{"id": None, "name": "email", "type": "text"}],
+                },
+                {
+                    "page": "b",
+                    "action": "http://x/navitools/doctor/",
+                    "page_url": "http://x/b",
+                    "fields": [{"id": None, "name": "file", "type": "text"}],
+                },
             ],
-            "inputs": [], "endpoints": [],
+            "inputs": [],
+            "endpoints": [],
         }
 
         targets = gp.build_dynamic_targets(attack_surface)
@@ -229,14 +252,27 @@ class TestBuildDynamicTargets(unittest.TestCase):
         """
         attack_surface = {
             "forms": [
-                {"page": "a", "action": "http://x/contact/send/", "page_url": "http://x/a",
-                 "fields": [{"id": None, "name": "email", "type": "text"}]},
-                {"page": "b", "action": "http://x/account/settings/", "page_url": "http://x/b",
-                 "fields": [{"id": None, "name": "username", "type": "text"}]},
-                {"page": "c", "action": "http://x/navitools/doctor/", "page_url": "http://x/c",
-                 "fields": [{"id": None, "name": "file", "type": "text"}]},
+                {
+                    "page": "a",
+                    "action": "http://x/contact/send/",
+                    "page_url": "http://x/a",
+                    "fields": [{"id": None, "name": "email", "type": "text"}],
+                },
+                {
+                    "page": "b",
+                    "action": "http://x/account/settings/",
+                    "page_url": "http://x/b",
+                    "fields": [{"id": None, "name": "username", "type": "text"}],
+                },
+                {
+                    "page": "c",
+                    "action": "http://x/navitools/doctor/",
+                    "page_url": "http://x/c",
+                    "fields": [{"id": None, "name": "file", "type": "text"}],
+                },
             ],
-            "inputs": [], "endpoints": [],
+            "inputs": [],
+            "endpoints": [],
         }
         target_profile = SimpleNamespace(crawl_priority_paths=("/navitools/",))
 
@@ -249,10 +285,14 @@ class TestBuildDynamicTargets(unittest.TestCase):
 
 
 class TestFindRelatedStaticFindings(unittest.TestCase):
-
     def test_matches_by_shared_keyword(self):
-        dynamic_target = {"field_id": "post_textbox", "field_name": None, "field_type": None,
-                           "page_url": "http://localhost:8065/town-square", "action": None}
+        dynamic_target = {
+            "field_id": "post_textbox",
+            "field_name": None,
+            "field_type": None,
+            "page_url": "http://localhost:8065/town-square",
+            "action": None,
+        }
         static_findings = [
             {"file": "handlers/post_textbox.go", "vulnerability": "Injection"},
             {"file": "unrelated/file.go", "vulnerability": "XSS"},
@@ -278,8 +318,13 @@ class TestFindRelatedStaticFindings(unittest.TestCase):
         it should be ranked ahead of the free-text-only match, not stay
         second just because it appears second in static_findings.
         """
-        dynamic_target = {"field_id": "login", "field_name": None, "field_type": None,
-                           "page_url": "http://x/login", "action": None}
+        dynamic_target = {
+            "field_id": "login",
+            "field_name": None,
+            "field_type": None,
+            "page_url": "http://x/login",
+            "action": None,
+        }
         static_findings = [
             {"file": "login/handler.go", "vulnerability": "Something Unrecognized"},
             {"file": "login/auth.go", "vulnerability": "Broken Authentication", "cwe_id": "CWE-287"},
@@ -292,7 +337,6 @@ class TestFindRelatedStaticFindings(unittest.TestCase):
 
 
 class TestTryExtractPartialJson(unittest.TestCase):
-
     def test_recovers_payloads_array_from_truncated_json(self):
         truncated = '{"target": "x", "payloads": ["<script>alert(1)</script>", "\' OR 1=1'
         recovered = gp._try_extract_partial_json(truncated)
@@ -355,10 +399,19 @@ class TestGeneratePayloads(unittest.TestCase):
     @patch.object(gp, "ask_llm")
     def test_target_is_tagged_with_taxonomy_from_related_static_finding(self, mock_ask_llm):
         with open("results/mattermost_B3_static.json", "w", encoding="utf-8") as f:
-            json.dump({"findings": [
-                {"file": "query.go", "vulnerability": "Injection", "confidence": "high",
-                 "evidence": "raw SQL built from request.query"},
-            ]}, f)
+            json.dump(
+                {
+                    "findings": [
+                        {
+                            "file": "query.go",
+                            "vulnerability": "Injection",
+                            "confidence": "high",
+                            "evidence": "raw SQL built from request.query",
+                        },
+                    ]
+                },
+                f,
+            )
 
         mock_ask_llm.return_value = {"payloads": ["' OR 1=1 --"], "rationale": "test"}
 

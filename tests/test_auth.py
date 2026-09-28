@@ -7,7 +7,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from blocks import auth
-from blocks.pipeline import MissingConfigError
+from blocks.bootstrap import MissingConfigError
 
 
 class TestValidateRequiredEnvVars(unittest.TestCase):

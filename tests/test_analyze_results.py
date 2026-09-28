@@ -4,14 +4,16 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from blocks import pipeline
 from blocks.analyze_results import _is_llm_result_usable, _load_previous_analysis, analyze_results
+from blocks.llm import LEGACY_PARSE_ERROR_LABEL, PARSE_ERROR_LABEL, is_llm_error
 
 
 class TestIsLlmResultUsable(unittest.TestCase):
-
     def test_none_entry_is_not_usable(self):
         self.assertFalse(_is_llm_result_usable(None, "t", "p"))
 
@@ -20,8 +22,26 @@ class TestIsLlmResultUsable(unittest.TestCase):
         self.assertFalse(_is_llm_result_usable(entry, "t", "p"))
 
     def test_parse_error_placeholder_is_not_usable(self):
-        entry = {"vulnerability": "Error de Parseo JSON", "result": "discarded", "target": "t", "payload": "p"}
+        entry = {"vulnerability": PARSE_ERROR_LABEL, "result": "discarded", "target": "t", "payload": "p"}
         self.assertFalse(_is_llm_result_usable(entry, "t", "p"))
+
+    def test_legacy_spanish_parse_error_placeholder_is_still_not_usable(self):
+        # Old B8_dynamic.json files on disk may still carry the pre-translation label.
+        entry = {"vulnerability": LEGACY_PARSE_ERROR_LABEL, "result": "discarded", "target": "t", "payload": "p"}
+        self.assertFalse(_is_llm_result_usable(entry, "t", "p"))
+
+    def test_every_placeholder_ask_llm_can_really_emit_is_not_usable(self):
+        # The contract test the original bug lacked: instead of hand-typing the
+        # label a failure "should" have, provoke both real failure paths in
+        # pipeline.ask_llm and feed what it actually returns to the check.
+        parse_failure = json.JSONDecodeError("bad", "not json", 0)
+        parse_failure.raw_text = "not json"
+        for exc in (parse_failure, RuntimeError("429")):
+            with patch.object(pipeline, "call_llm_json", side_effect=exc):
+                placeholder = pipeline.ask_llm("prompt")
+            self.assertTrue(is_llm_error(placeholder), placeholder)
+            entry = {**placeholder, "result": "confirmed", "target": "t", "payload": "p"}
+            self.assertFalse(_is_llm_result_usable(entry, "t", "p"), placeholder)
 
     def test_unrecognized_result_label_is_not_usable(self):
         entry = {"vulnerability": "XSS", "result": "pending", "target": "t", "payload": "p"}
@@ -45,17 +65,23 @@ class TestIsLlmResultUsable(unittest.TestCase):
 
 
 class TestLoadPreviousAnalysis(unittest.TestCase):
-
     def test_missing_file_returns_empty_dict(self):
         self.assertEqual(_load_previous_analysis("nope.json"), {})
 
     def test_indexes_findings_by_payload_id(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "b8.json"
-            path.write_text(json.dumps({"findings": [
-                {"payload_id": "1_1", "result": "confirmed"},
-                {"payload_id": "1_2", "result": "discarded"},
-            ]}), encoding="utf-8")
+            path.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {"payload_id": "1_1", "result": "confirmed"},
+                            {"payload_id": "1_2", "result": "discarded"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             previous = _load_previous_analysis(str(path))
 
@@ -87,10 +113,16 @@ class TestAnalyzeResults(unittest.TestCase):
 
     def _b7_finding(self, pid, anomaly, vuln="Injection"):
         return {
-            "payload_id": pid, "endpoint": "http://x/town-square", "payload": "' OR 1=1",
-            "vulnerability": vuln, "cwe_id": "CWE-89", "owasp_category": "A05",
-            "evidence": "database error", "status_code": 500,
-            "anomaly_detected": anomaly, "detections": ["SQLi"] if anomaly else [],
+            "payload_id": pid,
+            "endpoint": "http://x/town-square",
+            "payload": "' OR 1=1",
+            "vulnerability": vuln,
+            "cwe_id": "CWE-89",
+            "owasp_category": "A05",
+            "evidence": "database error",
+            "status_code": 500,
+            "anomaly_detected": anomaly,
+            "detections": ["SQLi"] if anomaly else [],
             "screenshot_path": f"results/dynamic/screenshot_{pid}.png",
         }
 
@@ -139,8 +171,15 @@ class TestAnalyzeResults(unittest.TestCase):
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
 
         def fake_ask_llm(prompt):
-            return {"payload_id": "1_1", "target": "t", "payload": "p", "result": "confirmed",
-                    "vulnerability": "Injection", "confidence": "high", "evidence": "500 + SQL error"}
+            return {
+                "payload_id": "1_1",
+                "target": "t",
+                "payload": "p",
+                "result": "confirmed",
+                "vulnerability": "Injection",
+                "confidence": "high",
+                "evidence": "500 + SQL error",
+            }
 
         out = analyze_results(pipeline_results, fake_ask_llm)
 
@@ -155,10 +194,20 @@ class TestAnalyzeResults(unittest.TestCase):
     def test_rerun_reuses_prior_successful_classification_without_calling_llm(self):
         os.makedirs("results", exist_ok=True)
         with open("results/mattermost_B8_dynamic.json", "w", encoding="utf-8") as f:
-            json.dump({"findings": [{
-                "payload_id": "1_1", "result": "confirmed", "vulnerability": "Injection",
-                "target": "http://x/town-square", "payload": "' OR 1=1",
-            }]}, f)
+            json.dump(
+                {
+                    "findings": [
+                        {
+                            "payload_id": "1_1",
+                            "result": "confirmed",
+                            "vulnerability": "Injection",
+                            "target": "http://x/town-square",
+                            "payload": "' OR 1=1",
+                        }
+                    ]
+                },
+                f,
+            )
 
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
         calls = []
@@ -175,18 +224,35 @@ class TestAnalyzeResults(unittest.TestCase):
     def test_rerun_retries_a_prior_api_error_placeholder(self):
         os.makedirs("results", exist_ok=True)
         with open("results/mattermost_B8_dynamic.json", "w", encoding="utf-8") as f:
-            json.dump({"findings": [{
-                "payload_id": "1_1", "result": "confirmed", "vulnerability": "API Error",
-                "target": "http://x/town-square", "payload": "' OR 1=1",
-            }]}, f)
+            json.dump(
+                {
+                    "findings": [
+                        {
+                            "payload_id": "1_1",
+                            "result": "confirmed",
+                            "vulnerability": "API Error",
+                            "target": "http://x/town-square",
+                            "payload": "' OR 1=1",
+                        }
+                    ]
+                },
+                f,
+            )
 
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
         calls = []
 
         def fake_ask_llm(prompt):
             calls.append(prompt)
-            return {"payload_id": "1_1", "target": "t", "payload": "p", "result": "possible",
-                    "vulnerability": "Injection", "confidence": "medium", "evidence": "retried successfully"}
+            return {
+                "payload_id": "1_1",
+                "target": "t",
+                "payload": "p",
+                "result": "possible",
+                "vulnerability": "Injection",
+                "confidence": "medium",
+                "evidence": "retried successfully",
+            }
 
         out = analyze_results(pipeline_results, fake_ask_llm)
 
@@ -202,19 +268,35 @@ class TestAnalyzeResults(unittest.TestCase):
         # the old page's verdict and screenshot.
         os.makedirs("results", exist_ok=True)
         with open("results/mattermost_B8_dynamic.json", "w", encoding="utf-8") as f:
-            json.dump({"findings": [{
-                "payload_id": "1_1", "result": "confirmed", "vulnerability": "Injection",
-                "target": "http://x/some-other-page", "payload": "different payload",
-            }]}, f)
+            json.dump(
+                {
+                    "findings": [
+                        {
+                            "payload_id": "1_1",
+                            "result": "confirmed",
+                            "vulnerability": "Injection",
+                            "target": "http://x/some-other-page",
+                            "payload": "different payload",
+                        }
+                    ]
+                },
+                f,
+            )
 
         pipeline_results = {"B7": {"findings": [self._b7_finding("1_1", anomaly=True)]}}
         calls = []
 
         def fake_ask_llm(prompt):
             calls.append(prompt)
-            return {"payload_id": "1_1", "target": "http://x/town-square", "payload": "' OR 1=1",
-                    "result": "discarded", "vulnerability": "Injection", "confidence": "low",
-                    "evidence": "freshly evaluated, not reused"}
+            return {
+                "payload_id": "1_1",
+                "target": "http://x/town-square",
+                "payload": "' OR 1=1",
+                "result": "discarded",
+                "vulnerability": "Injection",
+                "confidence": "low",
+                "evidence": "freshly evaluated, not reused",
+            }
 
         out = analyze_results(pipeline_results, fake_ask_llm)
 

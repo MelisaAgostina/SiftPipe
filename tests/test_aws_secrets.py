@@ -1,8 +1,7 @@
 """
 Unit tests for blocks/aws_secrets.py's load_aws_secrets() - the SSM
 Parameter Store backfill that replaces a hand-edited .env on the deployed
-box (see docs/next-steps-before-deployment.md's "AWS deployment ease"
-section for the full design rationale). Mocks boto3.client entirely, same
+box. Mocks boto3.client entirely, same
 reasoning test_dynamic_injector.py mocks sync_playwright: no real AWS
 account is needed to prove the local-dev skip gate and the
 merge-if-missing logic are correct.
@@ -20,7 +19,6 @@ from blocks.aws_secrets import SecretsFetchError, load_aws_secrets
 
 
 class TestLoadAwsSecrets(unittest.TestCase):
-
     def setUp(self):
         self._env_patch = patch.dict(os.environ, {}, clear=False)
         self._env_patch.start()
@@ -57,9 +55,7 @@ class TestLoadAwsSecrets(unittest.TestCase):
         self.assertEqual(os.environ["ANTHROPIC_API_KEY"], "sk-from-ssm")
         self.assertEqual(os.environ["SIFTPIPE_ADMIN_PASSWORD"], "pw-from-ssm")
         mock_client.assert_called_once_with("ssm")
-        fake_ssm.get_parameters_by_path.assert_called_once_with(
-            Path="/siftpipe/", WithDecryption=True, Recursive=False
-        )
+        fake_ssm.get_parameters_by_path.assert_called_once_with(Path="/siftpipe/", WithDecryption=True, Recursive=False)
 
     def test_does_not_overwrite_a_var_already_set(self):
         """A local .env (or anything already exported) always wins - SSM is

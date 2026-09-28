@@ -1,13 +1,16 @@
-#block 4 dynamic analysis with playwright and chronium
-#Uses credentials from seed.py
+# block 4 dynamic analysis with playwright and chronium
+# Uses credentials from seed.py
 import os
 import time
 from urllib.parse import urlsplit
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
 from dotenv import load_dotenv
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
+
+from blocks.crawler import DEFAULT_MAX_PAGES, GENERIC_DENYLIST, select_action_links, select_links_to_visit
 from blocks.mattermost_auth import find_working_selector
 from blocks.targets import MATTERMOST, discovery_evidence_dir
-from blocks.crawler import GENERIC_DENYLIST, DEFAULT_MAX_PAGES, select_action_links, select_links_to_visit
 
 load_dotenv()
 
@@ -46,45 +49,49 @@ def extract_forms(page, page_label):
 
         submit_buttons = []
         for button in form.query_selector_all("button[type='submit'], input[type='submit']"):
-            submit_buttons.append({
-                "tag": button.evaluate("el => el.tagName.toLowerCase()"),
-                "id": button.get_attribute("id") or "unknown",
-                "name": button.get_attribute("name") or "unknown",
-                "type": button.get_attribute("type") or "submit",
-                "text": button.inner_text().strip()
-            })
+            submit_buttons.append(
+                {
+                    "tag": button.evaluate("el => el.tagName.toLowerCase()"),
+                    "id": button.get_attribute("id") or "unknown",
+                    "name": button.get_attribute("name") or "unknown",
+                    "type": button.get_attribute("type") or "submit",
+                    "text": button.inner_text().strip(),
+                }
+            )
 
         fields = []
         for field in form.query_selector_all("input, textarea, select"):
-            fields.append({
-                "tag": field.evaluate("el => el.tagName.toLowerCase()"),
-                "id": field.get_attribute("id") or "unknown",
-                "name": field.get_attribute("name") or "unknown",
-                "type": field.get_attribute("type") or field.evaluate("el => el.tagName.toLowerCase()"),
-                "placeholder": field.get_attribute("placeholder") or ""
-            })
+            fields.append(
+                {
+                    "tag": field.evaluate("el => el.tagName.toLowerCase()"),
+                    "id": field.get_attribute("id") or "unknown",
+                    "name": field.get_attribute("name") or "unknown",
+                    "type": field.get_attribute("type") or field.evaluate("el => el.tagName.toLowerCase()"),
+                    "placeholder": field.get_attribute("placeholder") or "",
+                }
+            )
 
-        forms.append({
-            "page": page_label,
-            "page_url": page.url,
-            "form_id": form_id,
-            "form_name": form_name,
-            "action": action,
-            "method": method,
-            "submit_buttons": submit_buttons,
-            "fields": fields
-        })
+        forms.append(
+            {
+                "page": page_label,
+                "page_url": page.url,
+                "form_id": form_id,
+                "form_name": form_name,
+                "action": action,
+                "method": method,
+                "submit_buttons": submit_buttons,
+                "fields": fields,
+            }
+        )
 
     return forms
 
 
 def _form_signature(form):
-    fields = tuple(sorted(
-        (f.get("tag"), f.get("name"), f.get("type")) for f in form.get("fields", [])
-    ))
-    buttons = tuple(sorted(
-        (b.get("tag"), b.get("name"), b.get("type"), b.get("text")) for b in form.get("submit_buttons", [])
-    ))
+    fields = tuple(sorted((f.get("tag"), f.get("name"), f.get("type")) for f in form.get("fields", [])))
+    buttons = tuple(
+        sorted((b.get("tag"), b.get("name"), b.get("type"), b.get("text")) for b in form.get("submit_buttons", []))
+    )
     return (form.get("action"), form.get("method"), fields, buttons)
 
 
@@ -139,31 +146,30 @@ def build_attack_surface_records(attack_surface):
 
     for form in attack_surface.get("forms", []):
         form_id = form["form_id"] if form["form_id"] != "unknown" else form["form_name"]
-        records.append({
-            "type": "form",
-            "id": form_id,
-            "inputs": [
-                {"id": field["id"], "name": field["name"], "type": field["type"]}
-                for field in form.get("fields", [])
-            ],
-            "endpoint": form.get("action", form.get("page_url", "unknown"))
-        })
+        records.append(
+            {
+                "type": "form",
+                "id": form_id,
+                "inputs": [
+                    {"id": field["id"], "name": field["name"], "type": field["type"]}
+                    for field in form.get("fields", [])
+                ],
+                "endpoint": form.get("action", form.get("page_url", "unknown")),
+            }
+        )
 
     for endpoint in attack_surface.get("endpoints", []):
-        records.append({
-            "type": "endpoint",
-            "id": endpoint,
-            "inputs": [],
-            "endpoint": endpoint
-        })
+        records.append({"type": "endpoint", "id": endpoint, "inputs": [], "endpoint": endpoint})
 
     for input_field in attack_surface.get("inputs", []):
-        records.append({
-            "type": "input",
-            "id": input_field.get("id") or input_field.get("name") or "unknown",
-            "inputs": [{"name": input_field.get("name"), "type": input_field.get("type")}],
-            "endpoint": input_field.get("page_url", "unknown")
-        })
+        records.append(
+            {
+                "type": "input",
+                "id": input_field.get("id") or input_field.get("name") or "unknown",
+                "inputs": [{"name": input_field.get("name"), "type": input_field.get("type")}],
+                "endpoint": input_field.get("page_url", "unknown"),
+            }
+        )
 
     return records
 
@@ -286,7 +292,7 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
             "request",
             lambda request: attack_surface["endpoints"].add(request.url)
             if request.resource_type in ("xhr", "fetch") and request.url.startswith(base_url)
-            else None
+            else None,
         )
 
         try:
@@ -348,15 +354,13 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                 # already uses this same URL check for its own success test),
                 # and joining an empty list produced an invalid "" CSS selector.
                 try:
-                    page.wait_for_url(
-                        lambda url: target.login_path not in url, timeout=LOGIN_REDIRECT_TIMEOUT_MS
-                    )
+                    page.wait_for_url(lambda url: target.login_path not in url, timeout=LOGIN_REDIRECT_TIMEOUT_MS)
                 except PlaywrightTimeoutError as timeout_error:
                     raise Exception(
                         _login_stuck_message(target.login_path, LOGIN_REDIRECT_TIMEOUT_MS, timeout_error)
                     ) from timeout_error
                 login_ok = True
-                print("Login exitoso.")
+                print("Login successful.")
 
             except Exception as e:
                 msg = f"Login failed: {e}"
@@ -412,10 +416,9 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                                 except Exception:
                                     pass
                         else:
-                            errors.append({
-                                "stage": "team_setup",
-                                "message": "Could not submit the temporary team creation form"
-                            })
+                            errors.append(
+                                {"stage": "team_setup", "message": "Could not submit the temporary team creation form"}
+                            )
                     except Exception as e:
                         msg = f"Couldn't create team: {e}"
                         print(f"[B4] {msg}")
@@ -486,16 +489,18 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                         successful_pages.append(url)
 
                         label = urlsplit(url).path or url
-                        print(f"Analizando página: {label} ({page.url})")
+                        print(f"Analyzing page: {label} ({page.url})")
                         attack_surface["forms"].extend(extract_forms(page, label))
 
                         for field in page.query_selector_all("input:visible, textarea:visible"):
-                            attack_surface["inputs"].append({
-                                "id": field.get_attribute("id") or "unknown",
-                                "name": field.get_attribute("name") or "unknown",
-                                "type": field.get_attribute("type") or "text",
-                                "page_url": page.url
-                            })
+                            attack_surface["inputs"].append(
+                                {
+                                    "id": field.get_attribute("id") or "unknown",
+                                    "name": field.get_attribute("name") or "unknown",
+                                    "type": field.get_attribute("type") or "text",
+                                    "page_url": page.url,
+                                }
+                            )
 
                         remaining_budget = max_pages - len(visited) - len(queue)
                         hrefs = [a.get_attribute("href") or "" for a in page.query_selector_all("a[href]")]
@@ -512,7 +517,12 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                         # what select_links_to_visit checks new links against, so a
                         # queued-but-not-yet-visited URL is excluded too.
                         new_links = select_links_to_visit(
-                            hrefs, page.url, base_url, visited | set(queue), denylist, remaining_budget,
+                            hrefs,
+                            page.url,
+                            base_url,
+                            visited | set(queue),
+                            denylist,
+                            remaining_budget,
                             priority_paths=target.crawl_priority_paths,
                         )
                         # select_links_to_visit only reorders priority links
@@ -529,18 +539,14 @@ def discover_attack_surface(target=None, base_url=None, login_id=None, password=
                         # topologically possible, maximizing the budget left
                         # for its children once select_links_to_visit's own
                         # admission guarantee (above) kicks in for them.
-                        priority_links = [
-                            u for u in new_links if any(p in u for p in target.crawl_priority_paths)
-                        ]
+                        priority_links = [u for u in new_links if any(p in u for p in target.crawl_priority_paths)]
                         normal_links = [u for u in new_links if u not in priority_links]
                         queue = priority_links + queue + normal_links
-                        attack_surface["action_links"].update(select_action_links(
-                            hrefs, page.url, base_url, denylist
-                        ))
+                        attack_surface["action_links"].update(select_action_links(hrefs, page.url, base_url, denylist))
 
                     except Exception as page_error:
                         msg = f"Could not review {url}: {page_error}"
-                        print(f"Advertencia: {msg}")
+                        print(f"Warning: {msg}")
                         errors.append({"stage": f"crawl:{url}", "message": msg})
 
                 attack_surface["pages_visited"] = sorted(successful_pages)

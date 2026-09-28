@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
+from blocks.bootstrap import MissingConfigError
+
 REQUIRED_ENV = {
     "ANTHROPIC_API_KEY": "test-anthropic-key",
     "SIFTPIPE_ADMIN_PASSWORD": "correct-horse",
@@ -58,6 +60,23 @@ class _AuthTestCase(unittest.TestCase):
         os.chdir(self._cwd)
         self._tmp.cleanup()
         self._env_patch.stop()
+
+
+class TestLifespan(_AuthTestCase):
+    """Startup/shutdown moved from the deprecated @app.on_event hooks to a
+    lifespan handler; these pin that the behavior survived the move."""
+
+    def test_missing_required_env_var_stops_the_server_from_booting(self):
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}):
+            with self.assertRaises(MissingConfigError):
+                with TestClient(self.api.app):
+                    pass
+
+    def test_clean_shutdown_stops_the_naviq_dev_server(self):
+        with patch.object(self.api, "stop_naviq_server") as stop:
+            with TestClient(self.api.app):
+                stop.assert_not_called()  # only at shutdown, not boot
+        stop.assert_called_once()
 
 
 class TestLoginRoute(_AuthTestCase):

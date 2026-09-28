@@ -73,8 +73,10 @@ class TestEnsureNaviqServerRunning(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_no_op_when_already_reachable(self):
-        with patch.object(env.requests, "get", return_value=MagicMock(status_code=200)), \
-             patch.object(env.subprocess, "Popen") as mock_popen:
+        with (
+            patch.object(env.requests, "get", return_value=MagicMock(status_code=200)),
+            patch.object(env.subprocess, "Popen") as mock_popen,
+        ):
             env.ensure_naviq_server_running(log_fn=lambda *a: None)
 
         mock_popen.assert_not_called()
@@ -94,8 +96,10 @@ class TestEnsureNaviqServerRunning(unittest.TestCase):
         mock_process = MagicMock()
         mock_process.poll.return_value = None  # still running, not exited
 
-        with patch.object(env.requests, "get", side_effect=fake_get), \
-             patch.object(env.subprocess, "Popen", return_value=mock_process) as mock_popen:
+        with (
+            patch.object(env.requests, "get", side_effect=fake_get),
+            patch.object(env.subprocess, "Popen", return_value=mock_process) as mock_popen,
+        ):
             env.ensure_naviq_server_running(log_fn=lambda *a: None)
 
         mock_popen.assert_called_once()
@@ -107,8 +111,10 @@ class TestEnsureNaviqServerRunning(unittest.TestCase):
         mock_process = MagicMock()
         mock_process.poll.return_value = 1  # already exited - a real startup failure
 
-        with patch.object(env.requests, "get", side_effect=env.requests.exceptions.ConnectionError()), \
-             patch.object(env.subprocess, "Popen", return_value=mock_process):
+        with (
+            patch.object(env.requests, "get", side_effect=env.requests.exceptions.ConnectionError()),
+            patch.object(env.subprocess, "Popen", return_value=mock_process),
+        ):
             with self.assertRaises(RuntimeError):
                 env.ensure_naviq_server_running(log_fn=lambda *a: None)
 
@@ -116,15 +122,16 @@ class TestEnsureNaviqServerRunning(unittest.TestCase):
         mock_process = MagicMock()
         mock_process.poll.return_value = None  # never exits, never comes up either
 
-        with patch.object(env.requests, "get", side_effect=env.requests.exceptions.ConnectionError()), \
-             patch.object(env.subprocess, "Popen", return_value=mock_process), \
-             patch.object(env.time, "sleep"):
+        with (
+            patch.object(env.requests, "get", side_effect=env.requests.exceptions.ConnectionError()),
+            patch.object(env.subprocess, "Popen", return_value=mock_process),
+            patch.object(env.time, "sleep"),
+        ):
             with self.assertRaises(TimeoutError):
                 env.ensure_naviq_server_running(log_fn=lambda *a: None, timeout=0.05)
 
 
 class TestStopNaviqServer(unittest.TestCase):
-
     def tearDown(self):
         env._naviq_server_process = None
 
@@ -162,7 +169,6 @@ def _without_sidecar_env():
 
 
 class TestSidecarUrl(unittest.TestCase):
-
     def test_none_when_unset(self):
         with _without_sidecar_env():
             self.assertIsNone(env._sidecar_url())
@@ -177,24 +183,26 @@ class TestSidecarUrl(unittest.TestCase):
 
 
 class TestSidecarPost(unittest.TestCase):
-
     def test_posts_to_the_fixed_endpoint_with_a_timeout(self):
-        with patch.dict(os.environ, SIDECAR_ENV), \
-             patch.object(env.requests, "post", return_value=MagicMock(status_code=200)) as mock_post:
+        with (
+            patch.dict(os.environ, SIDECAR_ENV),
+            patch.object(env.requests, "post", return_value=MagicMock(status_code=200)) as mock_post,
+        ):
             env._sidecar_post("/naviq/reset")
 
         mock_post.assert_called_once_with("http://sidecar:8080/naviq/reset", timeout=env.SIDECAR_REQUEST_TIMEOUT)
 
     def test_non_200_raises_with_the_status(self):
         response = MagicMock(status_code=500, text="Internal Server Error")
-        with patch.dict(os.environ, SIDECAR_ENV), \
-             patch.object(env.requests, "post", return_value=response):
+        with patch.dict(os.environ, SIDECAR_ENV), patch.object(env.requests, "post", return_value=response):
             with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
                 env._sidecar_post("/mattermost/reset")
 
     def test_unreachable_sidecar_raises_a_clear_error(self):
-        with patch.dict(os.environ, SIDECAR_ENV), \
-             patch.object(env.requests, "post", side_effect=env.requests.exceptions.ConnectionError("refused")):
+        with (
+            patch.dict(os.environ, SIDECAR_ENV),
+            patch.object(env.requests, "post", side_effect=env.requests.exceptions.ConnectionError("refused")),
+        ):
             with self.assertRaisesRegex(RuntimeError, "Could not reach the reset sidecar"):
                 env._sidecar_post("/mattermost/reset")
 
@@ -203,26 +211,34 @@ class TestFreshResetTargetsTheRightBackend(unittest.TestCase):
     """fresh_reset() must use the sidecar inside the containerized stack (no Docker CLI there)
     and keep the original local Docker path everywhere else."""
 
-    MM_STEPS = ("wait_for_mattermost", "wait_for_mattermost_webapp", "create_admin_account",
-                "run_seed_script", "clear_results_folder")
+    MM_STEPS = (
+        "wait_for_mattermost",
+        "wait_for_mattermost_webapp",
+        "create_admin_account",
+        "run_seed_script",
+        "clear_results_folder",
+    )
 
     def _patch_steps(self, stack):
         return {name: stack.enter_context(patch.object(env, name)) for name in self.MM_STEPS}
 
     def test_sidecar_mode_calls_the_sidecar_and_never_touches_docker(self):
         from contextlib import ExitStack
+
         with ExitStack() as stack:
             stack.enter_context(patch.dict(os.environ, SIDECAR_ENV))
             steps = self._patch_steps(stack)
             post = stack.enter_context(patch.object(env, "_sidecar_post"))
-            docker_calls = {name: stack.enter_context(patch.object(env, name))
-                            for name in ("check_docker_available", "docker_down", "wipe_volumes", "docker_up")}
+            docker_calls = {
+                name: stack.enter_context(patch.object(env, name))
+                for name in ("check_docker_available", "docker_down", "wipe_volumes", "docker_up")
+            }
             run = stack.enter_context(patch.object(env.subprocess, "run"))
 
             env.fresh_reset(log_fn=lambda *a: None, interactive=False)
 
         post.assert_called_once_with("/mattermost/reset")
-        for name, mock in docker_calls.items():
+        for mock in docker_calls.values():
             mock.assert_not_called()
         run.assert_not_called()
         for name in self.MM_STEPS:
@@ -230,31 +246,35 @@ class TestFreshResetTargetsTheRightBackend(unittest.TestCase):
 
     def test_local_mode_uses_docker_and_never_the_sidecar(self):
         from contextlib import ExitStack
+
         with ExitStack() as stack:
             stack.enter_context(_without_sidecar_env())
             self._patch_steps(stack)
             post = stack.enter_context(patch.object(env, "_sidecar_post"))
-            docker_calls = {name: stack.enter_context(patch.object(env, name))
-                            for name in ("check_docker_available", "docker_down", "wipe_volumes", "docker_up")}
+            docker_calls = {
+                name: stack.enter_context(patch.object(env, name))
+                for name in ("check_docker_available", "docker_down", "wipe_volumes", "docker_up")
+            }
 
             env.fresh_reset(log_fn=lambda *a: None, interactive=False)
 
         post.assert_not_called()
-        for name, mock in docker_calls.items():
+        for mock in docker_calls.values():
             mock.assert_called_once()
 
 
 class TestNaviqFreshResetTargetsTheRightBackend(unittest.TestCase):
-
     def test_sidecar_mode_resets_via_sidecar_and_runs_no_local_manage_py(self):
-        with patch.dict(os.environ, SIDECAR_ENV), \
-             patch.object(env, "_sidecar_post") as post, \
-             patch.object(env, "_wait_for_naviq_container") as wait, \
-             patch.object(env, "clear_results_folder") as clear, \
-             patch.object(env, "naviq_delete_db") as delete_db, \
-             patch.object(env, "naviq_create_test_account") as create_account, \
-             patch.object(env.subprocess, "run") as run, \
-             patch.object(env.subprocess, "Popen") as popen:
+        with (
+            patch.dict(os.environ, SIDECAR_ENV),
+            patch.object(env, "_sidecar_post") as post,
+            patch.object(env, "_wait_for_naviq_container") as wait,
+            patch.object(env, "clear_results_folder") as clear,
+            patch.object(env, "naviq_delete_db") as delete_db,
+            patch.object(env, "naviq_create_test_account") as create_account,
+            patch.object(env.subprocess, "run") as run,
+            patch.object(env.subprocess, "Popen") as popen,
+        ):
             env.naviq_fresh_reset(log_fn=lambda *a: None)
 
         post.assert_called_once_with("/naviq/reset")
@@ -266,13 +286,15 @@ class TestNaviqFreshResetTargetsTheRightBackend(unittest.TestCase):
         popen.assert_not_called()
 
     def test_local_mode_still_runs_the_full_local_sequence(self):
-        with _without_sidecar_env(), \
-             patch.object(env, "_sidecar_post") as post, \
-             patch.object(env, "naviq_delete_db") as delete_db, \
-             patch.object(env, "naviq_create_test_account") as create_account, \
-             patch.object(env, "ensure_naviq_server_running") as ensure, \
-             patch.object(env, "clear_results_folder"), \
-             patch.object(env.subprocess, "run") as run:
+        with (
+            _without_sidecar_env(),
+            patch.object(env, "_sidecar_post") as post,
+            patch.object(env, "naviq_delete_db") as delete_db,
+            patch.object(env, "naviq_create_test_account") as create_account,
+            patch.object(env, "ensure_naviq_server_running") as ensure,
+            patch.object(env, "clear_results_folder"),
+            patch.object(env.subprocess, "run") as run,
+        ):
             env.naviq_fresh_reset(log_fn=lambda *a: None)
 
         post.assert_not_called()
@@ -287,17 +309,23 @@ class TestEnsureNaviqServerRunningInContainer(unittest.TestCase):
     """In the containerized stack Docker owns the server process: never spawn one, only wait."""
 
     def test_no_op_when_already_reachable(self):
-        with patch.dict(os.environ, SIDECAR_ENV), \
-             patch.object(env.requests, "get", return_value=MagicMock(status_code=200)), \
-             patch.object(env.subprocess, "Popen") as popen:
+        with (
+            patch.dict(os.environ, SIDECAR_ENV),
+            patch.object(env.requests, "get", return_value=MagicMock(status_code=200)),
+            patch.object(env.subprocess, "Popen") as popen,
+        ):
             env.ensure_naviq_server_running(log_fn=lambda *a: None)
 
         popen.assert_not_called()
 
     def test_waits_until_the_container_answers_without_spawning_anything(self):
-        responses = iter([env.requests.exceptions.ConnectionError(),
-                          env.requests.exceptions.ConnectionError(),
-                          MagicMock(status_code=200)])
+        responses = iter(
+            [
+                env.requests.exceptions.ConnectionError(),
+                env.requests.exceptions.ConnectionError(),
+                MagicMock(status_code=200),
+            ]
+        )
 
         def fake_get(*args, **kwargs):
             result = next(responses)
@@ -305,19 +333,23 @@ class TestEnsureNaviqServerRunningInContainer(unittest.TestCase):
                 raise result
             return result
 
-        with patch.dict(os.environ, SIDECAR_ENV), \
-             patch.object(env.requests, "get", side_effect=fake_get), \
-             patch.object(env.time, "sleep"), \
-             patch.object(env.subprocess, "Popen") as popen:
+        with (
+            patch.dict(os.environ, SIDECAR_ENV),
+            patch.object(env.requests, "get", side_effect=fake_get),
+            patch.object(env.time, "sleep"),
+            patch.object(env.subprocess, "Popen") as popen,
+        ):
             env.ensure_naviq_server_running(log_fn=lambda *a: None)
 
         popen.assert_not_called()
 
     def test_raises_timeout_if_the_container_never_answers(self):
-        with patch.dict(os.environ, SIDECAR_ENV), \
-             patch.object(env.requests, "get", side_effect=env.requests.exceptions.ConnectionError()), \
-             patch.object(env.time, "sleep"), \
-             patch.object(env.subprocess, "Popen") as popen:
+        with (
+            patch.dict(os.environ, SIDECAR_ENV),
+            patch.object(env.requests, "get", side_effect=env.requests.exceptions.ConnectionError()),
+            patch.object(env.time, "sleep"),
+            patch.object(env.subprocess, "Popen") as popen,
+        ):
             with self.assertRaises(TimeoutError):
                 env.ensure_naviq_server_running(log_fn=lambda *a: None, timeout=0.05)
 
@@ -325,7 +357,6 @@ class TestEnsureNaviqServerRunningInContainer(unittest.TestCase):
 
 
 class TestClearResultsFolder(unittest.TestCase):
-
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.path = os.path.join(self._tmp.name, "results")

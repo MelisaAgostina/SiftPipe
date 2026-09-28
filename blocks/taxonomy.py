@@ -38,38 +38,86 @@ MITRE_CWE_URL = "https://cwe.mitre.org/data/definitions/{number}.html"
 # so it has no Description field on its page — its "description" below is
 # MITRE's Summary text instead, which is what that page actually has.
 CWE_CATALOG = {
-    "CWE-89":   {"name": "SQL Injection",                               "owasp": "A05",
-                 "description": "The product constructs all or part of an SQL command using externally-influenced input, but does not neutralize or incorrectly neutralizes special elements that could modify the intended SQL command."},
-    "CWE-78":   {"name": "OS Command Injection",                        "owasp": "A05",
-                 "description": "The product constructs all or part of an OS command using externally-influenced input, but does not neutralize or incorrectly neutralizes special elements that could modify the intended OS command."},
-    "CWE-79":   {"name": "Cross-Site Scripting (XSS)",                  "owasp": "A05",
-                 "description": "The product does not neutralize or incorrectly neutralizes user-controllable input before it is placed in output used as a web page served to other users."},
-    "CWE-22":   {"name": "Path Traversal",                              "owasp": "A01",
-                 "description": "The product uses external input to construct a pathname intended to identify a file/directory under a restricted parent directory, but does not properly neutralize special elements that can cause it to resolve to a location outside the restricted directory."},
-    "CWE-284":  {"name": "Improper Access Control",                     "owasp": "A01",
-                 "description": "The product does not restrict or incorrectly restricts access to a resource from an unauthorized actor."},
-    "CWE-862":  {"name": "Missing Authorization",                       "owasp": "A01",
-                 "description": "The product does not perform an authorization check when an actor attempts to access a resource or perform an action."},
-    "CWE-918":  {"name": "Server-Side Request Forgery (SSRF)",          "owasp": "A01",  # folded into Broken Access Control in 2025
-                 "description": "The web server receives a URL or similar request from an upstream component and retrieves the contents of this URL, but does not sufficiently ensure that the request is being sent to the expected destination."},
-    "CWE-798":  {"name": "Use of Hardcoded Credentials",                "owasp": "A04",
-                 "description": "The product contains hard-coded credentials, such as a password or cryptographic key."},
-    "CWE-259":  {"name": "Use of Hardcoded Password",                   "owasp": "A04",
-                 "description": "The product contains a hard-coded password, which it uses for its own inbound authentication or for outbound communication to external components."},
-    "CWE-16":   {"name": "Security Misconfiguration",                   "owasp": "A02",
-                 "description": "Weaknesses in this category are typically introduced during the configuration of the software."},
-    "CWE-200":  {"name": "Information Disclosure",                      "owasp": "A02",
-                 "description": "The product exposes sensitive information to an actor that is not explicitly authorized to have access to that information."},
-    "CWE-287":  {"name": "Improper Authentication",                     "owasp": "A07",
-                 "description": "When an actor claims to have a given identity, the product does not prove or insufficiently proves that the claim is correct."},
-    "CWE-613":  {"name": "Insufficient Session Expiration",             "owasp": "A07",
-                 "description": "Insufficient Session Expiration is when a web site permits an attacker to reuse old session credentials or session IDs for authorization."},
-    "CWE-1104": {"name": "Use of Unmaintained Third Party Components",  "owasp": "A03",
-                 "description": "The product relies on third-party components that are not actively supported or maintained by the original developer or a trusted proxy for the original developer."},
-    "CWE-209":  {"name": "Information Exposure Through an Error Message", "owasp": "A10",
-                 "description": "The product generates an error message that includes sensitive information about its environment, users, or associated data."},
-    "CWE-755":  {"name": "Improper Handling of Exceptional Conditions", "owasp": "A10",
-                 "description": "The product does not handle or incorrectly handles an exceptional condition."},
+    "CWE-89": {
+        "name": "SQL Injection",
+        "owasp": "A05",
+        "description": "The product constructs all or part of an SQL command using externally-influenced input, but does not neutralize or incorrectly neutralizes special elements that could modify the intended SQL command.",
+    },
+    "CWE-78": {
+        "name": "OS Command Injection",
+        "owasp": "A05",
+        "description": "The product constructs all or part of an OS command using externally-influenced input, but does not neutralize or incorrectly neutralizes special elements that could modify the intended OS command.",
+    },
+    "CWE-79": {
+        "name": "Cross-Site Scripting (XSS)",
+        "owasp": "A05",
+        "description": "The product does not neutralize or incorrectly neutralizes user-controllable input before it is placed in output used as a web page served to other users.",
+    },
+    "CWE-22": {
+        "name": "Path Traversal",
+        "owasp": "A01",
+        "description": "The product uses external input to construct a pathname intended to identify a file/directory under a restricted parent directory, but does not properly neutralize special elements that can cause it to resolve to a location outside the restricted directory.",
+    },
+    "CWE-284": {
+        "name": "Improper Access Control",
+        "owasp": "A01",
+        "description": "The product does not restrict or incorrectly restricts access to a resource from an unauthorized actor.",
+    },
+    "CWE-862": {
+        "name": "Missing Authorization",
+        "owasp": "A01",
+        "description": "The product does not perform an authorization check when an actor attempts to access a resource or perform an action.",
+    },
+    "CWE-918": {
+        "name": "Server-Side Request Forgery (SSRF)",
+        "owasp": "A01",  # folded into Broken Access Control in 2025
+        "description": "The web server receives a URL or similar request from an upstream component and retrieves the contents of this URL, but does not sufficiently ensure that the request is being sent to the expected destination.",
+    },
+    "CWE-798": {
+        "name": "Use of Hardcoded Credentials",
+        "owasp": "A04",
+        "description": "The product contains hard-coded credentials, such as a password or cryptographic key.",
+    },
+    "CWE-259": {
+        "name": "Use of Hardcoded Password",
+        "owasp": "A04",
+        "description": "The product contains a hard-coded password, which it uses for its own inbound authentication or for outbound communication to external components.",
+    },
+    "CWE-16": {
+        "name": "Security Misconfiguration",
+        "owasp": "A02",
+        "description": "Weaknesses in this category are typically introduced during the configuration of the software.",
+    },
+    "CWE-200": {
+        "name": "Information Disclosure",
+        "owasp": "A02",
+        "description": "The product exposes sensitive information to an actor that is not explicitly authorized to have access to that information.",
+    },
+    "CWE-287": {
+        "name": "Improper Authentication",
+        "owasp": "A07",
+        "description": "When an actor claims to have a given identity, the product does not prove or insufficiently proves that the claim is correct.",
+    },
+    "CWE-613": {
+        "name": "Insufficient Session Expiration",
+        "owasp": "A07",
+        "description": "Insufficient Session Expiration is when a web site permits an attacker to reuse old session credentials or session IDs for authorization.",
+    },
+    "CWE-1104": {
+        "name": "Use of Unmaintained Third Party Components",
+        "owasp": "A03",
+        "description": "The product relies on third-party components that are not actively supported or maintained by the original developer or a trusted proxy for the original developer.",
+    },
+    "CWE-209": {
+        "name": "Information Exposure Through an Error Message",
+        "owasp": "A10",
+        "description": "The product generates an error message that includes sensitive information about its environment, users, or associated data.",
+    },
+    "CWE-755": {
+        "name": "Improper Handling of Exceptional Conditions",
+        "owasp": "A10",
+        "description": "The product does not handle or incorrectly handles an exceptional condition.",
+    },
 }
 
 # Fallback only: used when a finding doesn't already carry a cwe_id (an LLM
@@ -136,7 +184,10 @@ def infer_taxonomy(finding):
         cwe_id = cwe_id.strip().upper()
         info = cwe_info(cwe_id)
         owasp_category = finding.get("owasp_category") or finding.get("category") or (info["owasp"] if info else None)
-        return {"cwe_id": cwe_id, "owasp_category": owasp_category.strip().upper() if isinstance(owasp_category, str) else None}
+        return {
+            "cwe_id": cwe_id,
+            "owasp_category": owasp_category.strip().upper() if isinstance(owasp_category, str) else None,
+        }
 
     owasp_category = finding.get("owasp_category") or finding.get("category")
     if isinstance(owasp_category, str) and owasp_category.strip():

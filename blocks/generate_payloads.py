@@ -1,12 +1,12 @@
 import json
-from anthropic import Anthropic
 import os
 import re
 
-from blocks.llm import call_llm_json
-from blocks.taxonomy import infer_taxonomy
-from blocks.targets import MATTERMOST, result_path
+from anthropic import Anthropic
 
+from blocks.llm import call_llm_json
+from blocks.targets import MATTERMOST, result_path
+from blocks.taxonomy import infer_taxonomy
 
 RESULTS_DIR = "results"
 
@@ -17,7 +17,7 @@ def ensure_results_dir():
 
 def load_json_file(path):
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
@@ -70,24 +70,26 @@ def build_dynamic_targets(attack_surface, target_profile=None):
     targets = []
 
     for form in attack_surface.get("forms", []):
-        page   = form.get("page", "unknown")
+        page = form.get("page", "unknown")
         action = form.get("action", form.get("page_url", "unknown"))
         method = form.get("method", "get")
 
         for field in form.get("fields", []):
             if field.get("type") in _UNFILLABLE_FIELD_TYPES:
                 continue
-            targets.append({
-                "type":       "form_field",
-                "target":     f"form field '{field.get('name') or field.get('id') or 'unknown'}' on page '{page}'",
-                "page":       page,
-                "action":     action,
-                "method":     method,
-                "field_id":   field.get("id"),
-                "field_name": field.get("name"),
-                "field_type": field.get("type"),
-                "page_url":   form.get("page_url", "unknown"),
-            })
+            targets.append(
+                {
+                    "type": "form_field",
+                    "target": f"form field '{field.get('name') or field.get('id') or 'unknown'}' on page '{page}'",
+                    "page": page,
+                    "action": action,
+                    "method": method,
+                    "field_id": field.get("id"),
+                    "field_name": field.get("name"),
+                    "field_type": field.get("type"),
+                    "page_url": form.get("page_url", "unknown"),
+                }
+            )
 
     for input_field in attack_surface.get("inputs", []):
         # Same _UNFILLABLE_FIELD_TYPES exclusion as the forms loop above -
@@ -98,31 +100,35 @@ def build_dynamic_targets(attack_surface, target_profile=None):
         # through here for the exact same physical element.
         if input_field.get("type") in _UNFILLABLE_FIELD_TYPES:
             continue
-        targets.append({
-            "type":       "input",
-            "target":     f"input '{input_field.get('name') or input_field.get('id') or 'unknown'}' on page '{input_field.get('page_url', 'unknown')}'",
-            "page":       input_field.get("page_url", "unknown"),
-            "action":     input_field.get("page_url", "unknown"),
-            "method":     "unknown",
-            "field_id":   input_field.get("id"),
-            "field_name": input_field.get("name"),
-            "field_type": input_field.get("type"),
-            "page_url":   input_field.get("page_url", "unknown"),
-        })
+        targets.append(
+            {
+                "type": "input",
+                "target": f"input '{input_field.get('name') or input_field.get('id') or 'unknown'}' on page '{input_field.get('page_url', 'unknown')}'",
+                "page": input_field.get("page_url", "unknown"),
+                "action": input_field.get("page_url", "unknown"),
+                "method": "unknown",
+                "field_id": input_field.get("id"),
+                "field_name": input_field.get("name"),
+                "field_type": input_field.get("type"),
+                "page_url": input_field.get("page_url", "unknown"),
+            }
+        )
 
     if not targets:
         for endpoint in attack_surface.get("endpoints", []):
-            targets.append({
-                "type":       "endpoint",
-                "target":     f"endpoint '{endpoint}'",
-                "page":       endpoint,
-                "action":     endpoint,
-                "method":     "unknown",
-                "field_id":   None,
-                "field_name": None,
-                "field_type": None,
-                "page_url":   endpoint,
-            })
+            targets.append(
+                {
+                    "type": "endpoint",
+                    "target": f"endpoint '{endpoint}'",
+                    "page": endpoint,
+                    "action": endpoint,
+                    "method": "unknown",
+                    "field_id": None,
+                    "field_name": None,
+                    "field_type": None,
+                    "page_url": endpoint,
+                }
+            )
 
     # Reuses TargetProfile.crawl_priority_paths (added 2026-09-06 for B4's
     # crawl queue, blocks/crawler.py::select_links_to_visit) here too - real
@@ -207,7 +213,7 @@ def build_prompt(dynamic_target, related_findings, static_findings):
 
     if related_findings:
         context_lines.append("Related static findings:")
-        for f in related_findings[:2]:   # limit to 2 to keep prompt short
+        for f in related_findings[:2]:  # limit to 2 to keep prompt short
             context_lines.append(f"  - {f.get('vulnerability')} ({f.get('confidence')})")
         target_taxonomy = infer_taxonomy(related_findings[0])
         if target_taxonomy["cwe_id"]:
@@ -220,21 +226,23 @@ def build_prompt(dynamic_target, related_findings, static_findings):
         for f in static_findings[:2]:
             context_lines.append(f"  - {f.get('vulnerability')} ({f.get('confidence')})")
 
-    context_lines.extend([
-        "",
-        "Return ONLY this JSON, no extra text, no markdown:",
-        "{",
-        '  "target": "<same as Target input above>",',
-        '  "payloads": ["payload1", "payload2", "payload3", "payload4", "payload5"],',
-        '  "rationale": "<one sentence>"',
-        "}",
-        "",
-        "Rules:",
-        "- Exactly 5 short attack strings in the payloads array.",
-        "- Cover: XSS, SQLi, command injection, path traversal, auth bypass.",
-        "- Strings only — no nested objects.",
-        "- No explanation outside the JSON.",
-    ])
+    context_lines.extend(
+        [
+            "",
+            "Return ONLY this JSON, no extra text, no markdown:",
+            "{",
+            '  "target": "<same as Target input above>",',
+            '  "payloads": ["payload1", "payload2", "payload3", "payload4", "payload5"],',
+            '  "rationale": "<one sentence>"',
+            "}",
+            "",
+            "Rules:",
+            "- Exactly 5 short attack strings in the payloads array.",
+            "- Cover: XSS, SQLi, command injection, path traversal, auth bypass.",
+            "- Strings only — no nested objects.",
+            "- No explanation outside the JSON.",
+        ]
+    )
 
     return "\n".join(context_lines)
 
@@ -266,13 +274,14 @@ def _try_extract_partial_json(text):
 def ask_llm(prompt, client=None):
     if client is None:
         from dotenv import load_dotenv
+
         load_dotenv()
         client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     try:
         return call_llm_json(
             prompt,
             client,
-            max_tokens=512,   # compact response — prompt asks for exactly 5 payloads
+            max_tokens=512,  # compact response — prompt asks for exactly 5 payloads
             system=(
                 "You are a security testing assistant. "
                 "You respond ONLY with valid, complete JSON. "
@@ -291,15 +300,34 @@ def ask_llm(prompt, client=None):
         return {"error": "LLM request failed", "message": str(e)}
 
 
+def _enrich(item, dynamic_target, target_taxonomy):
+    """Fills in the navigation metadata and taxonomy every B5 payload set needs
+    for B7/B9, without overwriting anything the LLM already returned. Takes its
+    inputs as parameters (rather than closing over the generate_payloads loop
+    variables) so it can't silently pick up the wrong iteration's target."""
+    item.setdefault("target", dynamic_target["target"])
+    item.setdefault("target_desc", dynamic_target["target"])
+    item.setdefault("page_url", dynamic_target.get("page_url"))
+    item.setdefault("action", dynamic_target.get("action"))
+    item.setdefault("field_id", dynamic_target.get("field_id"))
+    item.setdefault("field_name", dynamic_target.get("field_name"))
+    item.setdefault("cwe_id", target_taxonomy["cwe_id"])
+    item.setdefault("owasp_category", target_taxonomy["owasp_category"])
+    item.setdefault("payloads", [])
+    item.setdefault("rationale", "No rationale returned by LLM.")
+    return item
+
+
 def generate_payloads(client=None, target_profile=None):
     target_profile = target_profile or MATTERMOST
 
     if client is None:
         from dotenv import load_dotenv
+
         load_dotenv()
         client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-    static_data    = load_json_file(result_path(target_profile.name, "B3_static.json"))
+    static_data = load_json_file(result_path(target_profile.name, "B3_static.json"))
     attack_surface_path = result_path(target_profile.name, "attack_surface.json")
     attack_surface = load_json_file(attack_surface_path)
 
@@ -317,51 +345,52 @@ def generate_payloads(client=None, target_profile=None):
     payload_outputs = []
     for dynamic_target in dynamic_targets[:20]:
         related_findings = find_related_static_findings(dynamic_target, static_findings)
-        prompt           = build_prompt(dynamic_target, related_findings, static_findings)
-        llm_result       = ask_llm(prompt, client)
+        prompt = build_prompt(dynamic_target, related_findings, static_findings)
+        llm_result = ask_llm(prompt, client)
 
         # Taxonomy of the best-matching static finding, if any — lets B7/B9
         # trace this payload set back to a specific CWE/OWASP category
         # instead of only the free-text "rationale" the LLM returns.
-        target_taxonomy = infer_taxonomy(related_findings[0]) if related_findings else {"cwe_id": None, "owasp_category": None}
+        target_taxonomy = (
+            infer_taxonomy(related_findings[0]) if related_findings else {"cwe_id": None, "owasp_category": None}
+        )
 
         # Inject navigation metadata regardless of response shape
-        def _enrich(item):
-            item.setdefault("target",      dynamic_target["target"])
-            item.setdefault("target_desc", dynamic_target["target"])
-            item.setdefault("page_url",    dynamic_target.get("page_url"))
-            item.setdefault("action",      dynamic_target.get("action"))
-            item.setdefault("field_id",    dynamic_target.get("field_id"))
-            item.setdefault("field_name",  dynamic_target.get("field_name"))
-            item.setdefault("cwe_id",      target_taxonomy["cwe_id"])
-            item.setdefault("owasp_category", target_taxonomy["owasp_category"])
-            item.setdefault("payloads",    [])
-            item.setdefault("rationale",   "No rationale returned by LLM.")
-            return item
-
         if isinstance(llm_result, list):
             for item in llm_result:
-                payload_outputs.append(_enrich(item))
+                payload_outputs.append(_enrich(item, dynamic_target, target_taxonomy))
 
         elif isinstance(llm_result, dict):
             if llm_result.get("error"):
-                payload_outputs.append(_enrich({
-                    "payloads": [],
-                    "rationale": "No JSON-valid payloads could be generated for this target.",
-                    "debug": llm_result,
-                }))
+                payload_outputs.append(
+                    _enrich(
+                        {
+                            "payloads": [],
+                            "rationale": "No JSON-valid payloads could be generated for this target.",
+                            "debug": llm_result,
+                        },
+                        dynamic_target,
+                        target_taxonomy,
+                    )
+                )
             else:
-                payload_outputs.append(_enrich(llm_result))
+                payload_outputs.append(_enrich(llm_result, dynamic_target, target_taxonomy))
         else:
-            payload_outputs.append(_enrich({
-                "payloads": [],
-                "rationale": "Unexpected LLM output type.",
-            }))
+            payload_outputs.append(
+                _enrich(
+                    {
+                        "payloads": [],
+                        "rationale": "Unexpected LLM output type.",
+                    },
+                    dynamic_target,
+                    target_taxonomy,
+                )
+            )
 
     output = {
-        "status":            "complete",
+        "status": "complete",
         "generated_targets": len(payload_outputs),
-        "payloads":          payload_outputs,
+        "payloads": payload_outputs,
     }
 
     save_json_file(result_path(target_profile.name, "B5_payloads.json"), output)

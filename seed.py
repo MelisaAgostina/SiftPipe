@@ -7,7 +7,8 @@ load_dotenv()
 
 BASE_URL = f"{os.getenv('MM_URL', 'http://localhost:8065')}/api/v4"
 ADMIN_EMAIL = os.getenv("MM_ADMIN_EMAIL", "test@mail.com")
-ADMIN_PASS = os.getenv("MM_ADMIN_PASS")  # never hardcode this      # Cambiar por tu contraseña admin
+ADMIN_PASS = os.getenv("MM_ADMIN_PASS")  # never hardcode this
+
 
 def _require_env(name):
     """Identifiers and credentials come from .env (or SSM on the deployed box), never
@@ -28,22 +29,19 @@ def _seed_data():
         "username": _require_env("MM_SEED_USERNAME"),
         "password": _require_env("MM_PASSWORD"),
         "first_name": "Usuario",
-        "last_name": "Prueba"
+        "last_name": "Prueba",
     }
     new_team = {
         "name": _require_env("MM_TEAM"),
         "display_name": "Equipo Tesina",
-        "type": "O" # O = Open (Público)
+        "type": "O",  # O = Open (public)
     }
-    new_channel = {
-        "name": _require_env("MM_CHANNEL"),
-        "display_name": "Canal de Análisis",
-        "type": "O"
-    }
+    new_channel = {"name": _require_env("MM_CHANNEL"), "display_name": "Canal de Análisis", "type": "O"}
     return new_user, new_team, new_channel
 
 
 MESSAGE = "¡Hola! Este es un mensaje semilla inyectado por el orquestador Python."
+
 
 def seed_mattermost():
     NEW_USER, NEW_TEAM, NEW_CHANNEL = _seed_data()
@@ -66,7 +64,9 @@ def seed_mattermost():
     team_id = team_res.json().get("id")
 
     print("4. Vinculando usuario al equipo...")
-    member_res = session.post(f"{BASE_URL}/teams/{team_id}/members", json={"team_id": team_id, "user_id": user_id}, headers=headers)
+    member_res = session.post(
+        f"{BASE_URL}/teams/{team_id}/members", json={"team_id": team_id, "user_id": user_id}, headers=headers
+    )
     member_res.raise_for_status()
 
     print("5. Creando canal...")
@@ -76,7 +76,9 @@ def seed_mattermost():
     channel_id = channel_res.json().get("id")
 
     print("6. Vinculando usuario al canal...")
-    channel_member_res = session.post(f"{BASE_URL}/channels/{channel_id}/members", json={"user_id": user_id}, headers=headers)
+    channel_member_res = session.post(
+        f"{BASE_URL}/channels/{channel_id}/members", json={"user_id": user_id}, headers=headers
+    )
     channel_member_res.raise_for_status()
 
     print("7. Publicando post ficticio...")
@@ -84,7 +86,8 @@ def seed_mattermost():
     post_res = session.post(f"{BASE_URL}/posts", json=post_data, headers=headers)
     post_res.raise_for_status()
 
-    print("Seed script finalizado con éxito. Entorno listo para Playwright.")
+    print("Seed script finished successfully. Environment ready for Playwright.")
+
 
 if __name__ == "__main__":
     seed_mattermost()

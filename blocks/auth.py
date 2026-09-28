@@ -3,9 +3,11 @@ blocks/auth.py
 
 Session-cookie login gate for the deployed API - a single shared passphrase
 (SIFTPIPE_ADMIN_PASSWORD), not per-user accounts, since there's only one
-audience tier for this demo box. See docs/next-steps-before-deployment.md's
-Security section for the full design rationale (why no database, the two
-secrets this needs, the cross-domain cookie/rate-limiter fixes).
+audience tier for this demo box. There is no user database: the session lives
+in a signed cookie and the login rate limiter is in memory. Two secrets are
+required (the passphrase and the session-signing secret), and the cookie and
+rate-limiter settings account for the frontend being served from a different
+domain than the API.
 """
 
 import hashlib
@@ -13,21 +15,20 @@ import hmac
 import os
 import time
 
-from blocks.pipeline import MissingConfigError
+from blocks.bootstrap import MissingConfigError
 
 REQUIRED_ENV_VARS = ("SIFTPIPE_ADMIN_PASSWORD", "SIFTPIPE_SESSION_SECRET")
 
 
 def validate_required_env_vars():
     """Fail fast at API startup if the login gate's secrets aren't set -
-    mirrors blocks/pipeline.py's validate_required_env_vars() for
+    mirrors blocks/bootstrap.py's validate_required_env_vars() for
     ANTHROPIC_API_KEY: a missing secret should surface at boot, not as a
     confusing failure on the first login attempt."""
     missing = [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
     if missing:
         raise MissingConfigError(
-            f"Missing required environment variable(s): {', '.join(missing)}. "
-            "Set them in .env before running the API."
+            f"Missing required environment variable(s): {', '.join(missing)}. Set them in .env before running the API."
         )
 
 

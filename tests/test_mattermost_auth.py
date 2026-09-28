@@ -25,7 +25,6 @@ class FakeSelectivePage:
 
 
 class TestFindWorkingSelector(unittest.TestCase):
-
     def test_returns_first_candidate_when_it_matches(self):
         page = FakeSelectivePage(working_selectors=["#a", "#b"])
         self.assertEqual(find_working_selector(page, ["#a", "#b"]), "#a")

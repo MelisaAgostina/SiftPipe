@@ -1,9 +1,9 @@
 import json
 import os
 
-from blocks.taxonomy import infer_taxonomy, cwe_info
 from blocks.scoring import compute_score, confidence_for_match
 from blocks.targets import MATTERMOST, result_path
+from blocks.taxonomy import cwe_info, infer_taxonomy
 
 # Safety cap on LLM-judge calls per run, same rationale as B3's MAX_FILES:
 # protects the Anthropic API budget on a large correlation run. Ambiguous
@@ -57,10 +57,10 @@ def _legacy_text_match(b3, vuln_type):
     norm_vuln_type = _normalize_vuln_label(vuln_type)
     b3_cat = str(b3.get("category", "")).strip()
 
-    same_family = b3_vuln and norm_vuln_type and (
-        b3_vuln == norm_vuln_type
-        or b3_vuln in norm_vuln_type
-        or norm_vuln_type in b3_vuln
+    same_family = (
+        b3_vuln
+        and norm_vuln_type
+        and (b3_vuln == norm_vuln_type or b3_vuln in norm_vuln_type or norm_vuln_type in b3_vuln)
     )
     return bool(same_family or (b3_cat and b3_cat.lower() in vuln_type.lower()))
 
@@ -72,7 +72,7 @@ def _load_previous_judgments(path):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -97,17 +97,17 @@ application. Both flagged something in the same OWASP category, but their vulner
 labels don't line up exactly. Decide whether they describe the SAME underlying vulnerability.
 
 STATIC FINDING (source code analysis):
-  Vulnerability: {b3.get('vulnerability')}
+  Vulnerability: {b3.get("vulnerability")}
   CWE: {_cwe_line(static_cwe)}
-  File: {b3.get('file')}
-  Evidence: {b3.get('evidence')}
+  File: {b3.get("file")}
+  Evidence: {b3.get("evidence")}
 
 DYNAMIC FINDING (live exploitation attempt):
-  Vulnerability: {b8.get('vulnerability')}
+  Vulnerability: {b8.get("vulnerability")}
   CWE: {_cwe_line(dynamic_cwe)}
-  Target: {b8.get('target') or b8.get('endpoint')}
-  Payload: {b8.get('payload')}
-  Evidence: {b8.get('evidence')}
+  Target: {b8.get("target") or b8.get("endpoint")}
+  Payload: {b8.get("payload")}
+  Evidence: {b8.get("evidence")}
 
 Return ONLY this JSON, no markdown, no extra text:
 {{"same_vulnerability": true, "rationale": "<one sentence>"}}
@@ -147,18 +147,18 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
 
     if not b3_findings:
         try:
-            with open(result_path(target_profile.name, "B3_static.json"), "r", encoding="utf-8") as f:
+            with open(result_path(target_profile.name, "B3_static.json"), encoding="utf-8") as f:
                 b3_findings = json.load(f).get("findings", [])
         except FileNotFoundError:
             b3_findings = []
 
     if not b8_findings:
         try:
-            with open(result_path(target_profile.name, "B8_dynamic.json"), "r", encoding="utf-8") as f:
+            with open(result_path(target_profile.name, "B8_dynamic.json"), encoding="utf-8") as f:
                 b8_findings = _normalize_dynamic_findings(json.load(f))
         except FileNotFoundError:
             try:
-                with open(result_path(target_profile.name, "B8_dynamic_analysis.json"), "r", encoding="utf-8") as f:
+                with open(result_path(target_profile.name, "B8_dynamic_analysis.json"), encoding="utf-8") as f:
                     b8_findings = _normalize_dynamic_findings(json.load(f))
             except FileNotFoundError:
                 b8_findings = []
@@ -204,7 +204,7 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
         """Returns (matched_index|None, match_tier, judge_rationale|None)."""
         # Tier 1: exact CWE match
         if dyn_taxonomy["cwe_id"]:
-            for i, (b3, stat_taxonomy) in enumerate(static_findings_with_taxonomy):
+            for i, (_b3, stat_taxonomy) in enumerate(static_findings_with_taxonomy):
                 if stat_taxonomy["cwe_id"] and stat_taxonomy["cwe_id"] == dyn_taxonomy["cwe_id"]:
                     return i, "cwe", None
 
@@ -298,34 +298,41 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
             match_tier=match_tier,
         )
 
-        correlated.append({
-            "vulnerability": vuln_type,
-            "cwe_id": dyn_taxonomy["cwe_id"],
-            "owasp_category": dyn_taxonomy["owasp_category"],
-            "target": target,
-            "payload_id": payload_id,
-            "screenshot_path": screenshot_path,
-            "video_path": video_path,
-            "classification": status,
-            "confidence": conf,
-            "source": source,
-            "match_tier": match_tier,
-            "score": score,
-            "severity": severity,
-            "evidence": evidence,
-            "match_rationale": _explain_match(match_tier, matched_b3, b8, judge_rationale, target),
-            # Why the *code itself* is a vulnerability (B3's own reasoning,
-            # not this correlation step's) - distinct from match_rationale
-            # above, which explains why this dynamic attempt was matched to
-            # that static finding, not whether the static finding is real.
-            # None when there's no matched static finding, or it predates
-            # this field (see B3Finding.explanation in ui/src/lib/types.ts).
-            "explanation": (matched_b3 or {}).get("explanation"),
-            "matched_static_finding": (
-                {"file": matched_b3.get("file"), "line": matched_b3.get("line"), "vulnerability": matched_b3.get("vulnerability")}
-                if matched_b3 else None
-            ),
-        })
+        correlated.append(
+            {
+                "vulnerability": vuln_type,
+                "cwe_id": dyn_taxonomy["cwe_id"],
+                "owasp_category": dyn_taxonomy["owasp_category"],
+                "target": target,
+                "payload_id": payload_id,
+                "screenshot_path": screenshot_path,
+                "video_path": video_path,
+                "classification": status,
+                "confidence": conf,
+                "source": source,
+                "match_tier": match_tier,
+                "score": score,
+                "severity": severity,
+                "evidence": evidence,
+                "match_rationale": _explain_match(match_tier, matched_b3, b8, judge_rationale, target),
+                # Why the *code itself* is a vulnerability (B3's own reasoning,
+                # not this correlation step's) - distinct from match_rationale
+                # above, which explains why this dynamic attempt was matched to
+                # that static finding, not whether the static finding is real.
+                # None when there's no matched static finding, or it predates
+                # this field (see B3Finding.explanation in ui/src/lib/types.ts).
+                "explanation": (matched_b3 or {}).get("explanation"),
+                "matched_static_finding": (
+                    {
+                        "file": matched_b3.get("file"),
+                        "line": matched_b3.get("line"),
+                        "vulnerability": matched_b3.get("vulnerability"),
+                    }
+                    if matched_b3
+                    else None
+                ),
+            }
+        )
 
     for i, (b3, stat_taxonomy) in enumerate(static_findings_with_taxonomy):
         if i in b3_matched_indices:
@@ -336,26 +343,28 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
             dynamic_confidence=None,
             match_tier="none",
         )
-        correlated.append({
-            "vulnerability": b3.get("vulnerability", "Unknown"),
-            "cwe_id": stat_taxonomy["cwe_id"],
-            "owasp_category": stat_taxonomy["owasp_category"],
-            "target": b3.get("file", "unknown"),
-            "video_path": None,
-            "classification": "POSSIBLE",
-            # B3's own real confidence for this specific finding, not a flat
-            # stand-in - two static-only findings with different underlying
-            # confidence shouldn't both display the same label.
-            "confidence": str(b3.get("confidence") or "medium").upper(),
-            "source": "Static",
-            "match_tier": "none",
-            "score": score,
-            "severity": severity,
-            "evidence": b3.get("evidence", "Static detection only"),
-            "match_rationale": f"No dynamic attempt has correlated with this static finding yet ({b3.get('file', 'unknown file')}:{b3.get('line', '?')}).",
-            "explanation": b3.get("explanation"),
-            "matched_static_finding": None,
-        })
+        correlated.append(
+            {
+                "vulnerability": b3.get("vulnerability", "Unknown"),
+                "cwe_id": stat_taxonomy["cwe_id"],
+                "owasp_category": stat_taxonomy["owasp_category"],
+                "target": b3.get("file", "unknown"),
+                "video_path": None,
+                "classification": "POSSIBLE",
+                # B3's own real confidence for this specific finding, not a flat
+                # stand-in - two static-only findings with different underlying
+                # confidence shouldn't both display the same label.
+                "confidence": str(b3.get("confidence") or "medium").upper(),
+                "source": "Static",
+                "match_tier": "none",
+                "score": score,
+                "severity": severity,
+                "evidence": b3.get("evidence", "Static detection only"),
+                "match_rationale": f"No dynamic attempt has correlated with this static finding yet ({b3.get('file', 'unknown file')}:{b3.get('line', '?')}).",
+                "explanation": b3.get("explanation"),
+                "matched_static_finding": None,
+            }
+        )
 
     output = {
         "status": "complete",
@@ -373,6 +382,7 @@ def correlate_results(pipeline_results=None, ask_llm=None, target_profile=None):
 
     print(f"[+] B9 finalized. Correlated findings: {len(correlated)} | LLM-judge calls made: {judge_calls_made}")
     return output
+
 
 if __name__ == "__main__":
     correlate_results()
