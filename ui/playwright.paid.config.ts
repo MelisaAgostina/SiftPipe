@@ -12,6 +12,9 @@ const AUTH_FILE = "e2e/.auth/user.json";
 // of the main config is what actually prevents it from firing by accident.
 // Run explicitly: `npm run test:e2e:paid`.
 export default defineConfig({
+  // Separate output folder from the default suite's playwright-report/, so
+  // running one doesn't overwrite the other's report.
+  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report-paid" }]],
   use: {
     baseURL: process.env.QA_BASE_URL ?? "https://siftpipe.com",
     locale: "en-US",
