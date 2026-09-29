@@ -24,6 +24,11 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 1,
+  // Playwright's actual default reporter is just "list" (console only) -
+  // no html reporter, no playwright-report/ output, regardless of pass/fail
+  // or `npm run test:e2e:report` running fine. open:"never" so it doesn't
+  // pop a browser tab at the end of every run; view it on demand instead.
+  reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: process.env.QA_BASE_URL ?? "https://siftpipe.com",
     locale: "en-US", // pins the app's UI language (see hooks/use-lang.ts) so selectors don't depend on OS locale
