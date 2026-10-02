@@ -107,7 +107,7 @@ class TargetProfile:
 MATTERMOST = TargetProfile(
     name="mattermost",
     display_name="Mattermost",
-    stack_label="v9.x · Docker · PostgreSQL",
+    stack_label="v11.7.0 · Docker · PostgreSQL",
     base_url_env="MM_URL",
     base_url_default="http://localhost:8065",
     login_path="/login",
