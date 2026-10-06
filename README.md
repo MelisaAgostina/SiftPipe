@@ -231,11 +231,9 @@ npm run dev
 ## Docs
 See /docs for the compiled project write-up (`siftpipe-compiled.md`), fixes log, containerization/deployment guides, resource/cost plan and script reference. QA pass reports are in /qa_reports.
 
-
+<div>
+    Thanks!
+</div>
 <div align="center">
-Thanks!
 <img width="420" height="236" alt="59" src="https://github.com/user-attachments/assets/f21d4739-e786-4090-99e1-a37fdc5c2537" />
-    <img width="220" height="220" alt="type-keyboard" src="https://github.com/user-attachments/assets/8970a2f5-57cf-4833-b7d0-761a6c7417fd" />
-<img width="374" height="374" alt="cat-computer" src="https://github.com/user-attachments/assets/97d5fdc6-bbfb-42cc-942c-f8b04bc33008" />
-
 </div>
