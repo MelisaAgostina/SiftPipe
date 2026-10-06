@@ -233,5 +233,7 @@ See /docs for the compiled project write-up (`siftpipe-compiled.md`), fixes log,
 
 
 <div align="center">
+Thanks!
 <img width="420" height="236" alt="59" src="https://github.com/user-attachments/assets/f21d4739-e786-4090-99e1-a37fdc5c2537" />
+    <div class="tenor-gif-embed" data-postid="2505349896284898976" data-share-method="host" data-aspect-ratio="1" data-width="100%"><a href="https://tenor.com/view/cat-computer-windows-xp-distracted-gif-2505349896284898976">Cat Computer GIF</a>from <a href="https://tenor.com/search/cat-gifs">Cat GIFs</a></div>
 </div>
