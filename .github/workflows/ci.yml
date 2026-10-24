@@ -76,10 +76,14 @@ jobs:
           cache: "npm"
           cache-dependency-path: ui/package-lock.json
 
-      # Gated at "critical" for now: as of 2026-09-28 the tree has 10 "high"
-      # findings, all in the Cloudflare/wrangler build tooling (undici), whose
-      # only auto-fix is a pre-release miniflare that breaks `npm ci`. Lower
-      # this to "high" once wrangler ships a stable release with the fix.
+      # Gated at "critical" for now: as of 2026-10-24 the tree has no critical
+      # findings but still ~9 "high" ones (@vitest/mocker, js-yaml, nanoid,
+      # sharp, and the postcss-selector-parser/tailwind 3 chain), several of
+      # which only auto-fix through a breaking @lovable.dev/vite-tanstack-config
+      # bump. Lower this to "high" once those are cleared.
+      # ui/package.json pins undici via "overrides" because miniflare (via the
+      # Cloudflare/nitro tooling) and jsdom declare a vulnerable 7.28.0; drop
+      # the override once their own ranges move past it.
       - name: Audit frontend dependencies (npm audit)
         working-directory: ui
         run: npm audit --audit-level=critical
