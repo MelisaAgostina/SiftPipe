@@ -77,13 +77,20 @@ jobs:
           cache-dependency-path: ui/package-lock.json
 
       # Gated at "critical" for now: as of 2026-10-24 the tree has no critical
-      # findings but still ~9 "high" ones (@vitest/mocker, js-yaml, nanoid,
-      # sharp, and the postcss-selector-parser/tailwind 3 chain), several of
-      # which only auto-fix through a breaking @lovable.dev/vite-tanstack-config
-      # bump. Lower this to "high" once those are cleared.
-      # ui/package.json pins undici via "overrides" because miniflare (via the
-      # Cloudflare/nitro tooling) and jsdom declare a vulnerable 7.28.0; drop
-      # the override once their own ranges move past it.
+      # findings but still 5 "high" and 4 "moderate" ones (sharp, miniflare,
+      # nitro, env-runner, and the tailwind 3 / postcss-selector-parser chain),
+      # all of which only auto-fix through a breaking
+      # @lovable.dev/vite-tanstack-config bump (all build tooling, nothing
+      # reaches the deployed app). Lower this to "high" once that bump is done.
+      # Tried 2026-10-24 (2.26.7): audit goes to 0, but it needs a second
+      # "overrides" pin (nitro 3.0.260903-beta; the config's peer range only
+      # admits a vulnerable nitro), `vite build` fails because lightningcss
+      # can't read the Google Fonts @import in src/styles.css, and the stack
+      # expects Vite 8. Revisit together with a Vite 8 migration.
+      # ui/package.json pins undici via "overrides" because both miniflare
+      # versions in the tree (via @cloudflare/vite-plugin and nitro) pin an
+      # exact vulnerable undici (7.29.1 / 7.28.0); drop the override once their
+      # own pins move past 7.30.0 (check with `npm ls undici` without it).
       - name: Audit frontend dependencies (npm audit)
         working-directory: ui
         run: npm audit --audit-level=critical
