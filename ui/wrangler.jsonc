@@ -13,4 +13,8 @@
   "assets": {
     "directory": "dist/client"
   },
+  // Required by `wrangler preview` (wrangler >= 4.152), which Workers Builds
+  // runs for non-production branches; without it that build fails at the
+  // deploy step. Empty = inherit everything from the config above.
+  "previews": {},
 }
