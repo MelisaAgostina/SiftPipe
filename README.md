@@ -229,4 +229,4 @@ npm run dev
 ---
 
 ## Docs
-See /docs for the compiled project write-up (`siftpipe-compiled.md`), fixes log, containerization/deployment guides, resource/cost plan and script reference. QA pass reports are in /qa_reports.
+See /docs for the fixes log, containerization/deployment guides, resource/cost plan and script reference. QA pass reports are in /qa_reports.

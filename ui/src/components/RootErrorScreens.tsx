@@ -26,7 +26,7 @@ export function NotFoundScreen() {
   );
 }
 
-export function ErrorScreen({ error, reset }: { error: Error; reset: () => void }) {
+export function ErrorScreen({ error, reset }: { error: unknown; reset: () => void }) {
   console.error(error);
   const router = useRouter();
   const { t } = useLang();
