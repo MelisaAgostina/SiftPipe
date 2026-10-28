@@ -230,3 +230,11 @@ npm run dev
 
 ## Docs
 See /docs for the fixes log, containerization/deployment guides, resource/cost plan and script reference. QA pass reports are in /qa_reports.
+
+<div align="center">
+Thanks for reading!
+</div>
+
+<div align="center">
+<img width="420" height="236" alt="Cat-Gives-High-Five-on-Couch" src="https://github.com/user-attachments/assets/f23894c5-f501-4d3f-a5cf-f49ea5e965cc" />
+</div>
