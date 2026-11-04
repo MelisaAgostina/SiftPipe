@@ -32,6 +32,12 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # @tanstack/react-start >= 1.169.4 declares an optional peer of vite >= 8,
+      # but the UI is deliberately on vite 7 (the @lovable.dev/vite-tanstack-config
+      # bump that unlocks vite 8 is deferred). Letting the group PR pull it in makes
+      # `npm ci` fail with ERESOLVE. Remove these two entries when vite 8 is adopted.
+      - dependency-name: "@tanstack/react-start"
+      - dependency-name: "vite"
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -44,3 +50,10 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+    # github/codeql-action/init and /analyze must always run the same version
+    # (CodeQL warns and the Analyze jobs fail otherwise). Without a group,
+    # Dependabot opens one PR per action, so each PR leaves the pair mismatched.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
