@@ -389,5 +389,84 @@ class TestClearResultsFolder(unittest.TestCase):
         self.assertTrue(os.path.isdir(self.path))
 
 
+class TestWaitForMattermostWebapp(unittest.TestCase):
+    """
+    Regression for the deployed t3.medium failure (2026-11-04): with its CPU
+    credits exhausted the box is throttled to its 20% baseline, the login form took
+    ~4.0s to appear even when idle, and the old 5s per-attempt wait missed it on
+    every attempt until the 90s total ran out ("login page never rendered").
+    Playwright is fully faked (same approach as test_dynamic_injector.py) - these
+    check the retry/timeout *behavior*, not a real browser.
+    """
+
+    def _fake_playwright(self, selector_failures=0):
+        """Returns (patcher_target_mock, browser, context, page). The first
+        `selector_failures` wait_for_selector calls raise; after that it succeeds."""
+        page = MagicMock()
+        calls = {"n": 0}
+
+        def wait_for_selector(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] <= selector_failures:
+                raise TimeoutError("Page.wait_for_selector: Timeout exceeded.")
+
+        page.wait_for_selector.side_effect = wait_for_selector
+        context = MagicMock()
+        context.new_page.return_value = page
+        browser = MagicMock()
+        browser.new_context.return_value = context
+        pw = MagicMock()
+        pw.chromium.launch.return_value = browser
+        sync_pw = MagicMock()
+        sync_pw.return_value.__enter__.return_value = pw
+        return sync_pw, browser, context, page
+
+    def _run(self, sync_pw, **kwargs):
+        with patch("playwright.sync_api.sync_playwright", sync_pw), patch.object(env.time, "sleep"):
+            return env.wait_for_mattermost_webapp(log_fn=lambda *_: None, **kwargs)
+
+    def test_returns_as_soon_as_the_login_form_appears(self):
+        sync_pw, browser, context, page = self._fake_playwright(selector_failures=0)
+        self._run(sync_pw)
+        page.wait_for_selector.assert_called_once()
+
+    def test_reuses_one_context_across_retries_so_the_cache_stays_warm(self):
+        sync_pw, browser, context, page = self._fake_playwright(selector_failures=2)
+        self._run(sync_pw)
+        self.assertEqual(page.wait_for_selector.call_count, 3)
+        self.assertEqual(browser.new_context.call_count, 1)  # the old code made one per attempt
+        self.assertEqual(context.new_page.call_count, 3)  # but a fresh page each time
+        context.add_init_script.assert_called_once()  # landing-page skip set once on the context
+
+    def test_per_attempt_selector_wait_is_longer_than_the_old_5_seconds(self):
+        sync_pw, browser, context, page = self._fake_playwright()
+        self._run(sync_pw)
+        timeout_ms = page.wait_for_selector.call_args.kwargs["timeout"]
+        self.assertEqual(timeout_ms, env.WEBAPP_SELECTOR_TIMEOUT_MS)
+        self.assertGreater(timeout_ms, 5000)
+
+    def test_attempt_budget_never_exceeds_the_remaining_deadline(self):
+        sync_pw, browser, context, page = self._fake_playwright()
+        self._run(sync_pw, timeout=10)
+        self.assertLessEqual(page.wait_for_selector.call_args.kwargs["timeout"], 10000)
+        self.assertLessEqual(page.goto.call_args.kwargs["timeout"], 10000)
+
+    def test_gives_up_with_a_clear_error_after_the_deadline(self):
+        sync_pw, browser, context, page = self._fake_playwright(selector_failures=10**6)
+        with self.assertRaises(TimeoutError) as cm:
+            self._run(sync_pw, timeout=0.05, interval=0.01)
+        message = str(cm.exception)
+        self.assertIn("never rendered", message)
+        self.assertIn("attempts", message)
+
+    def test_always_closes_page_context_and_browser(self):
+        sync_pw, browser, context, page = self._fake_playwright(selector_failures=10**6)
+        with self.assertRaises(TimeoutError):
+            self._run(sync_pw, timeout=0.05, interval=0.01)
+        page.close.assert_called()
+        context.close.assert_called_once()
+        browser.close.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

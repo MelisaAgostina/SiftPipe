@@ -20,7 +20,13 @@ MM_URL = os.getenv("MM_URL", "http://localhost:8065")
 MM_PING_URL = f"{MM_URL}/api/v4/system/ping"
 READY_TIMEOUT = 120  # seconds to wait for Mattermost to boot (first-boot DB migrations can be slow)
 POLL_INTERVAL = 2  # seconds between readiness checks
-WEBAPP_READY_TIMEOUT = 90  # seconds to wait for the React webapp itself to render (see wait_for_mattermost_webapp)
+WEBAPP_READY_TIMEOUT = 150  # seconds to wait for the React webapp itself to render (see wait_for_mattermost_webapp)
+# Per-attempt budgets inside that wait. Measured 2026-11-04 on the deployed t3.medium
+# (CPU-credit balance ~0, so throttled to its 20% baseline): the login form took 4.0s to
+# appear even on an idle box, against the old 5s limit, and two consecutive resets timed
+# out at the old 90s total. A slow box is the normal case there, not an error.
+WEBAPP_GOTO_TIMEOUT_MS = 30000
+WEBAPP_SELECTOR_TIMEOUT_MS = 25000
 
 # mattermost/.env bind-mounts Postgres/Mattermost data to host paths under
 # mattermost/volumes/ (see POSTGRES_DATA_PATH / MATTERMOST_DATA_PATH etc.).
@@ -177,34 +183,54 @@ def wait_for_mattermost_webapp(timeout=WEBAPP_READY_TIMEOUT, interval=3, log_fn=
     log_fn("[env] Waiting for Mattermost's webapp to render...")
     start = time.time()
     last_error = None
+    attempts = 0
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            while time.time() - start < timeout:
-                # Same landing-page skip B4/B7 themselves use (blocks/dynamic_analysis.py,
-                # blocks/dynamic_injector.py) - Mattermost redirects a fresh /login
-                # visit to a splash page (/landing#/login) first; without this,
-                # the login form never appears regardless of webapp readiness.
-                context = browser.new_context()
-                context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
-                page = context.new_page()
-                try:
-                    page.goto(MATTERMOST.login_url, wait_until="domcontentloaded", timeout=10000)
-                    page.wait_for_selector(", ".join(MATTERMOST.login_id_selectors), timeout=5000, state="attached")
-                    elapsed = round(time.time() - start, 1)
-                    log_fn(f"[env] Mattermost webapp ready after {elapsed}s.")
-                    return
-                except Exception as e:
-                    last_error = e
-                finally:
-                    context.close()
-                time.sleep(interval)
+            # ONE context for the whole wait, not one per attempt: a context keeps
+            # Chromium's HTTP cache, so after the first (slow) attempt downloads
+            # Mattermost's large JS bundle, later attempts reuse it instead of
+            # re-fetching and re-parsing it from scratch on a CPU-starved box.
+            # Same landing-page skip B4/B7 themselves use (blocks/dynamic_analysis.py,
+            # blocks/dynamic_injector.py) - Mattermost redirects a fresh /login
+            # visit to a splash page (/landing#/login) first; without this,
+            # the login form never appears regardless of webapp readiness.
+            context = browser.new_context()
+            context.add_init_script("localStorage.setItem('__landingPageSeen__', 'true');")
+            try:
+                while time.time() - start < timeout:
+                    attempts += 1
+                    # Never let one attempt run past the overall deadline.
+                    remaining_ms = max(int((timeout - (time.time() - start)) * 1000), 1000)
+                    page = context.new_page()  # fresh page per attempt so a stuck one can't poison the next
+                    try:
+                        page.goto(
+                            MATTERMOST.login_url,
+                            wait_until="domcontentloaded",
+                            timeout=min(WEBAPP_GOTO_TIMEOUT_MS, remaining_ms),
+                        )
+                        page.wait_for_selector(
+                            ", ".join(MATTERMOST.login_id_selectors),
+                            timeout=min(WEBAPP_SELECTOR_TIMEOUT_MS, remaining_ms),
+                            state="attached",
+                        )
+                        elapsed = round(time.time() - start, 1)
+                        log_fn(f"[env] Mattermost webapp ready after {elapsed}s.")
+                        return
+                    except Exception as e:
+                        last_error = e
+                    finally:
+                        page.close()
+                    time.sleep(interval)
+            finally:
+                context.close()
         finally:
             browser.close()
 
     raise TimeoutError(
         f"[env] Mattermost's login page never rendered within {timeout}s "
-        f"(last error: {last_error}). Check 'docker compose logs' in {MATTERMOST_DIR}/ for diagnostics."
+        f"({attempts} attempts; last error: {last_error}). "
+        f"Check 'docker compose logs' in {MATTERMOST_DIR}/ for diagnostics."
     )
 
 
