@@ -791,9 +791,9 @@ def build_report_html(run: dict, lang: str = "en") -> str:
 
     generated_at = os.environ.get("SIFTPIPE_REPORT_TIME")  # test hook; real calls fall through
     if not generated_at:
-        from datetime import datetime, timezone
+        from datetime import UTC, datetime
 
-        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d · %H:%M UTC")
+        generated_at = datetime.now(UTC).strftime("%Y-%m-%d · %H:%M UTC")
 
     watermark_uri = _watermark_data_uri()
     watermark_html = f'<img class="watermark" src="{watermark_uri}" alt="">' if watermark_uri else ""
