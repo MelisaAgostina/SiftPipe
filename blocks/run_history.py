@@ -12,7 +12,7 @@ it if the .db file lived there too.
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from blocks.targets import DEFAULT_TARGET
@@ -97,7 +97,7 @@ def start_run(mode="unknown", target=DEFAULT_TARGET):
     """Call at the start of a pipeline run. Returns the new run's id."""
     conn = _connect()
     try:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         cur = conn.execute(
             "INSERT INTO runs (started_at, mode, target, status) VALUES (?, ?, ?, 'running')",
             (now, mode, target),
@@ -194,7 +194,7 @@ def finish_run(run_id, status, results_dir="results"):
 
         total_findings, confirmed_findings = _b9_summary(results_dir, prefix)
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         conn.execute(
             """
             UPDATE runs
