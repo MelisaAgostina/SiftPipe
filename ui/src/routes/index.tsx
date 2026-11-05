@@ -65,10 +65,9 @@ function Index() {
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
           <Link
             to={authenticated ? "/app" : "/login"}
-            className="font-button group inline-flex items-center gap-3 rounded-full bg-primary px-8 py-4 text-base text-primary-foreground transition-colors hover:bg-primary/90 [-webkit-text-stroke:0.6px_currentColor]"
+            className="font-button inline-flex items-center justify-center rounded-full bg-primary px-8 py-4 text-base font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
           >
             {authenticated ? t.landing.openPipeline : t.landing.logIn}
-            <span aria-hidden className="transition-transform group-hover:translate-x-0.5"></span>
           </Link>
         </div>
       </section>

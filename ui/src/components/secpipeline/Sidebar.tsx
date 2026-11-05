@@ -26,6 +26,7 @@ import {
 import { useLang } from "@/hooks/use-lang";
 import type { PhaseId } from "@/lib/strings";
 import { prerequisiteIds, phases } from "./data";
+import { RUN_BUTTON_TONE_CLASS, runButtonTone } from "./runButtonTone";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -196,6 +197,15 @@ export function Sidebar() {
     if (freshResetPending) return t.sidebar.resetRequiredFirst;
     return t.sidebar.runAnalysis;
   };
+
+  // Colour of the run button, decided from the same states buttonLabel() reads
+  // (see runButtonTone.ts) - solid green only when pressing it actually starts work.
+  const runTone = runButtonTone({
+    busy: isRunning || runMutation.isPending || resumeMutation.isPending,
+    waiting: isWaiting,
+    completed: isCompleted,
+    disabled: buttonDisabled,
+  });
 
   const resetButtonLabel = () => {
     if (envResetting) return t.sidebar.preparingEnvironment;
@@ -397,12 +407,12 @@ export function Sidebar() {
                     data-tour="env-reset"
                     onClick={() => resetMutation.mutate()}
                     disabled={envResetting || isRunning || isWaiting}
-                    className="font-button mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    className="font-button mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2.5 text-sm font-semibold leading-snug text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {envResetting ? (
-                      <Loader2 className="h-7 w-7 animate-spin" />
+                      <Loader2 className="h-5 w-5 animate-spin" />
                     ) : (
-                      <RotateCcw className="h-7 w-7" />
+                      <RotateCcw className="h-5 w-5" />
                     )}
                     {resetButtonLabel()}
                   </button>
@@ -525,12 +535,17 @@ export function Sidebar() {
               : runMutation.mutate({ mode: effectiveEnvMode })
           }
           disabled={buttonDisabled}
-          className="font-button flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-4 py-3.5 text-[0.60rem] leading-relaxed text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          className={
+            "font-button flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold leading-snug transition-colors disabled:cursor-not-allowed " +
+            RUN_BUTTON_TONE_CLASS[runTone]
+          }
         >
-          {isRunning || runMutation.isPending || resumeMutation.isPending ? (
-            <Loader2 className="h-8 w-8 animate-spin" />
+          {runTone === "busy" ? (
+            <Loader2 className="h-5 w-5 animate-spin" />
+          ) : runTone === "done" ? (
+            <Check className="h-5 w-5" />
           ) : (
-            <PlayCircle className="h-8 w-8" />
+            <PlayCircle className="h-5 w-5" />
           )}
           {buttonLabel()}
         </button>
@@ -539,14 +554,14 @@ export function Sidebar() {
             <button
               onClick={() => stopMutation.mutate()}
               disabled={status?.stop_requested === true || stopMutation.isPending}
-              className="font-button flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[0.55rem] leading-relaxed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              className="font-button flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs font-medium leading-snug text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
               {stopButtonLabel()}
             </button>
             <button
               onClick={() => setConfirmDiscardOpen(true)}
               disabled={status?.discard_requested === true || discardMutation.isPending}
-              className="font-button flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[0.55rem] leading-relaxed text-muted-foreground transition-colors hover:bg-accent hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+              className="font-button flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs font-medium leading-snug text-muted-foreground transition-colors hover:bg-accent hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
             >
               {discardButtonLabel()}
             </button>

@@ -134,21 +134,29 @@
 
 .pp-submit {
   width: 100%;
-  background: #5cf2a0;
-  color: #06110c;
+  /* Same green and text colour as the landing page's "Log in" button (the theme's
+     --primary / --primary-foreground in styles.css) instead of a separate hard-coded
+     hex, so the two buttons can't drift apart. */
+  background: var(--primary);
+  color: var(--primary-foreground);
   border: none;
   border-radius: 999px;
-  font-family: "Press Start 2P", monospace;
-  font-weight: 400;
-  font-size: 13px;
-  letter-spacing: 1px;
+  font-family: "Outfit", sans-serif;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  /* letter-spacing adds space after EVERY character, including the last one, which
+     pushes the visible text left of centre by half the spacing. An indent of the same
+     size in a centred line shifts it back by exactly that half. */
+  text-indent: 0.04em;
   padding: 18px 0;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.05s ease;
 }
 
 .pp-submit:hover:not(:disabled) {
-  background: #7bf5b3;
+  /* Same hover as the landing button (Tailwind's hover:bg-primary/90). */
+  background: color-mix(in oklab, var(--primary) 90%, transparent);
 }
 
 .pp-submit:active:not(:disabled) {

@@ -551,3 +551,89 @@ describe("Sidebar", () => {
     );
   });
 });
+
+describe("Sidebar run button colour", () => {
+  // The run button's colour must answer "can I press this?" at a glance: SOLID
+  // green only when clicking it starts work (Run analysis / Resume), a soft
+  // green tint while running or completed, plain grey whenever something
+  // must happen first. Found via data-tour because several buttons can share
+  // the same label (e.g. "Preparing environment..." appears on the reset
+  // button too).
+  const runButton = (r: ReturnType<typeof setup>) =>
+    r.container.querySelector('[data-tour="run-button"]') as HTMLElement;
+
+  it("is solid green when idle and ready to run", () => {
+    const button = runButton(setup());
+
+    expect(button).toBeEnabled();
+    expect(button).toHaveClass("bg-primary", "text-primary-foreground");
+  });
+
+  it("is solid green for Resume, which is also an action that starts work", () => {
+    const button = runButton(setup({ status: { resumable_from: "B5" as BlockId } }));
+
+    expect(button).toHaveTextContent(/resume from/i);
+    expect(button).toBeEnabled();
+    expect(button).toHaveClass("bg-primary");
+  });
+
+  it("is grey, not green, when the target is down", () => {
+    const button = runButton(setup({ envHealth: { target_up: false, target: "mattermost" } }));
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveClass("bg-background/60");
+    expect(button).not.toHaveClass("bg-primary");
+  });
+
+  it("is grey while the environment is still being prepared", () => {
+    const button = runButton(
+      setup({ envStatus: { running: true, completed: false, error: null } }),
+    );
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveClass("bg-background/60");
+    expect(button).not.toHaveClass("bg-primary");
+  });
+
+  it("is grey when Fresh mode is selected but the reset has not been done", () => {
+    const button = runButton(
+      setup({ envStatus: { running: false, completed: false, error: null } }),
+    );
+
+    expect(button).toHaveTextContent(en.sidebar.resetRequiredFirst);
+    expect(button).toBeDisabled();
+    expect(button).not.toHaveClass("bg-primary");
+  });
+
+  it("is grey while paused for human review", () => {
+    const button = runButton(setup({ status: { waiting_for_human: true } }));
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveClass("bg-background/60");
+    expect(button).not.toHaveClass("bg-primary");
+  });
+
+  it("is a soft green tint, not dimmed like a blocked button, while running", () => {
+    const button = runButton(setup({ status: { running: true } }));
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveClass("bg-primary/10", "text-primary");
+    expect(button).not.toHaveClass("bg-primary");
+    expect(button).not.toHaveClass("disabled:opacity-50");
+  });
+
+  it("is a soft green tint once a live run has completed", () => {
+    const button = runButton(setup({ status: { completed: true }, liveRunVisible: true }));
+
+    expect(button).toHaveTextContent(en.sidebar.pipelineCompleted);
+    expect(button).toHaveClass("bg-primary/10", "text-primary");
+    expect(button).not.toHaveClass("bg-primary");
+  });
+
+  it("uses the same font token as every other button (no pixel-font override)", () => {
+    const button = runButton(setup());
+
+    expect(button).toHaveClass("font-button");
+    expect(button.className).not.toMatch(/Press_Start|text-\[0\.\d+rem\]/);
+  });
+});
