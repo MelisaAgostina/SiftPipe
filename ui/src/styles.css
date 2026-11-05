@@ -42,8 +42,9 @@
      them the one element that didn't match the rest of the UI and forced
      tiny, hard-to-read sizes. Kept as its own token so every `font-button`
      call site keeps working and a future change stays a one-line edit.
-     (The login page's own stylesheet, auth/LoginPage.css, still sets its
-     submit button in Press Start 2P directly - it doesn't read this token.) */
+     Press Start 2P is no longer used by any element but is deliberately still
+     loaded in the Google Fonts URLs (here and in auth/LoginPage.tsx), kept in
+     case a pixel-style accent is wanted again. */
   --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-title: "Bitcount Prop Single", "Playfair Display", ui-serif, Georgia, serif;
   --font-playful: "Playfair Display", ui-serif, Georgia, serif;
