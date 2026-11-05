@@ -105,16 +105,17 @@ export function SecPipelineApp() {
   const [tourHintDismissed, setTourHintDismissed] = useState(false);
   const showTourHint = pastRuns !== undefined && pastRuns.runs.length === 0 && !tourHintDismissed;
 
-  // The welcome card offers that same tour up front, on the same server-verified
-  // first-time signal. Whichever way the visitor answers (skip or take the tour) is
-  // remembered per browser so it doesn't nag on every reload while history is still
-  // empty; the amber hint on the tour button above stays either way, so someone who
-  // skipped can still find the tour.
+  // The welcome card offers that same tour up front. Unlike the amber hint above, it is
+  // NOT tied to an empty run history: the history is shared by everyone using the one
+  // passphrase, so once anybody had run something, later visitors would never see it.
+  // "First visit" is therefore per browser - the remembered answer (skip or take the
+  // tour) is the only gate. Waiting for pastRuns to load is kept so a returning user
+  // doesn't see the card flash before the answer is known; the amber hint on the tour
+  // button stays either way, so someone who skipped can still find the tour.
   const [welcomeChoice, setWelcomeChoice] = useState<WelcomeChoice | null>(() =>
     readWelcomeChoice(),
   );
-  const showWelcome =
-    pastRuns !== undefined && pastRuns.runs.length === 0 && welcomeChoice === null;
+  const showWelcome = pastRuns !== undefined && welcomeChoice === null;
   const chooseWelcome = (choice: WelcomeChoice) => {
     saveWelcomeChoice(choice);
     setWelcomeChoice(choice);
