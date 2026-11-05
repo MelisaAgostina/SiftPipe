@@ -37,12 +37,17 @@
      --font-playful: copy that talks to the user (paired with the `italic`
      utility where used — same family as --font-title, italic is what makes
      it read as "playful" rather than "formal heading"). --font-button:
-     action buttons only, not nav/tabs (Press Start 2P is a fixed-width
-     pixel font — wide per character, so it's reserved for short CTAs). */
+     action buttons. Deliberately the SAME family as --font-sans: buttons used
+     to be set in Press Start 2P (a wide fixed-width pixel font), which made
+     them the one element that didn't match the rest of the UI and forced
+     tiny, hard-to-read sizes. Kept as its own token so every `font-button`
+     call site keeps working and a future change stays a one-line edit.
+     (The login page's own stylesheet, auth/LoginPage.css, still sets its
+     submit button in Press Start 2P directly - it doesn't read this token.) */
   --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-title: "Bitcount Prop Single", "Playfair Display", ui-serif, Georgia, serif;
   --font-playful: "Playfair Display", ui-serif, Georgia, serif;
-  --font-button: "Press Start 2P", ui-monospace, monospace;
+  --font-button: var(--font-sans);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
