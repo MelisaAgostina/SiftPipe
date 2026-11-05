@@ -251,8 +251,15 @@ describe("SecPipelineApp", () => {
       expect(screen.getByText("Welcome!")).toBeInTheDocument();
     });
 
-    it("stays away once at least one past run exists", () => {
+    it("still appears on a browser's first visit even when past runs already exist", () => {
       setup({ pastRunsCount: 1, welcomeChoice: null });
+
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByText("Welcome!")).toBeInTheDocument();
+    });
+
+    it("stays away when past runs exist and the visitor already answered it", () => {
+      setup({ pastRunsCount: 1, welcomeChoice: "skipped" });
 
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
